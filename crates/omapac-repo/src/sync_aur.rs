@@ -148,10 +148,13 @@ impl RunWith<()> for SyncAur {
             .wrap_err_with(|| format!("creating {}", cache.display()))?;
         let settings = Settings::default();
         let now = crate::feed::now();
-        let advisories: Option<Advisories> = match &self.advisories {
-            Some(path) => crate::feed::load(path)?,
-            None => None,
-        };
+        let advisories: Option<Advisories> =
+            match &self.advisories {
+                Some(path) => Some(crate::feed::load(path)?.ok_or_else(|| {
+                    eyre::eyre!("advisories file {} does not exist", path.display())
+                })?),
+                None => None,
+            };
 
         let mut results = Vec::new();
         let mut verdicts = Vec::new();
