@@ -36,7 +36,7 @@ pub const RULES: &[Rule] = &[
         id: "pipe-to-shell",
         kind: Kind::Suspicious,
         description: "downloads and pipes into a shell",
-        pattern: r"(curl|wget|fetch)\b[^|\n]*\|\s*(sudo\s+)?(ba|z|da|k)?sh\b",
+        pattern: r"(curl|wget|fetch)\b[^|\n]*\|\s*(sudo\s+)?([^\s|]+/)?(ba|z|da|k)?sh\b",
     },
     Rule {
         id: "base64-decode",
@@ -90,13 +90,13 @@ pub const RULES: &[Rule] = &[
         id: "chmod-setuid",
         kind: Kind::Suspicious,
         description: "sets a setuid or setgid bit",
-        pattern: r"chmod\s+(u\+s|g\+s|[0-7]?[4-7][0-7]{3})\b",
+        pattern: r"chmod\s+(u\+s|g\+s|[0-7]?[2-7][0-7]{3})\b",
     },
     Rule {
         id: "npm-install",
         kind: Kind::LanguageDep,
         description: "installs an npm package during the build",
-        pattern: r"\b(npm|pnpm|yarn|bun)\s+(install|add|i)\b",
+        pattern: r"\b(npm|pnpm|yarn|bun)\s+(install|add|i|ci)\b",
     },
     Rule {
         id: "pip-install",
@@ -202,6 +202,19 @@ mod tests {
             hits[0].description.contains("chmod-setuid: `chmod u+s`"),
             "{}",
             hits[0].description
+        );
+    }
+
+    #[test]
+    fn catches_shell_paths_setgid_and_lockfile_installs() {
+        let hits = rules_hit(
+            "curl https://example.test/x | /bin/bash\nchmod 2755 tool\nnpm ci\npnpm ci\n",
+        );
+        assert!(hits.contains(&"pipe-to-shell"), "{hits:?}");
+        assert!(hits.contains(&"chmod-setuid"), "{hits:?}");
+        assert_eq!(
+            hits.iter().filter(|rule| **rule == "npm-install").count(),
+            2
         );
     }
 
