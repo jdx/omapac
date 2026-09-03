@@ -73,18 +73,6 @@ impl Spec {
         Ok(command)
     }
 
-    /// Run through the helper with inherited stdout and stderr.
-    pub fn run(&self) -> Result<std::process::ExitStatus> {
-        let mut child = self
-            .command()?
-            .spawn()
-            .wrap_err("starting the jail helper")?;
-        if let Some(mut stdin) = child.stdin.take() {
-            serde_json::to_writer(&mut stdin, self).wrap_err("sending the jail spec")?;
-        }
-        child.wait().wrap_err("waiting for the jailed command")
-    }
-
     /// Restrict the current process as the spec says. Called by the helper.
     pub fn apply(&self) -> Result<()> {
         restrict_filesystem(&self.writable, self.network)?;
@@ -130,7 +118,10 @@ fn restrict_filesystem(writable: &[PathBuf], network: bool) -> Result<()> {
         .map_err(|e| eyre::eyre!("landlock: {e}"))?
         .add_rules(path_beneath_rules(&existing, AccessFs::from_all(abi)))
         .map_err(|e| eyre::eyre!("landlock: {e}"))?
-        .add_rules(path_beneath_rules(&devices, AccessFs::WriteFile))
+        .add_rules(path_beneath_rules(
+            &devices,
+            AccessFs::WriteFile | AccessFs::Truncate,
+        ))
         .map_err(|e| eyre::eyre!("landlock: {e}"))?
         .restrict_self()
         .map_err(|e| eyre::eyre!("landlock: {e}"))?;

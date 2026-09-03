@@ -4,7 +4,8 @@
 //! See `PLAN.md`, "Jailed builds".
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
+use std::{fs, os::unix::fs::PermissionsExt as _};
 
 use alpm_db::Dependency;
 use eyre::{Context as _, Result, bail};
@@ -107,7 +108,7 @@ pub fn build(reviewed: &Reviewed, opts: &BuildOpts) -> Result<Vec<PathBuf>> {
     checkout.checkout(&reviewed.target)?;
     std::fs::create_dir_all(&opts.pkgdest)
         .wrap_err_with(|| format!("creating {}", opts.pkgdest.display()))?;
-    let verifydir = opts.builddir.with_extension("verify");
+    let verifydir = path_with_suffix(&opts.builddir, ".verify");
     for dir in [&verifydir, &opts.builddir] {
         if dir.exists() {
             std::fs::remove_dir_all(dir).wrap_err_with(|| format!("clearing {}", dir.display()))?;
@@ -172,49 +173,9 @@ fn run_makepkg(
     source_writable: bool,
     builddir: &Path,
 ) -> Result<std::process::ExitStatus> {
-    if !opts.jail {
-        let mut command = Command::new(&opts.makepkg);
-        command
-            .args(args)
-            .current_dir(builddir.join("worktree"))
-            .env_clear()
-            .envs(crate::jail::scrubbed_env())
-            .env("PKGDEST", &opts.pkgdest)
-            .env("SRCDEST", &opts.srcdest)
-            .env("BUILDDIR", builddir)
-            .env("LOGDEST", &opts.logdest);
-        set_private_home(&mut command, builddir)?;
-        return command.status().wrap_err("starting makepkg");
-    }
-
-    let mut writable = vec![
-        opts.pkgdest.clone(),
-        builddir.to_path_buf(),
-        opts.logdest.clone(),
-    ];
-    if source_writable {
-        writable.push(opts.srcdest.clone());
-    }
-    let spec = Spec {
-        // makepkg needs to lock and sometimes update PKGBUILD, so it runs in
-        // a disposable checkout copy contained by this writable build root.
-        writable,
-        network,
-        program: opts.makepkg.clone(),
-        args: args.iter().map(|arg| (*arg).to_string()).collect(),
-        cwd: builddir.join("worktree"),
-    };
-    let mut command = spec.command()?;
-    command.env("PKGDEST", &opts.pkgdest);
-    command.env("SRCDEST", &opts.srcdest);
-    command.env("BUILDDIR", builddir);
-    command.env("LOGDEST", &opts.logdest);
-    set_private_home(&mut command, builddir)?;
-    let mut child = command.spawn().wrap_err("starting the build jail")?;
-    if let Some(mut stdin) = child.stdin.take() {
-        serde_json::to_writer(&mut stdin, &spec).wrap_err("sending the jail spec")?;
-    }
-    child.wait().wrap_err("waiting for makepkg")
+    spawn_makepkg(opts, args, network, source_writable, builddir, false)?
+        .wait()
+        .wrap_err("waiting for makepkg")
 }
 
 fn run_makepkg_output(
@@ -224,20 +185,19 @@ fn run_makepkg_output(
     source_writable: bool,
     builddir: &Path,
 ) -> Result<std::process::Output> {
-    if !opts.jail {
-        let mut command = Command::new(&opts.makepkg);
-        command
-            .args(args)
-            .current_dir(builddir.join("worktree"))
-            .env_clear()
-            .envs(crate::jail::scrubbed_env())
-            .env("PKGDEST", &opts.pkgdest)
-            .env("SRCDEST", &opts.srcdest)
-            .env("BUILDDIR", builddir)
-            .env("LOGDEST", &opts.logdest);
-        set_private_home(&mut command, builddir)?;
-        return command.output().wrap_err("starting makepkg");
-    }
+    spawn_makepkg(opts, args, network, source_writable, builddir, true)?
+        .wait_with_output()
+        .wrap_err("waiting for makepkg")
+}
+
+fn spawn_makepkg(
+    opts: &BuildOpts,
+    args: &[&str],
+    network: bool,
+    source_writable: bool,
+    builddir: &Path,
+    capture_output: bool,
+) -> Result<Child> {
     let mut writable = vec![
         opts.pkgdest.clone(),
         builddir.to_path_buf(),
@@ -253,28 +213,50 @@ fn run_makepkg_output(
         args: args.iter().map(|arg| (*arg).to_string()).collect(),
         cwd: builddir.join("worktree"),
     };
-    let mut command = spec.command()?;
+    let (mut command, jail_spec) = if opts.jail {
+        (spec.command()?, Some(spec))
+    } else {
+        let mut command = Command::new(&opts.makepkg);
+        command
+            .args(args)
+            .current_dir(builddir.join("worktree"))
+            .env_clear()
+            .envs(crate::jail::scrubbed_env());
+        (command, None)
+    };
     command
         .env("PKGDEST", &opts.pkgdest)
         .env("SRCDEST", &opts.srcdest)
         .env("BUILDDIR", builddir)
         .env("LOGDEST", &opts.logdest);
     set_private_home(&mut command, builddir)?;
-    command.stdout(std::process::Stdio::piped());
-    let mut child = command.spawn().wrap_err("starting the build jail")?;
-    if let Some(mut stdin) = child.stdin.take() {
-        serde_json::to_writer(&mut stdin, &spec).wrap_err("sending the jail spec")?;
+    if capture_output {
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
     }
-    child.wait_with_output().wrap_err("waiting for makepkg")
+    let mut child = command.spawn().wrap_err("starting makepkg")?;
+    if let Some(spec) = jail_spec {
+        serde_json::to_writer(
+            child
+                .stdin
+                .take()
+                .ok_or_else(|| eyre::eyre!("jail helper stdin is not piped"))?,
+            &spec,
+        )
+        .wrap_err("sending the jail spec")?;
+    }
+    Ok(child)
 }
 
 fn set_private_home(command: &mut Command, builddir: &Path) -> Result<()> {
     let home = builddir.join("home");
     let cache = home.join(".cache");
+    let gnupg = home.join(".gnupg");
     std::fs::create_dir_all(&cache)
         .wrap_err_with(|| format!("creating private build home {}", home.display()))?;
+    seed_public_keyring(&gnupg)?;
     command
         .env("HOME", &home)
+        .env("GNUPGHOME", &gnupg)
         .env("XDG_CACHE_HOME", &cache)
         .env("CARGO_HOME", home.join(".cargo"))
         .env("GOCACHE", cache.join("go-build"))
@@ -283,6 +265,33 @@ fn set_private_home(command: &mut Command, builddir: &Path) -> Result<()> {
         .env("TMPDIR", builddir.join("tmp"));
     std::fs::create_dir_all(builddir.join("tmp"))?;
     Ok(())
+}
+
+fn seed_public_keyring(to: &Path) -> Result<()> {
+    let source = std::env::var_os("GNUPGHOME").map_or_else(
+        || std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".gnupg")),
+        |home| Some(PathBuf::from(home)),
+    );
+    seed_public_keyring_from(source.as_deref(), to)
+}
+
+fn seed_public_keyring_from(source: Option<&Path>, to: &Path) -> Result<()> {
+    fs::create_dir_all(to)?;
+    fs::set_permissions(to, fs::Permissions::from_mode(0o700))?;
+    for name in ["pubring.kbx", "pubring.gpg", "trustdb.gpg", "public-keys.d"] {
+        if let Some(from) = source.map(|source| source.join(name))
+            && from.exists()
+        {
+            copy_tree(&from, &to.join(name))?;
+        }
+    }
+    Ok(())
+}
+
+fn path_with_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(suffix);
+    path.with_file_name(name)
 }
 
 fn copy_tree(from: &Path, to: &Path) -> Result<()> {
@@ -345,4 +354,36 @@ pub fn built_packages(files: &[PathBuf]) -> Result<Vec<BuiltPackage>> {
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verification_directory_appends_to_dotted_pkgbase() {
+        assert_eq!(
+            path_with_suffix(Path::new("/cache/build/foo.bar"), ".verify"),
+            Path::new("/cache/build/foo.bar.verify")
+        );
+    }
+
+    #[test]
+    fn private_gnupg_home_copies_only_public_key_material() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source");
+        let target = dir.path().join("target");
+        fs::create_dir_all(source.join("private-keys-v1.d")).unwrap();
+        fs::write(source.join("pubring.kbx"), b"public").unwrap();
+        fs::write(source.join("private-keys-v1.d/secret.key"), b"secret").unwrap();
+
+        seed_public_keyring_from(Some(&source), &target).unwrap();
+
+        assert_eq!(fs::read(target.join("pubring.kbx")).unwrap(), b"public");
+        assert!(!target.join("private-keys-v1.d").exists());
+        assert_eq!(
+            fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+    }
 }

@@ -81,7 +81,7 @@ fn writes_are_confined_to_the_allowed_directories() {
     let (code, out) = jail(&spec(
         &[&allowed],
         true,
-        "cat /etc/hostname >/dev/null || cat /proc/version >/dev/null",
+        "cat /etc/hostname >/dev/null || cat /proc/version >/dev/null; : >/dev/null",
         &allowed,
     ));
     assert_eq!(code, 0, "{out}");
