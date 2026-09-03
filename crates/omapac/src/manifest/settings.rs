@@ -84,8 +84,19 @@ impl Serialize for Age {
 
 impl<'de> Deserialize<'de> for Age {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let text = String::deserialize(deserializer)?;
-        text.parse().map_err(serde::de::Error::custom)
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Value {
+            Text(String),
+            Integer(u64),
+        }
+        match Value::deserialize(deserializer)? {
+            Value::Text(text) => text.parse().map_err(serde::de::Error::custom),
+            Value::Integer(0) => Ok(Age::ZERO),
+            Value::Integer(value) => Err(serde::de::Error::custom(format!(
+                "integer age {value} needs a unit; only unquoted 0 is accepted"
+            ))),
+        }
     }
 }
 
@@ -437,6 +448,12 @@ mod tests {
         assert!("48".parse::<Age>().is_err());
         assert!("48y".parse::<Age>().is_err());
         assert!("h".parse::<Age>().is_err());
+        #[derive(Deserialize)]
+        struct Wrapper {
+            age: Age,
+        }
+        assert_eq!(toml::from_str::<Wrapper>("age = 0").unwrap().age, Age::ZERO);
+        assert!(toml::from_str::<Wrapper>("age = 1").is_err());
     }
 
     fn policy(text: &str) -> PolicyToml {
