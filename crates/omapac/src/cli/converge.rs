@@ -91,9 +91,7 @@ impl Diff {
     }
 
     pub fn has_changes(&self) -> bool {
-        self.steps
-            .iter()
-            .any(|s| matches!(s.action, Action::Install | Action::Remove))
+        self.steps.iter().any(|s| s.action != Action::Noop)
     }
 
     fn installs(&self) -> Vec<Target> {
@@ -180,7 +178,19 @@ impl Diff {
         let installs = self.installs();
         if !installs.is_empty() {
             let tx = Transaction::install(installs)
-                .ignoring(manifest.settings.update_ignore.iter().cloned())
+                .ignoring(
+                    manifest
+                        .settings
+                        .update_ignore
+                        .iter()
+                        .cloned()
+                        .chain(
+                            self.steps
+                                .iter()
+                                .filter(|step| step.hold)
+                                .map(|step| step.name.clone()),
+                        ),
+                )
                 .overwriting(manifest.settings.update_overwrite.iter().cloned());
             run(host, engine, tx, "install", yes, dry_run)?;
         }

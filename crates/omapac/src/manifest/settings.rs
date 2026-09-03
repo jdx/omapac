@@ -404,7 +404,7 @@ impl Settings {
     }
 
     /// What `paranoid` means: every soft gate hard.
-    fn harden(&mut self) {
+    pub(super) fn harden(&mut self) {
         self.mode = Mode::Deny;
         self.aur_jail = true;
         self.aur_install_scripts = InstallScripts::Deny;

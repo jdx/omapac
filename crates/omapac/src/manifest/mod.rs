@@ -182,6 +182,9 @@ impl Manifest {
             settings.apply_managed(&floor.policy);
             managed.push(path.clone());
         }
+        if settings.paranoid {
+            settings.harden();
+        }
         Ok(Manifest {
             packages,
             settings,
@@ -305,6 +308,22 @@ mod tests {
         );
         assert!(manifest.settings.aur_jail);
         assert_eq!(manifest.managed, [p.managed[0].clone()]);
+    }
+
+    #[test]
+    fn user_paranoid_mode_hardens_without_a_managed_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = paths(dir.path());
+        write(&p.user, "[policy]\nparanoid = true\n");
+
+        let manifest = Manifest::load(&p).unwrap();
+
+        assert_eq!(manifest.settings.mode, settings::Mode::Deny);
+        assert!(manifest.settings.aur_jail);
+        assert_eq!(
+            manifest.settings.trust_custom_repos,
+            settings::CustomRepos::Deny
+        );
     }
 
     #[test]
