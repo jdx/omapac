@@ -222,14 +222,19 @@ pub fn evaluate(evidence: &Evidence, policy: &Policy) -> Report {
         }
     }
 
-    if now - evidence.target.time < t.min_commit_age_secs {
+    // Git commit dates are author-controlled. The AUR RPC's last-modified
+    // time is server-observed, so use the newer timestamp as the soak start.
+    let observed_at = evidence.rpc.as_ref().map_or(evidence.target.time, |rpc| {
+        evidence.target.time.max(rpc.last_modified)
+    });
+    if now - observed_at < t.min_commit_age_secs {
         findings.push(Finding::new(
             FindingId::RecentCommit,
             Severity::Warn,
             format!(
                 "commit {} is {} old, less than {}",
                 short(&evidence.target.hash),
-                age(now - evidence.target.time),
+                age(now - observed_at),
                 age(t.min_commit_age_secs)
             ),
         ));
@@ -499,6 +504,18 @@ mod tests {
         let report = evaluate(&evidence(), &Policy::interactive());
         assert!(report.findings.is_empty(), "{report:?}");
         assert!(!report.denied() && !report.flagged());
+    }
+
+    #[test]
+    fn recent_commit_uses_the_server_observed_update_time() {
+        let mut e = evidence();
+        e.target.time = NOW - 30 * DAY;
+        e.rpc.as_mut().unwrap().last_modified = NOW - 3600;
+        let report = evaluate(&e, &Policy::interactive());
+        assert!(
+            report.ids().contains(&FindingId::RecentCommit),
+            "{report:?}"
+        );
     }
 
     #[test]
