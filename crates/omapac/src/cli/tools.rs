@@ -431,7 +431,13 @@ fn sidecar_path(artifact_path: &str, suffix: &str) -> String {
 }
 
 fn download(url: &str, max_size: u64) -> Result<Vec<u8>> {
-    let mut response = ureq::get(url)
+    let config = ureq::Agent::config_builder()
+        .user_agent(concat!("omapac/", env!("CARGO_PKG_VERSION")))
+        .timeout_global(Some(std::time::Duration::from_secs(30)))
+        .build();
+    let agent = ureq::Agent::new_with_config(config);
+    let mut response = agent
+        .get(url)
         .call()
         .wrap_err_with(|| format!("fetching {url}"))?;
     let bytes = response
