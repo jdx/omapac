@@ -122,7 +122,12 @@ impl App {
             patch
                 .index_sequences
                 .insert(repo.to_string(), fetched.value.sequence);
-            self.record(&patch)?;
+            if let Err(err) = self.record(&patch) {
+                eprintln!(
+                    "warning: verified [{repo}] index sequence {} but could not record rollback state: {err:#}",
+                    fetched.value.sequence
+                );
+            }
         }
         Ok(fetched)
     }
