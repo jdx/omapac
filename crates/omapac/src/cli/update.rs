@@ -83,8 +83,10 @@ impl RunWith<&App> for Update {
 
         // Repository upgrades with holds.
         let mut holds = Vec::new();
+        let mut held_names = Vec::new();
         for declared in manifest.packages.values() {
             if declared.package.hold {
+                held_names.push(declared.name.clone());
                 holds.push(Hold {
                     name: declared.name.clone(),
                     reason: format!("held by {}", declared.declared_in.display()),
@@ -121,11 +123,12 @@ impl RunWith<&App> for Update {
         };
 
         // AUR candidates.
-        let aur = if self.no_aur {
+        let mut aur = if self.no_aur {
             Vec::new()
         } else {
             aur_candidates(&host, &app.aur_rpc())?
         };
+        aur.retain(|candidate| !held_names.contains(&candidate.name));
 
         let orphans: Vec<String> = host.orphans()?.iter().map(|p| p.name.clone()).collect();
         let etc = app
@@ -202,7 +205,16 @@ impl RunWith<&App> for Update {
             let performed =
                 transaction::confirm_and_apply(&engine, resolved, p, "upgrade", self.yes, false)?;
             if performed {
-                app.record(&transaction::ledger_patch(p, &[], "update", false))?;
+                let mut explicit = Vec::new();
+                for change in &p.changes {
+                    if host
+                        .installed_package(&change.name)?
+                        .is_some_and(|package| package.reason == alpm_db::InstallReason::Explicit)
+                    {
+                        explicit.push(change.name.clone());
+                    }
+                }
+                app.record(&transaction::ledger_patch(p, &explicit, "update", false))?;
             }
         }
 
@@ -250,6 +262,14 @@ impl RunWith<&App> for Update {
             if performed {
                 app.record(&transaction::ledger_patch(&p, &[], "update", true))?;
             }
+        }
+
+        let final_pacnew: Vec<String> = pacnew_files(&etc)
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect();
+        for file in final_pacnew.iter().filter(|file| !pacnew.contains(file)) {
+            println!("pacnew: {file}");
         }
 
         run_hooks(&settings.update_post_hooks, "post")?;
@@ -308,7 +328,7 @@ fn update_aur_package(app: &App, name: &str, unattended: bool) -> Result<AurOutc
         lock.save(&app.lockfile_path())?;
     }
     let prepared = app.prepare_aur(name, None, true, true)?;
-    let files = app.build_aur(&prepared)?;
+    let files = app.build_aur(&prepared, true)?;
     let engine = app.engine()?;
     engine.install_files(
         &crate::engine::FileInstall {
