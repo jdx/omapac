@@ -103,15 +103,22 @@ impl RunWith<()> for ToolChannel {
         };
         let index_path = store.join(INDEX_PATH);
         let now = crate::vendor::now()?;
-        let mut index: ToolIndex =
-            crate::feed::load(&index_path)?.unwrap_or_else(|| ToolIndex::empty(&now.to_string()));
         let key = || -> Result<SecretKey> {
             let Some(path) = &self.key else {
                 bail!("--key is required");
             };
             crate::feed::secret_key(path)
         };
-        let mut loaded_key = None;
+        let signing_key = if matches!(&self.command, ToolChannelCommands::Status(_)) {
+            None
+        } else {
+            Some(key()?)
+        };
+        let mut index: ToolIndex = match &signing_key {
+            Some(key) => crate::feed::load_signed(&index_path, &key.public_key())?,
+            None => crate::feed::load(&index_path)?,
+        }
+        .unwrap_or_else(|| ToolIndex::empty(&now.to_string()));
         match &self.command {
             ToolChannelCommands::Status(_) => {
                 if self.json {
@@ -137,13 +144,12 @@ impl RunWith<()> for ToolChannel {
                 return Ok(());
             }
             ToolChannelCommands::Publish(publish) => {
-                let signing_key = key()?;
-                let line = publish_release(store, &mut index, publish, now, &signing_key)?;
+                let signing_key = signing_key.as_ref().expect("mutations load the key");
+                let line = publish_release(store, &mut index, publish, now, signing_key)?;
                 let Some(line) = line else {
                     println!("tool channel already up to date");
                     return Ok(());
                 };
-                loaded_key = Some(signing_key);
                 println!("{line}");
             }
             ToolChannelCommands::Promote(promote) => {
@@ -173,10 +179,7 @@ impl RunWith<()> for ToolChannel {
                 println!("unheld {} {}", unhold.tool, unhold.version);
             }
         }
-        let key = match loaded_key {
-            Some(key) => key,
-            None => key()?,
-        };
+        let key = signing_key.expect("mutations load the key");
         index.sequence += 1;
         index.generated_at = now.to_string();
         std::fs::create_dir_all(index_path.parent().unwrap_or(store))?;
@@ -263,7 +266,8 @@ fn publish_release(
     }
 
     // Verdicts: a block on any artifact digest keeps the version out.
-    let verdicts: Option<Verdicts> = crate::feed::load(&store.join("verdicts.json"))?;
+    let verdicts: Option<Verdicts> =
+        crate::feed::load_signed(&store.join("verdicts.json"), &key.public_key())?;
     if let Some(verdicts) = &verdicts {
         for chosen in resolved.artifacts.values() {
             if verdicts

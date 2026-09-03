@@ -159,6 +159,24 @@ fn publish_promote_hold_and_immutability() {
     let v = &entry.versions["1.0.0"];
     assert_eq!(v.channels, vec!["edge"]);
     assert_eq!(v.published_at, "2026-08-01T00:00:00Z");
+    let index_path = rig.path().join("store/tools/index.json");
+    let authentic_index = std::fs::read(&index_path).unwrap();
+    std::fs::write(&index_path, br#"{"version":1,"sequence":999}"#).unwrap();
+    let (code, _, err) = tc(
+        &rig,
+        &[
+            "promote",
+            "--tool",
+            "tool",
+            "--version",
+            "1.0.0",
+            "--channel",
+            "stable",
+        ],
+    );
+    assert_ne!(code, 0);
+    assert!(err.contains("signature does not verify"), "{err}");
+    std::fs::write(&index_path, authentic_index).unwrap();
     let x64 = &v.artifacts["linux-x64"];
     assert_eq!(x64.name, "tool-1.0.0-linux-x64.tar.gz");
     assert_eq!(x64.path, "tools/tool/1.0.0/tool-1.0.0-linux-x64.tar.gz");
@@ -367,6 +385,18 @@ fn a_block_verdict_keeps_a_version_out() {
         "trojan",
     ]);
     assert_eq!(code, 0, "{err}");
+    let verdict_path = rig.path().join("store/verdicts.json");
+    let authentic_verdicts = std::fs::read(&verdict_path).unwrap();
+    std::fs::write(
+        &verdict_path,
+        br#"{"version":1,"sequence":999,"verdicts":[]}"#,
+    )
+    .unwrap();
+    let (code, _, err) = tc(&rig, &["publish", "--config", "tool/tool.toml"]);
+    assert_ne!(code, 0);
+    assert!(err.contains("signature does not verify"), "{err}");
+    assert!(!rig.path().join("store/tools/index.json").exists());
+    std::fs::write(&verdict_path, authentic_verdicts).unwrap();
     let (code, _, err) = tc(&rig, &["publish", "--config", "tool/tool.toml"]);
     assert_ne!(code, 0);
     assert!(
