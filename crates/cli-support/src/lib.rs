@@ -68,3 +68,13 @@ fn exit_with_usage_error(
         }
     }
 }
+
+/// When the first argument is `__usage`, print the usage spec (KDL) for
+/// documentation and completion generation and exit. Hidden from the
+/// parser so it never shows in help.
+pub fn dump_usage_spec_if_requested(args: &[std::ffi::OsString], kdl: impl FnOnce() -> String) {
+    if args.get(1).is_some_and(|a| a == "__usage") {
+        print!("{}", kdl());
+        std::process::exit(0);
+    }
+}
