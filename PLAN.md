@@ -907,6 +907,13 @@ Recorded 2026-09-03. Each states the decision and the reasoning in plain terms.
     goes through omapac. The OPR vendor pipeline and the tool channel share one
     vetting core with two publishers, so OPR only keeps PKGBUILDs for the
     system-scoped exceptions such as mise, omapac, browsers, and desktop apps.
+14. alpm-db writes its own parsers rather than wrapping Arch's `alpm-*` crates. The
+    formats involved (`pacman.conf`, `desc` files, `.PKGINFO`, the version grammar)
+    are small and stable, a direct port of pacman's C keeps behaviour identical
+    (`vercmp` is tested against pacman's own vector table and against the `vercmp`
+    binary when present), and the `alpm-*` crates are pre-1.0 with a large dependency
+    tree. Revisit for the native engine, where `alpm-solve` and `alpm-package` carry
+    real weight.
 
 ## Open questions
 
@@ -914,8 +921,6 @@ Living section. Items move to Decisions when settled.
 
 - Whether `packslip.dev` is available for the predicate type host, and the fallback
   host under the `jdx` GitHub organization if not.
-- Whether to wrap Arch's `alpm-*` crates or write minimal parsers in alpm-db; decided
-  in layer 2 with a benchmark and an API review.
 - Whether the devtools chroot should become the default for AUR builds once the jail
   has shipped and its overhead is measured.
 - Which makepkg version in OPR's build image supports a PKGBUILD `verify()` function,
