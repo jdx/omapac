@@ -111,7 +111,7 @@ impl App {
     }
 
     /// Pin the mirrorlist to `id`, checking the snapshot exists and was
-    /// promoted unless forced, and record it in the ledger.
+    /// promoted unless forced.
     pub fn pin(&self, id: &str, force: bool, offline: bool) -> Result<Release> {
         let manifest = self.manifest()?;
         let Some(base) = manifest.settings.channel_snapshot_base.clone() else {
@@ -131,23 +131,12 @@ impl App {
             );
         }
         let path = self.mirrorlist_path();
-        let original = std::fs::read_to_string(&path)
-            .wrap_err_with(|| format!("reading {}", path.display()))?;
-        let was_pinned = channel::current_pin(&path).is_some();
         channel::write_privileged(
             &path,
             &channel::pin_text(&base, id),
             true,
             self.paths.sysroot.as_deref(),
         )?;
-        let patch = crate::ledger::Patch {
-            snapshot: Some(id.to_string()),
-            ..Default::default()
-        };
-        if let Err(err) = self.record(&patch) {
-            restore_mirrorlist(self, &path, &original, was_pinned)?;
-            return Err(err.wrap_err("recording the snapshot pin"));
-        }
         Ok(release)
     }
 }
@@ -190,11 +179,6 @@ impl RunWith<&App> for Channel {
                 let original = std::fs::read_to_string(&backup)
                     .wrap_err_with(|| format!("reading {}", backup.display()))?;
                 channel::restore_privileged(&path, &original, app.paths.sysroot.as_deref())?;
-                let patch = crate::ledger::Patch {
-                    snapshot: Some(String::new()),
-                    ..Default::default()
-                };
-                app.record(&patch)?;
                 println!("restored {} from {}", path.display(), backup.display());
                 Ok(())
             }
@@ -338,17 +322,12 @@ impl RunWith<&App> for Rollback {
         let original_mirrorlist = std::fs::read_to_string(&mirrorlist)
             .wrap_err_with(|| format!("reading {}", mirrorlist.display()))?;
         let was_pinned = channel::current_pin(&mirrorlist).is_some();
-        let previous_snapshot = app.ledger()?.snapshot.unwrap_or_default();
         let release = app.pin(&self.snapshot, self.force, false)?;
         println!("pinned to snapshot {} ({})", release.id, describe(&release));
         let engine = match app.engine() {
             Ok(engine) => engine,
             Err(err) => {
                 restore_mirrorlist(app, &mirrorlist, &original_mirrorlist, was_pinned)?;
-                app.record(&crate::ledger::Patch {
-                    snapshot: Some(previous_snapshot),
-                    ..Default::default()
-                })?;
                 return Err(err);
             }
         };
@@ -390,12 +369,9 @@ impl RunWith<&App> for Rollback {
             )?;
             if performed {
                 applied = true;
-                app.record(&super::transaction::ledger_patch(
-                    &plan,
-                    &[],
-                    "rollback",
-                    false,
-                ))?;
+                let mut patch = super::transaction::ledger_patch(&plan, &[], "rollback", false);
+                patch.snapshot = Some(release.id.clone());
+                app.record(&patch)?;
             }
             Ok(())
         })();
@@ -406,10 +382,6 @@ impl RunWith<&App> for Rollback {
                 ));
             }
             restore_mirrorlist(app, &mirrorlist, &original_mirrorlist, was_pinned)?;
-            app.record(&crate::ledger::Patch {
-                snapshot: Some(previous_snapshot),
-                ..Default::default()
-            })?;
             engine.refresh(
                 crate::engine::RefreshOpts { force: true },
                 ApplyOpts {
