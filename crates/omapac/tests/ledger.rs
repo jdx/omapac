@@ -83,6 +83,10 @@ fn a_newer_schema_is_refused() {
     let (code, _, err) = rig.run(&["list", "--ledger"], "", 0);
     assert_ne!(code, 0);
     assert!(err.contains("schema 9"), "{err}");
+
+    let (code, out, err) = rig.run(&["list"], "", 0);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("pacman"), "{out}");
 }
 
 #[test]
