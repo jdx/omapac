@@ -79,7 +79,8 @@ pub struct VendorLock {
 /// The sidecar the built package ships as `<pkg>.vendor.json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VendorSidecar {
-    pub document: Statement,
+    /// Exact UTF-8 bytes that the upstream signed.
+    pub document: String,
     pub signature: String,
     pub level: Level,
     pub key_id: String,
@@ -218,9 +219,8 @@ impl RunWith<()> for Vendor {
         // Artifacts per architecture.
         let mut artifacts = BTreeMap::new();
         for (arch, selector) in &config.artifacts {
-            let artifact = select(&statement, selector, &chosen.version).ok_or_else(|| {
-                eyre::eyre!("no artifact in release {} matches {arch}", chosen.version)
-            })?;
+            let artifact = select(&statement, selector, &chosen.version)
+                .wrap_err_with(|| format!("selecting artifact for {arch}"))?;
             let sha256 = statement
                 .digest_of(&artifact.name)
                 .unwrap_or_default()
@@ -253,7 +253,7 @@ impl RunWith<()> for Vendor {
             std::fs::write(&pkgbuild_path, updated)?;
             let pkgbase = pkgbase_of(&pkgbuild).unwrap_or_else(|| "package".to_string());
             let sidecar = VendorSidecar {
-                document: statement,
+                document: String::from_utf8(document.clone()).wrap_err("packslip is not UTF-8")?,
                 signature,
                 level: verified.level,
                 key_id: verified.key_id.clone(),
@@ -395,17 +395,32 @@ fn select<'a>(
     statement: &'a Statement,
     selector: &Selector,
     version: &str,
-) -> Option<&'a packslip::model::Artifact> {
-    statement.predicate.artifacts.iter().find(|a| {
-        if let Some(name) = &selector.name {
-            return a.name == name.replace("{version}", version);
-        }
-        let want = |sel: &Option<String>, have: &Option<String>| match sel {
-            Some(s) => have.as_deref() == Some(s.as_str()),
-            None => true,
-        };
-        want(&selector.os, &a.os) && want(&selector.arch, &a.arch) && want(&selector.libc, &a.libc)
-    })
+) -> Result<&'a packslip::model::Artifact> {
+    let matches: Vec<_> = statement
+        .predicate
+        .artifacts
+        .iter()
+        .filter(|a| {
+            if let Some(name) = &selector.name {
+                return a.name == name.replace("{version}", version);
+            }
+            let want = |sel: &Option<String>, have: &Option<String>| match sel {
+                Some(s) => have.as_deref() == Some(s.as_str()),
+                None => true,
+            };
+            want(&selector.os, &a.os)
+                && want(&selector.arch, &a.arch)
+                && want(&selector.libc, &a.libc)
+        })
+        .collect();
+    match matches.as_slice() {
+        [artifact] => Ok(*artifact),
+        [] => bail!("no artifact in release {version} matches the selector"),
+        _ => bail!(
+            "{} artifacts in release {version} match the selector; add an exact name or format-specific selector",
+            matches.len()
+        ),
+    }
 }
 
 fn read_lock(path: &Path) -> Result<Option<VendorLock>> {
@@ -474,8 +489,22 @@ pub fn rewrite_pkgbuild(pkgbuild: &str, report: &Report) -> Result<String> {
         out.push_str(line);
         out.push('\n');
     }
-    if replaced_sums.is_empty() {
-        bail!("PKGBUILD has no sha256sums array for the configured architectures");
+    let missing: Vec<String> =
+        if report.artifacts.len() == 1 && replaced_sums.iter().any(|k| k == "sha256sums") {
+            Vec::new()
+        } else {
+            report
+                .artifacts
+                .keys()
+                .map(|arch| format!("sha256sums_{arch}"))
+                .filter(|key| !replaced_sums.contains(key))
+                .collect()
+        };
+    if !missing.is_empty() {
+        bail!(
+            "PKGBUILD is missing checksum array(s): {}",
+            missing.join(", ")
+        );
     }
     Ok(out)
 }

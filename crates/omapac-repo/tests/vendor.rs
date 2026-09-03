@@ -181,7 +181,9 @@ fn generates_from_the_newest_eligible_release() {
         &std::fs::read_to_string(rig.path().join("tool-bin/tool-bin.vendor.json")).unwrap(),
     )
     .unwrap();
-    assert_eq!(sidecar["document"]["predicate"]["version"], "1.5.0");
+    let document: serde_json::Value =
+        serde_json::from_str(sidecar["document"].as_str().unwrap()).unwrap();
+    assert_eq!(document["predicate"]["version"], "1.5.0");
     assert_eq!(sidecar["level"], "l2");
     assert!(
         sidecar["signature"]
