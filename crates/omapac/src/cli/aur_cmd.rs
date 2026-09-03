@@ -106,6 +106,16 @@ impl App {
         commit: Option<&str>,
         interactive: bool,
     ) -> Result<(Reviewed, Lockfile)> {
+        self.review_aur_with_pin(name, commit, interactive, commit.is_some())
+    }
+
+    fn review_aur_with_pin(
+        &self,
+        name: &str,
+        commit: Option<&str>,
+        interactive: bool,
+        pinned: bool,
+    ) -> Result<(Reviewed, Lockfile)> {
         let host = self.host()?;
         let manifest = self.manifest()?;
         let lock = Lockfile::load(&self.lockfile_path())?;
@@ -125,6 +135,7 @@ impl App {
             settings: &manifest.settings,
             locked: lock.aur.get(name),
             commit,
+            pinned,
             interactive,
             arch: &arch,
         };
@@ -229,9 +240,9 @@ impl RunWith<&App> for Approve {
     type Output = Result<()>;
 
     fn run_with(self, app: &App) -> Self::Output {
-        let interactive = crate::ui::interactive();
+        let interactive = !self.yes && crate::ui::interactive();
         let (reviewed, mut lock) =
-            app.review_aur(&self.package, self.commit.as_deref(), interactive)?;
+            app.review_aur_with_pin(&self.package, self.commit.as_deref(), interactive, false)?;
         print!("{}", render(&reviewed));
         if reviewed.report.denied() && !self.force {
             bail!(

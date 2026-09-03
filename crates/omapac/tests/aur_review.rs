@@ -150,6 +150,9 @@ fn review_approve_then_catch_the_takeover() {
 fn diff_and_json() {
     let s = setup();
     run(&s, &["aur", "approve", "-y", "yay"]);
+    let (code, out, err) = run(&s, &["aur", "diff", "yay"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.is_empty(), "approved commit has no diff: {out}");
     s.aur.commit(
         "yay",
         &[
