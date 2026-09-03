@@ -20,6 +20,7 @@ getrandom = "0.3"
 omapac-cli-support = { path = "crates/cli-support" }
 omapac = { path = "crates/omapac" }
 omapac-policy = { path = "crates/omapac-policy" }
+p256 = { version = "0.13", features = ["ecdsa", "pem"] }
 packslip = { path = "crates/packslip" }
 ratatui = "0.30"
 

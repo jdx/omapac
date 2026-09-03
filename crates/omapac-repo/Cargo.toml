@@ -23,6 +23,7 @@ nix = { workspace = true, features = ["fs"] }
 omapac.workspace = true
 omapac-cli-support.workspace = true
 omapac-policy.workspace = true
+p256.workspace = true
 packslip.workspace = true
 serde.workspace = true
 serde_json.workspace = true

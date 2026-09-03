@@ -15,7 +15,8 @@ For every package in the directory without a .sig (or the packages given), verif
 - **`--gpg <GPG>`** — The gpg program
 
   **Default:** `gpg`
-- **`--require-rekor`** — Require a stored transparency log entry about the envelope
+- **`--require-rekor`** — Require a stored transparency log entry about the envelope, with an inclusion proof that reaches its root
+- **`--rekor-pubkey <REKOR_PUBKEY>`** — The log's public key (SPKI PEM) to verify checkpoints with
 - **`--index <INDEX>`** — Require the package to be listed with this digest in the index
 - **`-n --dry-run`** — Check and report without signing
 - **`-J --json`** — Print the report as JSON

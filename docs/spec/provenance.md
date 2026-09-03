@@ -107,9 +107,13 @@ failure refuses the package and the command exits non-zero, so a build
 host compromise cannot produce a repository-signed package on its own.
 `--dry-run` reports without signing; `--json` prints the verdicts.
 
-Not yet checked: the Merkle inclusion proof itself and the signed entry
-timestamp against the log's public key. Both are planned once a
-sigstore verification crate is adopted.
+The inclusion proof is verified: the entry body is the Merkle leaf, the
+proof must reach the stated root, and the checkpoint the log returns
+must commit to that root and tree size. With `--rekor-pubkey <pem>` the
+checkpoint's signature is verified with the log's ECDSA P-256 key too,
+which is what ties the proof to the public log rather than to whatever
+answered the upload. The signed entry timestamp is stored but not yet
+verified.
 
 ## Consuming it
 
