@@ -1,24 +1,31 @@
 #!/usr/bin/env bash
-# A stand-in for makepkg: records every invocation, "builds" a package
-# file into PKGDEST on a build invocation, and lists it on --packagelist.
+# A stand-in for makepkg: records every invocation, "builds" package
+# files into PKGDEST on a build invocation, and lists them on --packagelist.
 #   FAKE_PACMAN_LOG   file every argv is appended to (shared with pacman)
 #   FAKE_MAKEPKG_FAIL when set, the build fails with this status
 set -euo pipefail
 printf 'makepkg %s\n' "$*" >>"${FAKE_PACMAN_LOG:?}"
-pkgname=$(sed -n 's/^pkgname=//p' PKGBUILD | tr -d '"'"'")
+mapfile -t pkgnames < <(sed -n 's/^pkgname = //p' .SRCINFO)
+if [ "${#pkgnames[@]}" -eq 0 ]; then
+  pkgnames=("$(sed -n 's/^pkgname=//p' PKGBUILD | tr -d "'")")
+fi
 pkgver=$(sed -n 's/^pkgver=//p' PKGBUILD)
 pkgrel=$(sed -n 's/^pkgrel=//p' PKGBUILD)
-file="${PKGDEST:-.}/${pkgname}-${pkgver}-${pkgrel}-x86_64.pkg.tar.zst"
 case " $* " in
   *" --packagelist "*)
-    printf '%s\n' "$file"
+    for pkgname in "${pkgnames[@]}"; do
+      printf '%s/%s-%s-%s-x86_64.pkg.tar.zst\n' "${PKGDEST:-.}" "$pkgname" "$pkgver" "$pkgrel"
+    done
     ;;
   *" --verifysource "*)
     ;;
   *)
     if [ -n "${FAKE_MAKEPKG_FAIL:-}" ]; then exit "$FAKE_MAKEPKG_FAIL"; fi
-    printf 'fake package %s\n' "$pkgname" >"$file"
-    printf 'pkgname = %s\npkgver = %s-%s\n' "$pkgname" "$pkgver" "$pkgrel" >"$file.PKGINFO"
+    for pkgname in "${pkgnames[@]}"; do
+      file="${PKGDEST:-.}/${pkgname}-${pkgver}-${pkgrel}-x86_64.pkg.tar.zst"
+      printf 'fake package %s\n' "$pkgname" >"$file"
+      printf 'pkgname = %s\npkgver = %s-%s\n' "$pkgname" "$pkgver" "$pkgrel" >"$file.PKGINFO"
+    done
     # Prove the environment was scrubbed and the jail state is visible.
     printf 'env GITHUB_TOKEN=%s\n' "${GITHUB_TOKEN:-unset}" >>"${FAKE_PACMAN_LOG:?}"
     ;;
