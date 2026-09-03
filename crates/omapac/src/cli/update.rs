@@ -44,6 +44,9 @@ pub struct Update {
     /// Print the plan as JSON and run nothing
     #[usage(short = 'J', long)]
     json: bool,
+    /// Queue behind another running update instead of failing
+    #[usage(long)]
+    wait: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -149,6 +152,11 @@ impl RunWith<&App> for Update {
         let settings = &manifest.settings;
         let dry_run = self.dry_run || self.json;
         let engine = app.engine()?;
+        let lock_path = crate::update::UpdateLock::path(app.paths.sysroot.as_deref());
+        let _lock = crate::update::UpdateLock::acquire(
+            &lock_path,
+            self.wait.then_some(Duration::from_secs(3600)),
+        )?;
 
         // Refresh first so the plan is against current databases.
         let host = app.host()?;

@@ -330,6 +330,7 @@ Refreshes the sync databases, plans the repository upgrade with the manifest's h
     flag --no-refresh help="Do not refresh the sync databases first"
     flag --prune-orphans help="Remove dependencies nothing needs any more"
     flag "-J --json" help="Print the plan as JSON and run nothing"
+    flag --wait help="Queue behind another running update instead of failing"
     flag "-h --help" help="Print help" action=help builtin=#true
 }
 cmd verify help="Re-run the evidence chain for a package or a package file" {

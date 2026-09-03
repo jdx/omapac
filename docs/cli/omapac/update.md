@@ -15,4 +15,5 @@ Refreshes the sync databases, plans the repository upgrade with the manifest's h
 - **`--no-refresh`** — Do not refresh the sync databases first
 - **`--prune-orphans`** — Remove dependencies nothing needs any more
 - **`-J --json`** — Print the plan as JSON and run nothing
+- **`--wait`** — Queue behind another running update instead of failing
 - **`-h --help`** — Print help

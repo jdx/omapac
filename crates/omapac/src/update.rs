@@ -224,6 +224,96 @@ pub fn run_hooks(hooks: &[String], stage: &str) -> Result<()> {
     Ok(())
 }
 
+/// The update lock: one `omapac update` at a time per lock path. Held
+/// for the life of the value.
+pub struct UpdateLock {
+    _flock: nix::fcntl::Flock<std::fs::File>,
+    pub path: PathBuf,
+}
+
+impl UpdateLock {
+    /// Where the lock lives: the ledger directory when this process can
+    /// write there (root), else the user's runtime or cache directory.
+    pub fn path(sysroot: Option<&Path>) -> PathBuf {
+        let system = crate::ledger::Ledger::path(sysroot)
+            .parent()
+            .map(|dir| dir.join("update.lock"))
+            .unwrap_or_else(|| PathBuf::from("/var/lib/omapac/update.lock"));
+        if system
+            .parent()
+            .is_some_and(|dir| dir.is_dir() && is_writable(dir))
+        {
+            return system;
+        }
+        if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") {
+            return PathBuf::from(runtime).join("omapac/update.lock");
+        }
+        crate::aur::cache_dir().join("update.lock")
+    }
+
+    /// Take the lock, waiting up to `wait` when another update holds it.
+    pub fn acquire(path: &Path, wait: Option<Duration>) -> Result<UpdateLock> {
+        use nix::fcntl::{Flock, FlockArg};
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).wrap_err_with(|| format!("creating {}", dir.display()))?;
+        }
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path)
+            .wrap_err_with(|| format!("opening {}", path.display()))?;
+        let started = Instant::now();
+        let mut file = Some(file);
+        loop {
+            match Flock::lock(file.take().expect("file"), FlockArg::LockExclusiveNonblock) {
+                Ok(flock) => {
+                    use std::io::Write as _;
+                    let mut f: &std::fs::File = &flock;
+                    let _ = f.set_len(0);
+                    let _ = writeln!(f, "{}", std::process::id());
+                    return Ok(UpdateLock {
+                        _flock: flock,
+                        path: path.to_path_buf(),
+                    });
+                }
+                Err((returned, nix::errno::Errno::EWOULDBLOCK)) => {
+                    let holder = std::fs::read_to_string(path)
+                        .ok()
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty());
+                    match wait {
+                        Some(limit) if started.elapsed() < limit => {
+                            std::thread::sleep(Duration::from_millis(250));
+                            file = Some(returned);
+                        }
+                        _ => bail!(
+                            "another omapac update is running{}; pass --wait to queue behind it",
+                            holder
+                                .map(|pid| format!(" (pid {pid})"))
+                                .unwrap_or_default()
+                        ),
+                    }
+                }
+                Err((_, err)) => bail!("locking {}: {err}", path.display()),
+            }
+        }
+    }
+}
+
+fn is_writable(dir: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt as _;
+    let Ok(meta) = dir.metadata() else {
+        return false;
+    };
+    let uid = nix::unistd::geteuid().as_raw();
+    if uid == 0 {
+        return true;
+    }
+    meta.uid() == uid && meta.mode() & 0o200 != 0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
