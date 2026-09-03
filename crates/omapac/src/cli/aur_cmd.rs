@@ -139,6 +139,7 @@ const MAX_AUR_DEPTH: usize = 8;
 
 #[derive(Clone)]
 struct AncestorOutputs {
+    commit: String,
     packages: Vec<(String, String, Vec<alpm_db::dep::Dependency>)>,
 }
 
@@ -155,7 +156,10 @@ impl AncestorOutputs {
                 (name.to_string(), version.clone(), provides)
             })
             .collect();
-        Self { packages }
+        Self {
+            commit: prepared.reviewed.target.clone(),
+            packages,
+        }
     }
 
     fn satisfies(&self, dep: &alpm_db::dep::Dependency) -> bool {
@@ -332,9 +336,47 @@ impl App {
                 .is_some_and(|package| package.reason == alpm_db::local::InstallReason::Explicit);
             if let Some(ancestor) = ancestors.iter().find(|ancestor| ancestor.satisfies(dep)) {
                 if ancestor.packages.len() > 1 {
-                    // A split sibling will be produced when its ancestor is
-                    // built. Do not mistake that solvable runtime edge for a
-                    // recursive AUR recipe.
+                    let prepared = self.prepare_aur(
+                        &dep.name,
+                        Some(&ancestor.commit),
+                        true,
+                        parent.unattended,
+                    )?;
+                    let opts = crate::aur::build::BuildOpts::from_settings(
+                        &prepared.settings,
+                        &prepared.reviewed.pkgbase,
+                        &crate::aur::cache_dir(),
+                    )?;
+                    let files = crate::aur::build::build_without_dependency_checks(
+                        &prepared.reviewed,
+                        &opts,
+                    )?;
+                    let packages = crate::aur::build::built_packages(&files)?;
+                    let mut selected = Vec::new();
+                    let mut selected_packages = Vec::new();
+                    for (file, package) in files.into_iter().zip(packages) {
+                        if let Some((name, version, provides)) =
+                            ancestor.packages.iter().find(|(name, version, provides)| {
+                                name == &package.name && dep.satisfied_by(name, version, provides)
+                            })
+                        {
+                            selected.push(file);
+                            selected_packages.push((
+                                name.clone(),
+                                version.clone(),
+                                provides.clone(),
+                            ));
+                        }
+                    }
+                    if selected.is_empty() {
+                        bail!(
+                            "{}: bootstrapped split package did not produce {}",
+                            parent.reviewed.pkgname,
+                            dep.spec()
+                        );
+                    }
+                    self.install_built(&prepared, &selected, true, "install")?;
+                    built.extend(selected_packages);
                     continue;
                 }
                 bail!(

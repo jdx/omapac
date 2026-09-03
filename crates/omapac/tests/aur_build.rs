@@ -444,9 +444,32 @@ fn split_siblings_do_not_create_false_aur_cycles() {
         .rig
         .log()
         .into_iter()
-        .filter(|line| line == "makepkg --noconfirm --force --holdver")
+        .filter(|line| line.starts_with("makepkg --noconfirm --force --holdver"))
         .count();
-    assert_eq!(builds, 2);
+    assert_eq!(
+        builds, 3,
+        "the split pkgbase is bootstrapped, then rebuilt normally"
+    );
+    let log = s.rig.log();
+    let bootstrap = log
+        .iter()
+        .position(|line| line == "makepkg --noconfirm --force --holdver --nodeps")
+        .expect("split pkgbase bootstrap");
+    let sibling_install = log
+        .iter()
+        .position(|line| line.contains("-U --noconfirm --asdeps") && line.contains("yay-lib"))
+        .expect("bootstrapped sibling install");
+    let dependency_build = log
+        .iter()
+        .enumerate()
+        .skip(sibling_install + 1)
+        .find(|(_, line)| *line == "makepkg --noconfirm --force --holdver")
+        .map(|(index, _)| index)
+        .expect("dependent package build");
+    assert!(
+        bootstrap < sibling_install && sibling_install < dependency_build,
+        "{log:?}"
+    );
 }
 
 #[test]
