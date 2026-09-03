@@ -239,6 +239,14 @@ fn remove_plans_with_hold_warning_and_applies() {
     assert!(out.contains("warning: HoldPkg: pacman"), "{out}");
     assert!(err.contains("refusing to remove unattended"), "{err}");
 
+    let (code, out, err) = rig.run(&["remove", "--dry-run", "pacman"], plan, 0);
+    assert_eq!(code, 0, "{err}\n{out}");
+    let command = out
+        .lines()
+        .find(|line| line.starts_with("would run:"))
+        .unwrap();
+    assert!(!command.contains("--noconfirm"), "{command}");
+
     let (code, _, err) = rig.run(&["remove", "helix"], plan, 0);
     assert_ne!(code, 0);
     assert!(err.contains("not installed: helix"), "{err}");

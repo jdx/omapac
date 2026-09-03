@@ -63,16 +63,16 @@ impl RunWith<&App> for Remove {
             *nosave = self.nosave;
         }
         let resolved = engine.plan(&tx)?;
-        let command = engine
+        let mut plan: Plan = transaction::plan(&host, &resolved, String::new());
+        plan.command = engine
             .apply_invocation(
                 &tx,
                 crate::engine::ApplyOpts {
                     dry_run: true,
-                    no_confirm: true,
+                    no_confirm: transaction::apply_no_confirm(&plan, self.yes),
                 },
             )
             .display();
-        let plan: Plan = transaction::plan(&host, &resolved, command);
         if self.json {
             return print_json(&plan);
         }

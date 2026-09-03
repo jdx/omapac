@@ -191,17 +191,21 @@ pub fn confirm_and_apply(
     } else if !ui::confirm("Proceed?", true)? {
         bail!("cancelled");
     }
-    let hold_override = !yes
-        && plan
-            .warnings
-            .iter()
-            .any(|warning| warning.starts_with("HoldPkg:"));
     engine.apply(
         resolved,
         ApplyOpts {
             dry_run: false,
-            no_confirm: !hold_override,
+            no_confirm: apply_no_confirm(plan, yes),
         },
     )?;
     Ok(())
+}
+
+/// Whether the eventual pacman command may suppress prompts. Interactive
+/// HoldPkg removals must leave pacman's override question available.
+pub fn apply_no_confirm(plan: &Plan, yes: bool) -> bool {
+    yes || !plan
+        .warnings
+        .iter()
+        .any(|warning| warning.starts_with("HoldPkg:"))
 }
