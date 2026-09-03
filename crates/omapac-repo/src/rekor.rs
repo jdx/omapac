@@ -208,7 +208,7 @@ pub fn root_from_inclusion(
         bail!("leaf index {index} is outside a tree of size {size}");
     }
     let inner = 64 - (index ^ (size - 1)).leading_zeros() as usize;
-    let border = (index >> inner).count_ones() as usize;
+    let border = index.checked_shr(inner as u32).unwrap_or(0).count_ones() as usize;
     if proof.len() != inner + border {
         bail!(
             "inclusion proof has {} hashes, expected {}",
@@ -469,6 +469,12 @@ mod tests {
             root_from_inclusion(0, 2, [0; 32], &[]).is_err(),
             "proof length is checked"
         );
+    }
+
+    #[test]
+    fn full_width_proof_depth_does_not_overflow_the_shift() {
+        let err = root_from_inclusion(0, u64::MAX, leaf_hash(b"leaf"), &[]).unwrap_err();
+        assert!(err.to_string().contains("expected 64"), "{err}");
     }
 
     #[test]
