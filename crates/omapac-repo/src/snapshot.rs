@@ -363,9 +363,16 @@ impl RunWith<()> for Snapshot {
                                 promote.soak
                             );
                         }
-                        if store.target("stable").as_deref() == Some(rc.as_str()) {
-                            println!("stable already points at {rc}");
-                            return Ok(());
+                        if let Some(stable) = store.target("stable") {
+                            if stable == rc {
+                                println!("stable already points at {rc}");
+                                return Ok(());
+                            }
+                            if stable > rc {
+                                bail!(
+                                    "stable {stable} is newer than rc {rc}; refusing to move stable backward"
+                                );
+                            }
                         }
                         rc
                     }
