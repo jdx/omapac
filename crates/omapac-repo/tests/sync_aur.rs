@@ -199,7 +199,7 @@ fn clean_bump_by_trusted_maintainer_auto_merges() {
             (".SRCINFO", YAY_BUMP_SRCINFO),
         ],
         "bump",
-        "2024-02-01T00:00:00Z",
+        "2099-02-01T00:00:00Z",
     );
     let second = g.aur.head("yay");
 
@@ -234,7 +234,13 @@ fn clean_bump_by_trusted_maintainer_auto_merges() {
     assert_eq!(results[0]["from"], first);
     assert_eq!(results[0]["to"], second);
     assert_eq!(results[0]["pkgver"], "13.0.2-1");
-    assert_eq!(results[0]["findings"].as_array().unwrap().len(), 0);
+    assert!(
+        results[0]["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|finding| finding == "recent-commit")
+    );
     assert_eq!(g.state()["packages"]["yay"]["commit"], second);
     assert_eq!(g.state()["packages"]["yay"]["pkgver"], "13.0.2-1");
     assert_eq!(g.state()["packages"]["yay"]["maintainer"], "jguer");
@@ -272,6 +278,42 @@ fn clean_bump_by_trusted_maintainer_auto_merges() {
         serde_json::from_slice(&std::fs::read(g.rig.path().join("verdicts.json")).unwrap())
             .unwrap();
     assert_eq!(feed.sequence, 1);
+}
+
+#[test]
+fn checksum_bump_keeps_array_context_beyond_git_hunks() {
+    let g = Gate::new();
+    let checksum_array = |changed: char| {
+        let unchanged = "1".repeat(64);
+        let changed: String = std::iter::repeat_n(changed, 64).collect();
+        format!(
+            "sha256sums=(\n  '{unchanged}'\n  '{unchanged}'\n  '{unchanged}'\n  '{unchanged}'\n  '{unchanged}'\n  '{changed}'\n)"
+        )
+    };
+    let initial = YAY_PKGBUILD.replace(
+        "sha256sums=('b77454bce87110180a1b6664c2d260de78124c9894b71101610ba84f551eb0d0')",
+        &checksum_array('a'),
+    );
+    g.aur.create(
+        "yay",
+        &[("PKGBUILD", &initial), (".SRCINFO", YAY_SRCINFO)],
+        "2024-01-01T00:00:00Z",
+    );
+    let first = g.aur.head("yay");
+    g.write_state("yay", &first, "13.0.1-1");
+    let bumped = YAY_BUMP_PKGBUILD.replace(
+        "sha256sums=('0000000000000000000000000000000000000000000000000000000000000000')",
+        &checksum_array('b'),
+    );
+    g.aur.commit(
+        "yay",
+        &[("PKGBUILD", &bumped), (".SRCINFO", YAY_BUMP_SRCINFO)],
+        "version bump",
+        "2024-02-01T00:00:00Z",
+    );
+    let (code, out, err) = g.run(&["--trusted-maintainer", "jguer"]);
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(out.contains("auto-merge   yay"), "{out}");
 }
 
 #[test]
@@ -440,7 +482,11 @@ fn new_packages_and_unknown_ones() {
     g.rpc = low_reputation_rpc();
     g.aur.create(
         "yay",
-        &[("PKGBUILD", YAY_PKGBUILD), (".SRCINFO", YAY_SRCINFO)],
+        &[
+            ("PKGBUILD", EVIL_PKGBUILD),
+            (".SRCINFO", EVIL_SRCINFO),
+            ("yay.install", EVIL_INSTALL),
+        ],
         "2024-01-01T00:00:00Z",
     );
     let (code, out, _) = g.run(&["--package", "yay", "--trusted-maintainer", "jguer"]);
@@ -450,7 +496,8 @@ fn new_packages_and_unknown_ones() {
         out.contains("new package: a human must approve the first commit"),
         "{out}"
     );
-    assert!(!out.contains("low-reputation"), "{out}");
+    assert!(out.contains("checksum-skip"), "{out}");
+    assert!(out.contains("install-script"), "{out}");
     assert!(!out.contains("maintainer-changed"), "{out}");
     let (code, out, err) = g.run(&["--package", "nonexistent"]);
     assert_ne!(code, 0);
