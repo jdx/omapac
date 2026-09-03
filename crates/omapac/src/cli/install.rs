@@ -38,6 +38,21 @@ pub struct Install {
     json: bool,
 }
 
+impl Install {
+    /// An interactive install of `packages`, as the pickers start it.
+    pub fn for_packages(packages: Vec<String>, aur: bool) -> Install {
+        Install {
+            packages,
+            aur,
+            yes: false,
+            dry_run: false,
+            reinstall: false,
+            as_deps: false,
+            json: false,
+        }
+    }
+}
+
 impl RunWith<&App> for Install {
     type Output = Result<()>;
 

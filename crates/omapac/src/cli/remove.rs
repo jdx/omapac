@@ -12,9 +12,11 @@ use crate::engine::{Engine, Operation, Transaction};
 /// before anything happens.
 #[derive(Debug, usage_rs::Args)]
 pub struct Remove {
-    /// Package names
-    #[usage(required = true)]
+    /// Package names; or none with --pick
     packages: Vec<String>,
+    /// Choose explicitly installed packages in a picker
+    #[usage(short = 'p', long)]
+    pick: bool,
     /// Proceed without asking; refuses a plan with warnings
     #[usage(short = 'y', long)]
     yes: bool,
@@ -38,8 +40,35 @@ pub struct Remove {
 impl RunWith<&App> for Remove {
     type Output = Result<()>;
 
-    fn run_with(self, app: &App) -> Self::Output {
+    fn run_with(mut self, app: &App) -> Self::Output {
         let host = app.host()?;
+        if self.pick {
+            crate::tui::require_terminal("remove --pick")?;
+            let mut installed: Vec<&alpm_db::local::LocalPackage> = host
+                .installed()?
+                .iter()
+                .filter(|p| p.reason == alpm_db::local::InstallReason::Explicit)
+                .collect();
+            installed.sort_by(|a, b| a.name.cmp(&b.name));
+            let items: Vec<crate::tui::Item> = installed
+                .iter()
+                .map(|p| {
+                    crate::tui::Item::new(
+                        p.name.clone(),
+                        format!("{}  {}", p.version, p.desc.as_deref().unwrap_or_default()),
+                        "explicit",
+                    )
+                })
+                .collect();
+            let Some(chosen) = crate::tui::pick("Remove", items, true)? else {
+                eprintln!("nothing chosen");
+                return Ok(());
+            };
+            self.packages = chosen.iter().map(|&i| installed[i].name.clone()).collect();
+        }
+        if self.packages.is_empty() {
+            bail!("give package names, or --pick to choose from installed packages");
+        }
         let ledger = app.ledger()?;
         let mut not_installed = Vec::new();
         let mut packages = Vec::new();
