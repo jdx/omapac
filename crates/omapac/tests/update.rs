@@ -194,6 +194,20 @@ fn unattended_update_allows_signed_custom_repo_warnings() {
         "{:?}",
         s.rig.log()
     );
+
+    std::fs::write(
+        s.rig.home.join(".config/omapac/omapac.toml"),
+        "[policy]\naur.jail = false\ntrust.custom_repos = \"deny\"\n",
+    )
+    .unwrap();
+    let calls = s.rig.log().len();
+    let (code, out, err) = run(&s, &["update", "-y", "--no-aur", "--no-refresh"], plan);
+    assert_ne!(code, 0, "{out}");
+    assert!(out.contains("denied by trust.custom_repos policy"), "{out}");
+    assert!(err.contains("refusing to upgrade unattended"), "{err}");
+    let log = s.rig.log();
+    assert_eq!(log.len(), calls + 1, "only the planning call is expected");
+    assert!(log.last().unwrap().contains("--print"), "{log:?}");
 }
 
 #[test]

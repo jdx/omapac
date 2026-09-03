@@ -89,6 +89,11 @@ impl Host {
         self.paths.rooted(&path)
     }
 
+    /// Pacman's database path rooted under the configured sysroot.
+    pub fn db_path(&self) -> PathBuf {
+        self.paths.rooted(&self.config.options.db_path())
+    }
+
     /// Load the host from `paths`.
     pub fn load(paths: HostPaths) -> Result<Host> {
         let config_path = paths

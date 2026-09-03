@@ -66,7 +66,7 @@ impl RunWith<&App> for Update {
 
         // Refresh first so the plan is against current databases.
         let host = app.host()?;
-        crate::update::wait_for_db_lock(&host.config.options.db_path(), Duration::from_secs(60))?;
+        crate::update::wait_for_db_lock(&host.db_path(), Duration::from_secs(60))?;
         if !self.no_refresh && !self.aur_only && !dry_run {
             engine.refresh(
                 RefreshOpts::default(),
@@ -117,7 +117,12 @@ impl RunWith<&App> for Update {
                     },
                 )
                 .display();
-            let plan = transaction::plan(&host, &resolved, command);
+            let plan = transaction::plan_with_custom_repos(
+                &host,
+                &resolved,
+                command,
+                settings.trust_custom_repos,
+            );
             Some((resolved, plan))
         };
 
@@ -249,7 +254,12 @@ impl RunWith<&App> for Update {
                     },
                 )
                 .display();
-            let p = transaction::plan(&host, &resolved, command);
+            let p = transaction::plan_with_custom_repos(
+                &host,
+                &resolved,
+                command,
+                settings.trust_custom_repos,
+            );
             let performed = transaction::confirm_and_apply(
                 &engine,
                 &resolved,
