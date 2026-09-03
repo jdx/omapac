@@ -137,13 +137,18 @@ impl RunWith<()> for SyncAur {
             Ok(base) => Remote { base },
             Err(_) => Remote::aur(),
         };
-        let cache = self.cache.clone().unwrap_or_else(|| {
-            let base = std::env::var_os("XDG_CACHE_HOME")
+        let cache = match self.cache.clone() {
+            Some(cache) => cache,
+            None => std::env::var_os("XDG_CACHE_HOME")
                 .map(PathBuf::from)
                 .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
-                .unwrap_or_else(|| PathBuf::from("/tmp"));
-            base.join("omapac-repo/aur")
-        });
+                .map(|base| base.join("omapac-repo/aur"))
+                .ok_or_else(|| {
+                    eyre::eyre!(
+                        "no private cache directory: give --cache or set XDG_CACHE_HOME or HOME"
+                    )
+                })?,
+        };
         std::fs::create_dir_all(&cache)
             .wrap_err_with(|| format!("creating {}", cache.display()))?;
         let settings = Settings::default();

@@ -4,6 +4,7 @@
 mod common;
 
 use std::path::Path;
+use std::process::Command;
 use std::sync::Arc;
 
 use common::Rig;
@@ -397,6 +398,29 @@ fn new_packages_and_unknown_ones() {
     let (code, _, err) = g.run(&[]);
     assert_ne!(code, 0);
     assert!(err.contains("no packages"), "{err}");
+}
+
+#[test]
+fn sync_requires_a_private_cache_location() {
+    let g = Gate::new();
+    let output = Command::new(env!("CARGO_BIN_EXE_omapac-repo"))
+        .current_dir(g.rig.path())
+        .env_remove("HOME")
+        .env_remove("XDG_CACHE_HOME")
+        .args([
+            "sync-aur",
+            "--state",
+            "state.json",
+            "--sysroot",
+            g.root.to_str().unwrap(),
+            "--package",
+            "yay",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let err = String::from_utf8_lossy(&output.stderr);
+    assert!(err.contains("no private cache directory"), "{err}");
 }
 
 #[test]
