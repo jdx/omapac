@@ -41,7 +41,13 @@ function PLUGIN:BackendInstall(ctx)
             error("tool channel: no executable named " .. ctx.tool .. " in " .. name .. "; set the exe option")
         end
         local target = file.join_path(bin_dir, ctx.tool)
-        if not file.exists(target) then
+        if options.exe ~= nil then
+            cmd.exec("mkdir -p " .. self:quote(bin_dir))
+            if file.exists(target) then
+                cmd.exec("rm -f -- " .. self:quote(target))
+            end
+            file.symlink(file.join_path(ctx.install_path, exe), target)
+        elseif not file.exists(target) then
             cmd.exec("mkdir -p " .. self:quote(bin_dir))
             file.symlink(file.join_path(ctx.install_path, exe), target)
         end
