@@ -61,7 +61,9 @@ fi
 
 # Planning against the real resolver: the exact pacman command is shown
 # and nothing changes.
-expect 'would run: /usr/sbin/pacman -S --noconfirm --needed -- glibc' "omapac install -n glibc"
+candidate=$(run "comm -23 <(pacman -Slq | sort -u) <(pacman -Qq | sort -u) | head -n1")
+[ -n "$candidate" ] || skip "no uninstalled sync package available"
+expect 'would run: /usr/sbin/pacman -S --noconfirm --needed -- ' "omapac install -n '$candidate'"
 expect 'would run:|nothing to upgrade|up to date' "omapac update -n --no-aur"
 before=$(run "pacman -Q | wc -l")
 
