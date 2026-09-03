@@ -125,6 +125,12 @@ fn update_records_the_release_when_no_packages_change() {
 fn pin_writes_the_mirrorlist_and_unpin_restores_it() {
     let s = setup();
     let mirrorlist = s.rig.root.join("etc/pacman.d/mirrorlist");
+    std::fs::create_dir_all(s.rig.root.join("var/lib/omapac")).unwrap();
+    std::fs::write(
+        s.rig.root.join("var/lib/omapac/state.json"),
+        r#"{"schema":1,"packages":{},"snapshot":"2026-08-01T06"}"#,
+    )
+    .unwrap();
     let (code, _, err) = run(&s, &["channel", "pin", "2026-09-02T06"], "");
     assert_ne!(code, 0, "an unpromoted snapshot needs --force");
     assert!(
@@ -153,13 +159,13 @@ fn pin_writes_the_mirrorlist_and_unpin_restores_it() {
     assert!(backup.contains("stable-mirror.omarchy.org"), "{backup}");
     let ledger = std::fs::read_to_string(s.rig.root.join("var/lib/omapac/state.json")).unwrap();
     assert!(
-        ledger.contains("\"snapshot\": \"2026-09-01T06\""),
+        ledger.contains("\"snapshot\":\"2026-08-01T06\""),
         "{ledger}"
     );
 
     let (_, out, _) = run(&s, &["channel"], "");
     assert!(out.contains("pinned: 2026-09-01T06"), "{out}");
-    assert!(out.contains("last converged: 2026-09-01T06"), "{out}");
+    assert!(out.contains("last converged: 2026-08-01T06"), "{out}");
 
     let (code, out, err) = run(&s, &["channel", "unpin"], "");
     assert_eq!(code, 0, "{err}");
@@ -174,6 +180,10 @@ fn pin_writes_the_mirrorlist_and_unpin_restores_it() {
             .root
             .join("etc/pacman.d/mirrorlist.omapac-unpinned")
             .exists()
+    );
+    assert_eq!(
+        std::fs::read_to_string(s.rig.root.join("var/lib/omapac/state.json")).unwrap(),
+        r#"{"schema":1,"packages":{},"snapshot":"2026-08-01T06"}"#
     );
     // The next pin must back up edits made after unpinning.
     std::fs::write(&mirrorlist, "Server = https://new/$repo/os/$arch\n").unwrap();
@@ -220,15 +230,25 @@ fn rollback_pins_refreshes_and_syncs_with_downgrades() {
         log[0].contains("-Syy --noconfirm"),
         "forced refresh after pinning: {log:?}"
     );
-    assert!(log.iter().any(|l| l.contains("-Suu --print")), "{log:?}");
+    assert!(
+        log.iter().any(|l| l.contains("-Suu --noconfirm --print")),
+        "{log:?}"
+    );
     assert!(
         log.iter().any(|l| l.contains("--ignoregroup legacy")),
         "{log:?}"
     );
-    let apply = log.iter().find(|l| l.contains("-Suu --noconfirm")).unwrap();
+    let apply = log
+        .iter()
+        .find(|line| line.contains("-Suu --noconfirm") && !line.contains("--print"))
+        .unwrap();
     assert!(apply.contains("OMARCHY_UPDATE_PACMAN=1"), "{apply}");
     let ledger = std::fs::read_to_string(s.rig.root.join("var/lib/omapac/state.json")).unwrap();
     assert!(ledger.contains("\"by\": \"rollback\""), "{ledger}");
+    assert!(
+        ledger.contains("\"snapshot\": \"2026-09-01T06\""),
+        "{ledger}"
+    );
 }
 
 #[test]
@@ -245,7 +265,7 @@ fn rollback_dry_run_prints_the_downgrade_plan_and_command() {
         log[0].contains("--config") && !log[0].contains("--sysroot"),
         "{log:?}"
     );
-    assert!(log[1].contains("-Suu --print"), "{log:?}");
+    assert!(log[1].contains("-Suu --noconfirm --print"), "{log:?}");
     assert_eq!(
         std::fs::read_to_string(s.rig.root.join("etc/pacman.d/mirrorlist")).unwrap(),
         "Server = https://stable-mirror.omarchy.org/$repo/os/$arch\n"
@@ -270,25 +290,20 @@ fn rollback_restores_the_pin_when_confirmation_fails() {
             .join("etc/pacman.d/mirrorlist.omapac-unpinned")
             .exists()
     );
-    let ledger = std::fs::read_to_string(s.rig.root.join("var/lib/omapac/state.json")).unwrap();
-    assert!(!ledger.contains("2026-09-01T06"), "{ledger}");
+    assert!(!s.rig.root.join("var/lib/omapac/state.json").exists());
 }
 
 #[test]
-fn pin_restores_the_mirrorlist_when_recording_fails() {
+fn pin_does_not_write_the_convergence_ledger() {
     let s = setup();
     let mirrorlist = s.rig.root.join("etc/pacman.d/mirrorlist");
-    let original = std::fs::read_to_string(&mirrorlist).unwrap();
     std::fs::create_dir_all(s.rig.root.join("var/lib/omapac/state.json")).unwrap();
     let (code, _, err) = run(&s, &["channel", "pin", "2026-09-01T06"], "");
-    assert_ne!(code, 0);
-    assert!(err.contains("recording the snapshot pin"), "{err}");
-    assert_eq!(std::fs::read_to_string(mirrorlist).unwrap(), original);
+    assert_eq!(code, 0, "{err}");
     assert!(
-        !s.rig
-            .root
-            .join("etc/pacman.d/mirrorlist.omapac-unpinned")
-            .exists()
+        std::fs::read_to_string(mirrorlist)
+            .unwrap()
+            .contains("# omapac-pin: 2026-09-01T06")
     );
 }
 
