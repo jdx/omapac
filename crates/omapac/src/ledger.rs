@@ -9,6 +9,7 @@
 
 use std::collections::BTreeMap;
 use std::io::{self, Write as _};
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 
 use eyre::{Context as _, Result, bail};
@@ -141,6 +142,7 @@ impl Ledger {
     pub fn save(&self, path: &Path) -> io::Result<()> {
         let dir = path.parent().unwrap_or(Path::new("."));
         std::fs::create_dir_all(dir)?;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755))?;
         let temp = dir.join(format!(
             ".{}.tmp-{}",
             path.file_name()
@@ -155,6 +157,7 @@ impl Ledger {
             file.write_all(&json)?;
             file.sync_all()?;
         }
+        std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o644))?;
         if let Err(err) = std::fs::rename(&temp, path) {
             let _ = std::fs::remove_file(&temp);
             return Err(err);
@@ -316,6 +319,18 @@ mod tests {
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.ends_with("}\n"));
         assert!(!text.contains("aur_commit"), "absent fields are omitted");
+        assert_eq!(
+            std::fs::metadata(path.parent().unwrap())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o755
+        );
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o644
+        );
         assert!(
             std::fs::read_dir(path.parent().unwrap())
                 .unwrap()
