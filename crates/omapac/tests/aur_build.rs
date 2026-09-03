@@ -354,7 +354,7 @@ fn aur_dependencies_are_built_first_and_installed_as_deps() {
     let log = s.rig.log();
     let builds: Vec<&String> = log
         .iter()
-        .filter(|line| line.as_str() == "makepkg --noconfirm --force")
+        .filter(|line| line.as_str() == "makepkg --noconfirm --force --holdver")
         .collect();
     assert_eq!(builds.len(), 2, "{log:?}");
     // sudo and pacman both log the install line; count pacman's.
