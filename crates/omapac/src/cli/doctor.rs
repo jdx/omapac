@@ -108,11 +108,7 @@ pub fn diagnose(app: &App) -> Vec<Finding> {
 }
 
 fn diagnose_host(host: &Host, add: &mut impl FnMut(Status, &str, String)) {
-    let config_path = host
-        .paths
-        .config
-        .clone()
-        .unwrap_or_else(|| std::path::PathBuf::from(alpm_db::conf::DEFAULT_PATH));
+    let config_path = host.config_path();
     add(
         Status::Ok,
         "config",

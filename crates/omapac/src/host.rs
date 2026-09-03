@@ -78,6 +78,17 @@ pub struct Host {
 }
 
 impl Host {
+    /// The pacman configuration file actually read, rooted under the
+    /// configured sysroot when present.
+    pub fn config_path(&self) -> PathBuf {
+        let path = self
+            .paths
+            .config
+            .clone()
+            .unwrap_or_else(|| PathBuf::from(alpm_db::conf::DEFAULT_PATH));
+        self.paths.rooted(&path)
+    }
+
     /// Load the host from `paths`.
     pub fn load(paths: HostPaths) -> Result<Host> {
         let config_path = paths

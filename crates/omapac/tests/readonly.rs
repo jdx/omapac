@@ -187,6 +187,10 @@ fn doctor_reports_signature_floor_and_missing_databases() {
     );
     assert!(out.contains("has no sync database yet"), "{out}");
     assert!(out.contains("format 9, 3 packages"), "{out}");
+    assert!(
+        out.contains(&root.path().join("etc/pacman.conf").display().to_string()),
+        "{out}"
+    );
 
     let (_, out, _) = omapac(root.path(), &["doctor", "--json"]);
     let findings: Vec<serde_json::Value> = serde_json::from_str(&out).unwrap();
