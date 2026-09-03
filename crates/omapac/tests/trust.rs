@@ -133,7 +133,7 @@ fn verify_checks_the_cached_file_and_the_database_against_the_index() {
     let (code, out, err) = run(&s, &older, &["verify", "yay"]);
     assert_eq!(code, 0, "{err}\n{out}");
     assert!(
-        err.contains("sequence is older than the cached copy")
+        err.contains("index sequence 4 is older than the 5 this machine has seen")
             && err.contains("using the cached copy"),
         "{err}"
     );

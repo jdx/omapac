@@ -12,12 +12,14 @@ pub mod feeds;
 
 use std::{
     io::Write as _,
+    os::unix::{ffi::OsStrExt as _, fs::DirBuilderExt as _, fs::MetadataExt as _},
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
 };
 
 use eyre::{Context as _, Result, bail};
 use packslip::minisign::{PublicKey, Sig};
+use sha2::{Digest as _, Sha256};
 
 pub use feeds::{Advisories, Advisory, Index, IndexPackage, Verdict, Verdicts};
 
@@ -107,15 +109,21 @@ pub struct Cache {
 }
 
 impl Cache {
-    /// `$XDG_CACHE_HOME/omapac/trust/<repo>`.
-    pub fn for_repo(repo: &str) -> Cache {
+    /// `$XDG_CACHE_HOME/omapac/trust/<repo>`, scoped to `sysroot` when set.
+    pub fn for_repo(repo: &str, sysroot: Option<&Path>) -> Result<Cache> {
         let cache_home = std::env::var_os("XDG_CACHE_HOME")
             .map(PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
-            .unwrap_or_else(|| PathBuf::from("/tmp"));
-        Cache {
-            dir: cache_home.join("omapac/trust").join(repo),
+            .map(Ok)
+            .unwrap_or_else(secure_temporary_cache_home)?;
+        let mut dir = cache_home.join("omapac/trust");
+        if let Some(sysroot) = sysroot {
+            let digest = Sha256::digest(sysroot.as_os_str().as_bytes());
+            dir.push(format!("sysroot-{}", hex(&digest[..16])));
         }
+        Ok(Cache {
+            dir: dir.join(repo),
+        })
     }
 
     fn path(&self, name: &str) -> PathBuf {
@@ -178,6 +186,27 @@ impl Cache {
     }
 }
 
+fn secure_temporary_cache_home() -> Result<PathBuf> {
+    let uid = nix::unistd::geteuid().as_raw();
+    let dir = std::env::temp_dir().join(format!("omapac-{uid}"));
+    match std::fs::DirBuilder::new().mode(0o700).create(&dir) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+            let metadata = std::fs::symlink_metadata(&dir)
+                .wrap_err_with(|| format!("inspecting {}", dir.display()))?;
+            if !metadata.is_dir() || metadata.uid() != uid || metadata.mode() & 0o077 != 0 {
+                bail!("temporary cache directory {} is not private", dir.display());
+            }
+        }
+        Err(err) => return Err(err).wrap_err_with(|| format!("creating {}", dir.display())),
+    }
+    Ok(dir)
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 struct CachedFeed {
     bytes: Vec<u8>,
@@ -203,6 +232,18 @@ pub fn fetch<T: serde::de::DeserializeOwned>(
     cache: &Cache,
     offline: bool,
 ) -> Result<Fetched<T>> {
+    fetch_checked(source, name, keyring, cache, offline, |_| Ok(()))
+}
+
+/// Fetch a feed, applying `accept` before a network response is cached.
+pub fn fetch_checked<T: serde::de::DeserializeOwned>(
+    source: &FeedSource,
+    name: &str,
+    keyring: &Keyring,
+    cache: &Cache,
+    offline: bool,
+    accept: impl Fn(&T) -> Result<()>,
+) -> Result<Fetched<T>> {
     if keyring.is_empty() {
         bail!(
             "no trust keys under {}; the distro package should ship them",
@@ -225,6 +266,7 @@ pub fn fetch<T: serde::de::DeserializeOwned>(
             if repo.as_deref().is_some_and(|repo| repo != source.repo) {
                 bail!("{name} says it is for a different repository");
             }
+            accept(&value)?;
             if let Some((cached_bytes, cached_signature, _)) = &cached
                 && let Ok((_, _, Some(cached_sequence), _)) =
                     decode::<serde_json::Value>(name, cached_bytes, cached_signature, keyring)
@@ -256,6 +298,7 @@ pub fn fetch<T: serde::de::DeserializeOwned>(
     if repo.as_deref().is_some_and(|repo| repo != source.repo) {
         bail!("cached {name} says it is for a different repository");
     }
+    accept(&value)?;
     Ok(Fetched {
         value,
         fresh: false,

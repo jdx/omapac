@@ -71,21 +71,29 @@ impl App {
             bail!("[{repo}] has no server to fetch feeds from");
         };
         let keyring = trust::Keyring::load(self.paths.sysroot.as_deref())?;
-        let cache = trust::Cache::for_repo(repo);
-        let fetched: trust::Fetched<Index> =
-            trust::fetch(&source, "omapac-index.json", &keyring, &cache, offline)?;
+        let cache = trust::Cache::for_repo(repo, self.paths.sysroot.as_deref())?;
+        let ledger = self.ledger()?;
+        let seen = ledger.index_sequences.get(repo).copied();
+        let fetched: trust::Fetched<Index> = trust::fetch_checked(
+            &source,
+            "omapac-index.json",
+            &keyring,
+            &cache,
+            offline,
+            |index: &Index| {
+                if let Some(seen) = seen
+                    && index.sequence < seen
+                {
+                    bail!(
+                        "[{repo}] index sequence {} is older than the {seen} this machine has seen: a stale or rolled-back mirror",
+                        index.sequence
+                    );
+                }
+                Ok(())
+            },
+        )?;
         if fetched.value.repo != repo {
             bail!("[{repo}] index says it is for [{}]", fetched.value.repo);
-        }
-        let ledger = self.ledger()?;
-        if let Some(seen) = ledger.index_sequences.get(repo).copied()
-            && fetched.value.sequence < seen
-        {
-            bail!(
-                "[{repo}] index sequence {} is older than the {} this machine has seen: a stale or rolled-back mirror",
-                fetched.value.sequence,
-                seen
-            );
         }
         if ledger.index_sequences.get(repo).copied() != Some(fetched.value.sequence) {
             let mut patch = crate::ledger::Patch::default();
