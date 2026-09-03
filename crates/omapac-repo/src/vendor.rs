@@ -439,14 +439,50 @@ fn read_lock(path: &Path) -> Result<Option<VendorLock>> {
 
 fn pkgbase_of(pkgbuild: &str) -> Option<String> {
     let value = |key: &str| {
-        pkgbuild.lines().find_map(|line| {
-            line.trim()
-                .strip_prefix(key)
-                .and_then(|rest| rest.strip_prefix('='))
-                .map(|v| v.trim().trim_matches(['\'', '"']).to_string())
+        assignment_first_value(pkgbuild, key).filter(|name| {
+            name.bytes()
+                .next()
+                .is_some_and(|byte| byte.is_ascii_alphanumeric())
+                && name.bytes().all(|byte| {
+                    byte.is_ascii_alphanumeric() || matches!(byte, b'@' | b'.' | b'_' | b'+' | b'-')
+                })
         })
     };
     value("pkgbase").or_else(|| value("pkgname"))
+}
+
+fn assignment_first_value(text: &str, key: &str) -> Option<String> {
+    let mut lines = text.lines();
+    while let Some(line) = lines.next() {
+        let Some(mut value) = line
+            .trim()
+            .strip_prefix(key)
+            .and_then(|rest| rest.strip_prefix('='))
+        else {
+            continue;
+        };
+        loop {
+            let candidate = value
+                .trim_start()
+                .strip_prefix('(')
+                .unwrap_or(value)
+                .trim_start();
+            if let Some(quote) = candidate.chars().next().filter(|c| matches!(c, '\'' | '"')) {
+                return candidate[quote.len_utf8()..]
+                    .split_once(quote)
+                    .map(|(word, _)| word.to_string());
+            }
+            let word: String = candidate
+                .chars()
+                .take_while(|c| !c.is_whitespace() && !matches!(c, ')' | '#'))
+                .collect();
+            if !word.is_empty() {
+                return Some(word);
+            }
+            value = lines.next()?;
+        }
+    }
+    None
 }
 
 /// Rewrite `pkgver`, `pkgrel`, and the checksum arrays. Arrays are
@@ -589,6 +625,23 @@ mod tests {
         let out = rewrite_pkgbuild(plain, &report(&[("x86_64", &cc)])).unwrap();
         assert!(out.contains(&format!("sha256sums=('{cc}')")), "{out}");
         assert!(rewrite_pkgbuild("pkgver=1\n", &report(&[("x86_64", &cc)])).is_err());
+    }
+
+    #[test]
+    fn package_base_reads_scalar_and_array_assignments() {
+        assert_eq!(
+            pkgbase_of("pkgbase='tools'\npkgname=x\n").as_deref(),
+            Some("tools")
+        );
+        assert_eq!(
+            pkgbase_of("pkgname=('tool-bin')\n").as_deref(),
+            Some("tool-bin")
+        );
+        assert_eq!(
+            pkgbase_of("pkgname=(\n  \"tool-bin\"\n  tool-docs\n)\n").as_deref(),
+            Some("tool-bin")
+        );
+        assert_eq!(pkgbase_of("pkgname=../../escape\n"), None);
     }
 
     #[test]
