@@ -349,6 +349,7 @@ impl RunWith<BinInfo> for Verify {
 fn main() -> Result<()> {
     color_eyre::install()?;
     let args: Vec<OsString> = std::env::args_os().collect();
+    omapac_cli_support::dump_usage_spec_if_requested(&args, || Cli::spec().to_kdl());
     let argv = omapac_cli_support::argv(&args);
     let cli = omapac_cli_support::unwrap_or_exit(Cli::spec(), &argv, Cli::parse_from_argv(&argv));
     match cli.command {

@@ -134,6 +134,7 @@ impl AsRef<BinInfo> for App {
 }
 
 pub fn run(args: &[OsString]) -> Result<()> {
+    omapac_cli_support::dump_usage_spec_if_requested(args, || Cli::spec().to_kdl());
     let argv = omapac_cli_support::argv(args);
     let cli = omapac_cli_support::unwrap_or_exit(Cli::spec(), &argv, Cli::parse_from_argv(&argv));
     let app = App {
