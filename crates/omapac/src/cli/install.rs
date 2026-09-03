@@ -147,7 +147,7 @@ impl Install {
                 continue;
             }
             let prepared = app.prepare_aur(name, None, true, self.yes)?;
-            if !self.yes && !crate::ui::confirm(&format!("Build and install {name}?"), true)? {
+            if !self.yes && !crate::ui::confirm(&format!("Build and install {name}?"), false)? {
                 bail!("cancelled");
             }
             let files = app.build_aur(&prepared, self.yes)?;

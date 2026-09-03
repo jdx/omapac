@@ -46,6 +46,11 @@ pub fn pick(title: &str, items: Vec<Item>, multi: bool) -> Result<Option<Vec<usi
         }
     };
     ratatui::restore();
+    // Key repeat and double-press events from the picker must not answer the
+    // transaction confirmation that follows it.
+    while event::poll(std::time::Duration::ZERO)? {
+        let _ = event::read()?;
+    }
     Ok(match outcome {
         Outcome::Confirm(chosen) => Some(chosen),
         Outcome::Cancel => None,

@@ -51,9 +51,9 @@ impl Pager {
     /// Feed a key; `true` when the user leaves.
     pub fn handle(&mut self, key: KeyEvent) -> bool {
         match key.code {
-            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter => return true,
+            KeyCode::Esc | KeyCode::Char('q') => return true,
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => return true,
-            KeyCode::Down | KeyCode::Char('j') => {
+            KeyCode::Down | KeyCode::Enter | KeyCode::Char('j') => {
                 self.scroll = (self.scroll + 1).min(self.max_scroll())
             }
             KeyCode::Up | KeyCode::Char('k') => self.scroll = self.scroll.saturating_sub(1),
@@ -165,6 +165,7 @@ mod tests {
         assert!(first.contains("Review yay (1-9 of 50)"), "{first}");
         assert!(pager.handle(key(KeyCode::Char('q'))));
         assert!(pager.handle(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)));
+        assert!(!Pager::new("Review", "one\ntwo").handle(key(KeyCode::Enter)));
     }
 
     #[test]
