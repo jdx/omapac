@@ -361,6 +361,7 @@ fn update_aur_package(app: &App, name: &str, yes: bool) -> Result<AurOutcome> {
     let prepared = app.prepare_aur(name, Some(&reviewed.target), true, yes)?;
     let files = app.build_aur(&prepared, yes)?;
     let built = crate::aur::build::built_packages(&files)?;
+    let host = app.host()?;
     let engine = app.engine()?;
     engine.install_files(
         &crate::engine::FileInstall {
@@ -374,7 +375,6 @@ fn update_aur_package(app: &App, name: &str, yes: bool) -> Result<AurOutcome> {
         },
     )?;
     let mut patch = crate::ledger::Patch::default();
-    let host = app.host()?;
     for package in built {
         let explicit = host
             .installed_package(&package.name)?
