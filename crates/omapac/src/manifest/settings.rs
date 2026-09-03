@@ -224,6 +224,10 @@ pub struct UpdateToml {
     pub overwrite: Vec<String>,
     pub ignore: Vec<String>,
     pub ignore_group: Vec<String>,
+    /// Shell commands run before an update, in order.
+    pub pre_hooks: Vec<String>,
+    /// Shell commands run after an update, in order.
+    pub post_hooks: Vec<String>,
 }
 
 /// Effective settings after merging every layer and the managed floor.
@@ -253,6 +257,8 @@ pub struct Settings {
     pub update_overwrite: Vec<String>,
     pub update_ignore: Vec<String>,
     pub update_ignore_group: Vec<String>,
+    pub update_pre_hooks: Vec<String>,
+    pub update_post_hooks: Vec<String>,
 }
 
 impl Default for Settings {
@@ -291,6 +297,8 @@ impl Default for Settings {
             update_overwrite: Vec::new(),
             update_ignore: Vec::new(),
             update_ignore_group: Vec::new(),
+            update_pre_hooks: Vec::new(),
+            update_post_hooks: Vec::new(),
         }
     }
 }
@@ -350,6 +358,8 @@ impl Settings {
         append_unique(&mut self.update_overwrite, &update.overwrite);
         append_unique(&mut self.update_ignore, &update.ignore);
         append_unique(&mut self.update_ignore_group, &update.ignore_group);
+        append_unique(&mut self.update_pre_hooks, &update.pre_hooks);
+        append_unique(&mut self.update_post_hooks, &update.post_hooks);
     }
 
     /// Apply the managed floor with each setting's combinator.

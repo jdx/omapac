@@ -16,10 +16,12 @@ mod install;
 mod jail_cmd;
 mod ledger_cmd;
 mod list;
+mod pacnew;
 mod present;
 mod remove;
 mod search;
 mod transaction;
+mod update;
 
 fn check_rank(check: alpm_db::Check) -> u8 {
     match check {
@@ -82,11 +84,13 @@ enum Commands {
     LedgerMerge(ledger_cmd::LedgerMerge),
     List(list::List),
     Missing(present::Missing),
+    Pacnew(pacnew::Pacnew),
     Plan(declare::Plan),
     Present(present::Present),
     Remove(remove::Remove),
     Search(search::Search),
     Status(declare::Status),
+    Update(update::Update),
     Version(Version),
 }
 

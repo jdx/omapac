@@ -90,16 +90,19 @@ pub fn plan(host: &Host, resolved: &ResolvedTx, command: String) -> Plan {
             }
         }
     }
-    let hold: Vec<&str> = resolved
-        .changes
-        .iter()
-        .filter(|c| {
-            c.repo.as_deref() == Some("local") && host.config.options.hold_pkg.contains(&c.name)
-        })
-        .map(|c| c.name.as_str())
-        .collect();
-    if !hold.is_empty() {
-        warnings.push(format!("HoldPkg: {}", hold.join(", ")));
+    // pacman asks before removing a HoldPkg package; upgrades are fine.
+    if matches!(
+        resolved.transaction.operation,
+        crate::engine::Operation::Remove { .. }
+    ) {
+        let hold: Vec<&str> = changes
+            .iter()
+            .filter(|c| host.config.options.hold_pkg.contains(&c.name))
+            .map(|c| c.name.as_str())
+            .collect();
+        if !hold.is_empty() {
+            warnings.push(format!("HoldPkg: {}", hold.join(", ")));
+        }
     }
     Plan {
         download_size: changes.iter().filter_map(|c| c.download_size).sum(),
