@@ -3,8 +3,10 @@
 //! fetched over TLS. See `docs/spec/vendor-pipeline.md`.
 
 use std::collections::BTreeMap;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::str::FromStr as _;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use eyre::{Context as _, Result, bail};
@@ -256,8 +258,8 @@ impl RunWith<()> for Vendor {
             let pkgbuild = std::fs::read_to_string(&pkgbuild_path)
                 .wrap_err_with(|| format!("reading {}", pkgbuild_path.display()))?;
             let updated = rewrite_pkgbuild(&pkgbuild, &report)?;
-            std::fs::write(&pkgbuild_path, updated)?;
             let pkgbase = pkgbase_of(&pkgbuild).unwrap_or_else(|| "package".to_string());
+            let sidecar_path = self.pkgdir.join(format!("{pkgbase}.vendor.json"));
             let sidecar = VendorSidecar {
                 document: String::from_utf8(document.clone()).wrap_err("packslip is not UTF-8")?,
                 signature,
@@ -265,10 +267,6 @@ impl RunWith<()> for Vendor {
                 key_id: verified.key_id.clone(),
                 verified_at: now.to_string(),
             };
-            std::fs::write(
-                self.pkgdir.join(format!("{pkgbase}.vendor.json")),
-                serde_json::to_vec_pretty(&sidecar)?,
-            )?;
             let lock = VendorLock {
                 version: chosen.version.clone(),
                 level: verified.level,
@@ -276,7 +274,12 @@ impl RunWith<()> for Vendor {
                 key_id: verified.key_id.clone(),
                 generated_at: now.to_string(),
             };
-            std::fs::write(&lock_path, toml::to_string_pretty(&lock)?)?;
+            // Commit the protective lock first and PKGBUILD last. A crash or
+            // later write failure can leave stricter evidence state behind,
+            // but never new package contents without their no-downgrade lock.
+            write_atomic(&lock_path, toml::to_string_pretty(&lock)?.as_bytes())?;
+            write_atomic(&sidecar_path, &serde_json::to_vec_pretty(&sidecar)?)?;
+            write_atomic(&pkgbuild_path, updated.as_bytes())?;
         }
         if self.json {
             println!("{}", serde_json::to_string_pretty(&report)?);
@@ -435,6 +438,39 @@ fn read_lock(path: &Path) -> Result<Option<VendorLock>> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(err) => Err(err).wrap_err("reading vendor.lock"),
     }
+}
+
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+    let parent = path
+        .parent()
+        .ok_or_else(|| eyre::eyre!("{} has no parent", path.display()))?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("vendor");
+    let (temporary, mut file) = loop {
+        let nonce = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
+        let temporary = parent.join(format!(".{name}.tmp-{}-{nonce}", std::process::id()));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+        {
+            Ok(file) => break (temporary, file),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(err).wrap_err_with(|| format!("writing {}", path.display())),
+        }
+    };
+    if let Err(err) = file
+        .write_all(bytes)
+        .and_then(|()| file.sync_all())
+        .and_then(|()| std::fs::rename(&temporary, path))
+    {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(err).wrap_err_with(|| format!("writing {}", path.display()));
+    }
+    Ok(())
 }
 
 fn pkgbase_of(pkgbuild: &str) -> Option<String> {
