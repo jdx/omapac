@@ -75,11 +75,19 @@ pub fn upload(log_url: &str, envelope: &Envelope, key: &PublicKey) -> Result<Ent
     });
     let url = format!("{}/api/v1/log/entries", log_url.trim_end_matches('/'));
     let body = serde_json::to_vec(&proposed)?;
-    let text = ureq::post(&url)
+    let mut response = ureq::post(&url)
+        .config()
+        .http_status_as_error(false)
+        .build()
         .header("Accept", "application/json")
         .header("Content-Type", "application/json")
         .send(body.as_slice())
-        .wrap_err_with(|| format!("uploading to {url}"))?
+        .wrap_err_with(|| format!("uploading to {url}"))?;
+    let status = response.status().as_u16();
+    if !(response.status().is_success() || status == 409) {
+        bail!("uploading to {url}: HTTP {status}");
+    }
+    let text = response
         .body_mut()
         .read_to_string()
         .wrap_err("reading the log's response")?;
@@ -148,6 +156,8 @@ pub fn check(entry: &Entry, envelope: &Envelope) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read as _, Write as _};
+    use std::net::TcpListener;
 
     #[test]
     fn pem_is_spki_ed25519() {
@@ -188,5 +198,37 @@ mod tests {
                 .to_string()
                 .contains("payload hash")
         );
+    }
+
+    #[test]
+    fn upload_accepts_an_existing_entry() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let response = serde_json::json!({
+            "existing": {
+                "logIndex": 7,
+                "logID": "log",
+                "integratedTime": 9,
+                "body": "body",
+                "verification": {"inclusionProof": {"logIndex": 7}}
+            }
+        })
+        .to_string();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 4096];
+            let _ = stream.read(&mut request);
+            write!(
+                stream,
+                "HTTP/1.1 409 Conflict\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",
+                response.len()
+            )
+            .unwrap();
+        });
+        let key = packslip::minisign::SecretKey::from_seed([3u8; 32]);
+        let envelope = Envelope::sign("t", b"payload", &key);
+        let entry = upload(&url, &envelope, &key.public_key()).unwrap();
+        assert_eq!(entry.uuid, "existing");
+        assert_eq!(entry.log_index, 7);
     }
 }
