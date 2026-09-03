@@ -1,17 +1,17 @@
 # Repository feeds
 
 Version 1, draft. What a repository publishes beyond pacman's database so
-omapac clients can verify more than a package signature. Every feed is a
+pacvamp clients can verify more than a package signature. Every feed is a
 JSON file with a detached minisign signature beside it
 (`<name>.minisig`), signed with a distro trust key that clients hold
-under `/etc/omapac/keys/*.pub` or `/usr/share/omapac/keys/*.pub`. The
+under `/etc/pacvamp/keys/*.pub` or `/usr/share/pacvamp/keys/*.pub`. The
 key is separate from the package GPG key so the two rotate independently.
 
-Feeds live next to the database: `<Server>/omapac-index.json`,
+Feeds live next to the database: `<Server>/pacvamp-index.json`,
 `<Server>/advisories.json`, `<Server>/verdicts.json`, where `<Server>` is
 the repository's `Server` line in `pacman.conf`. pacman ignores them.
 
-## `omapac-index.json`
+## `pacvamp-index.json`
 
 ```json
 {
@@ -100,7 +100,7 @@ the repository's `Server` line in `pacman.conf`. pacman ignores them.
   "verdicts": [
     {
       "subject": { "pkgbase": "helix-bin", "commit": "3f9c1a2b..." },
-      "reviewer": { "kind": "static", "id": "omapac-policy", "version": "0.1.0" },
+      "reviewer": { "kind": "static", "id": "pacvamp-policy", "version": "0.1.0" },
       "verdict": "flag",
       "summary": "install-script added; source host changed",
       "findings": ["install-script", "source-domain-changed"],
@@ -123,13 +123,13 @@ the repository's `Server` line in `pacman.conf`. pacman ignores them.
   a `pass` is silent.
 - Because verdicts are keyed by pkgbase and commit, a repository can
   review popular AUR packages proactively and the feed doubles as an AUR
-  review cache for `omapac aur review`.
+  review cache for `pacvamp aur review`.
 
 ## Producing the feeds
 
-`omapac-repo index` writes the index; `omapac-repo verdict` and
-`omapac-repo sync-aur --verdicts` append to the verdict feed;
-`omapac-repo advisories add|remove` maintains the advisory feed. Every
+`pacvamp-repo index` writes the index; `pacvamp-repo verdict` and
+`pacvamp-repo sync-aur --verdicts` append to the verdict feed;
+`pacvamp-repo advisories add|remove` maintains the advisory feed. Every
 write advances the sequence, sets `issued_at`, and re-signs the file with
 the feed key. See `sync-gate.md`.
 

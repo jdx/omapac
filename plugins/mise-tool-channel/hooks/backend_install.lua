@@ -1,4 +1,4 @@
--- Fetch a vetted artifact through `omapac tools fetch`, which verifies the
+-- Fetch a vetted artifact through `pacvamp tools fetch`, which verifies the
 -- index signature, the digest, the vendor packslip, and the channel
 -- provenance, then lay it out for mise.
 --
@@ -17,7 +17,7 @@ function PLUGIN:BackendInstall(ctx)
     local options = ctx.options or {}
 
     local platform = options.platform or self:platform()
-    local command = "omapac tools" .. self:channel_flags(options)
+    local command = "pacvamp tools" .. self:channel_flags(options)
         .. " fetch " .. self:quote(ctx.tool) .. " " .. self:quote(ctx.version)
         .. " --platform " .. self:quote(platform)
         .. " --dest " .. self:quote(ctx.download_path) .. " --json"

@@ -1,6 +1,0 @@
----
-source: crates/omapac/tests/ledger.rs
-expression: out
----
-pacman  7.1.0-2   core [arch]    explicit  by omapac add 2025-09-02 08:00 UTC  drift: recorded 7.0.0-1, installed 7.1.0-2
-yay     13.0.1-1  omarchy [opr]  dependency  by omapac install 2025-09-02 08:00 UTC

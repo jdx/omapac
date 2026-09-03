@@ -83,7 +83,7 @@ linux-x64 = { os = "linux", arch = "x86_64" }
 linux-arm64 = { os = "linux", arch = "aarch64" }
 ```
 
-`omapac-repo tool-channel publish --store S --key K --config tool.toml
+`pacvamp-repo tool-channel publish --store S --key K --config tool.toml
 [--version V]` resolves the release exactly as the vendor pipeline does
 (signed release list, packslip, floor, no-downgrade against what the
 index already carries), refuses a version any artifact of which has a
@@ -97,14 +97,14 @@ and `unhold` pull and restore a version; `status` lists everything.
 
 ## Consuming
 
-`omapac tools` is the client, and the mise plugin calls it:
+`pacvamp tools` is the client, and the mise plugin calls it:
 
-- `omapac tools index` fetches and verifies the index with the keys
-  under `/etc/omapac/keys` (or `--pubkey`), refusing a sequence below
+- `pacvamp tools index` fetches and verifies the index with the keys
+  under `/etc/pacvamp/keys` (or `--pubkey`), refusing a sequence below
   the last one seen.
-- `omapac tools list <tool> [--channel stable]` prints vetted versions
+- `pacvamp tools list <tool> [--channel stable]` prints vetted versions
   oldest first, held versions excluded.
-- `omapac tools fetch <tool> <version> --platform linux-x64 --dest DIR`
+- `pacvamp tools fetch <tool> <version> --platform linux-x64 --dest DIR`
   downloads the artifact, checks digest and size against the index,
   verifies the vendor packslip in the sidecar against the pinned vendor
   key and the file, and verifies the channel's provenance envelope names

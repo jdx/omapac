@@ -1,6 +1,6 @@
 [package]
-name = "omapac-cli-support"
-description = "Shared argument parsing, help, and error rendering for the omapac binaries"
+name = "pacvamp-cli-support"
+description = "Shared argument parsing, help, and error rendering for the pacvamp binaries"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -1,9 +1,0 @@
----
-source: crates/omapac/tests/transactions.rs
-expression: "out.replace(rig.bin.to_str().unwrap(),\n\"<bin>\").replace(rig.root.to_str().unwrap(), \"<root>\")"
----
-install 2 package(s):
-  extra/helix       26.03-1   [arch]
-  core/tree-sitter  0.26.0-1  [arch]
-download size: 11.9 MiB
-would run: <bin>/pacman --sysroot <root> -S --noconfirm --needed -- pacman

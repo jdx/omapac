@@ -2,7 +2,7 @@
 
 Version 1, draft. The server side of the release train
 (`release-train.md` is the client side): how a mirror becomes a store of
-immutable snapshots with channel pointers, and how `omapac-repo snapshot`
+immutable snapshots with channel pointers, and how `pacvamp-repo snapshot`
 moves them.
 
 ## Layout
@@ -31,12 +31,12 @@ so a snapshot costs the churn since the last one, not a full copy.
 ## Commands
 
 - `snapshot cut --store S --from <mirror> --key K [--id <id>]
-  [--opr-index <omapac-index.json>]` copies the repositories from a
+  [--opr-index <pacvamp-index.json>]` copies the repositories from a
   synced Arch mirror into a new snapshot, records the database digests
   and the OPR index sequence, writes and signs `release.json` with no
   test result, and points `edge` at it.
 - `snapshot test --store S --id <id> [--suite <command>]` runs the
-  suite with `OMAPAC_SNAPSHOT_ID` and `OMAPAC_SNAPSHOT_DIR` set. Exit 0
+  suite with `PACVAMP_SNAPSHOT_ID` and `PACVAMP_SNAPSHOT_DIR` set. Exit 0
   is a pass. Lines the suite prints as `tested: <pkgbase>` become
   `tested_pkgbases`. The result is recorded and signed; a pass points
   `rc` at the snapshot when it is newer than the current `rc`. Without
@@ -56,7 +56,7 @@ so a snapshot costs the churn since the last one, not a full copy.
   deletes snapshots older than the retention, keeping any that were
   ever `stable` for the longer period and never a channel target.
 
-`OMAPAC_REPO_NOW` fixes the clock for tests.
+`PACVAMP_REPO_NOW` fixes the clock for tests.
 
 ## Built-in consistency check
 

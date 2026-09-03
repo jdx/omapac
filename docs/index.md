@@ -1,0 +1,46 @@
+---
+layout: home
+
+hero:
+  name: pacvamp
+  text: Trusted packages for pacman systems
+  tagline: One interface for distribution repositories, the AUR, policy, provenance, and repeatable machines.
+  actions:
+    - theme: brand
+      text: Explore the CLI
+      link: /cli/pacvamp/
+    - theme: alt
+      text: Read the design
+      link: https://github.com/jdx/pacvamp/blob/main/PLAN.md
+
+features:
+  - title: One transaction path
+    details: Install, remove, update, and converge packages from repositories and the AUR through one consistent interface.
+  - title: Evidence before trust
+    details: Verify signed indexes, provenance, transparency records, verdicts, and advisories before packages reach a machine.
+  - title: Built for distributions
+    details: Layer distro policy over user manifests, publish tested snapshots, and operate independent compatible registries.
+---
+
+# Documentation
+
+- [Project plan](https://github.com/jdx/pacvamp/blob/main/PLAN.md): the design, decisions, and implementation plan.
+- [CLI reference](/cli/pacvamp/): generated from the usage specs by `mise run render`.
+  - [pacvamp](cli/pacvamp/) the client
+  - [pacvamp-repo](cli/pacvamp-repo/) the server side a repository runs
+  - [packslip](cli/packslip/) the vendor release manifest tool
+- [Specifications](/spec/packslip):
+  - [packslip](spec/packslip.md): the vendor-neutral signed release manifest.
+  - [repository feeds](spec/repository-feeds.md): the signed index, verdicts, and advisories.
+  - [build provenance](spec/provenance.md): the envelope, transparency, and the signer gate.
+  - [vendor pipeline](spec/vendor-pipeline.md): building a package from a vendor's packslip.
+  - [AUR sync gate](spec/sync-gate.md): which upstream commits a repository pulls.
+  - [release train](spec/release-train.md): the client side of tested snapshots.
+  - [snapshot store](spec/snapshot-store.md): the server side of tested snapshots.
+  - [tool channel](spec/tool-channel.md): vetted vendor tools for mise.
+- [Adoption guides](/adoption/omarchy), the steps other projects take:
+  - [Omarchy](adoption/omarchy.md)
+  - [The Omarchy Package Repository](adoption/opr.md)
+  - [mise](adoption/mise.md)
+- [Snapshot test harness](https://github.com/jdx/pacvamp/tree/main/harness) and the
+  [mise tool-channel plugin](https://github.com/jdx/pacvamp/tree/main/plugins/mise-tool-channel).

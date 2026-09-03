@@ -2,6 +2,7 @@
 _.path = ["./target/debug"]
 
 [tools]
+"bun" = "latest"
 cargo-insta = "latest"
 hk = "latest"
 shellcheck = "latest"
@@ -43,17 +44,27 @@ run = "cargo insta test --accept --workspace --all-features"
 description = "Regenerate everything derived from the code"
 depends = ["render:usage"]
 
+[tasks."docs:dev"]
+description = "Start the documentation website"
+depends = ["render"]
+run = "bun install && bun run docs:dev"
+
+[tasks."docs:build"]
+description = "Build the documentation website"
+depends = ["render"]
+run = "bun install --frozen-lockfile && bun run docs:build"
+
 [tasks."render:usage"]
 description = "Render the CLI reference under docs/cli from the usage specs"
 depends = ["build"]
 shell = "bash -c"
 run = """
 set -euo pipefail
-for bin in omapac omapac-repo packslip; do
+for bin in pacvamp pacvamp-repo packslip; do
   rm -rf "docs/cli/$bin"
   mkdir -p "docs/cli/$bin"
   "target/debug/$bin" __usage > "docs/cli/$bin.usage.kdl"
-  usage generate markdown -f "docs/cli/$bin.usage.kdl" -m --out-dir "docs/cli/$bin" --url-prefix "/cli/$bin"
+  usage generate markdown -f "docs/cli/$bin.usage.kdl" -m --html-encode --out-dir "docs/cli/$bin" --url-prefix "/cli/$bin"
 done
 """
 
@@ -67,4 +78,4 @@ test -z "$(git ls-files --others --exclude-standard -- docs/cli)"
 
 [tasks.ci]
 description = "What CI runs"
-depends = ["lint", "build", "test", "render:check"]
+depends = ["lint", "build", "test", "render:check", "docs:build"]

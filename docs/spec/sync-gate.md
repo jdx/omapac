@@ -1,8 +1,8 @@
 # AUR sync gate
 
 Version 1, draft. How a repository that rebuilds AUR packages decides
-which upstream commits to pull. This is `omapac-repo sync-aur`; it runs
-the same policy engine as `omapac aur review` on the client, so a commit
+which upstream commits to pull. This is `pacvamp-repo sync-aur`; it runs
+the same policy engine as `pacvamp aur review` on the client, so a commit
 the gate blocks is one every client would refuse unattended.
 
 ## State
@@ -39,16 +39,16 @@ scheduled run surfaces problems.
 
 With `--verdicts <feed> --key <key>` the gate appends one static verdict
 per reviewed commit (`pass`, `flag`, or `block` with the finding ids,
-reviewer `static`/`omapac-policy`) to the signed verdict feed. Clients
+reviewer `static`/`pacvamp-policy`) to the signed verdict feed. Clients
 consult the feed in `aur review` and `update`, so the repository's review
 of a popular AUR package reaches users who build it themselves.
 
-Other reviewers add verdicts with `omapac-repo verdict`: a human after
+Other reviewers add verdicts with `pacvamp-repo verdict`: a human after
 reading a diff, an antivirus scan of a built package by digest, or later
 an AI reviewer with its model and prompt hash as the reviewer version.
-`omapac-repo advisories add|remove` maintains the kill list.
+`pacvamp-repo advisories add|remove` maintains the kill list.
 
 ## Environment
 
-`OMAPAC_AUR_RPC_BASE` and `OMAPAC_AUR_GIT_BASE` point the gate at another
-AUR (tests use a local one); `OMAPAC_REPO_NOW` fixes the clock.
+`PACVAMP_AUR_RPC_BASE` and `PACVAMP_AUR_GIT_BASE` point the gate at another
+AUR (tests use a local one); `PACVAMP_REPO_NOW` fixes the clock.

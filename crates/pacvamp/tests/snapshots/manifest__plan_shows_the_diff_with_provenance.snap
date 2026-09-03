@@ -1,0 +1,12 @@
+---
+source: crates/pacvamp/tests/manifest.rs
+expression: rig.redact(&out)
+---
+  libreoffice-fresh  absent  <- <home>/.config/pacvamp/pacvamp.toml
+  pacman             installed 7.1.0-2  <- <root>/etc/pacvamp/conf.d/10-omarchy.toml
+  yay                installed 13.0.1-1  <- <root>/etc/pacvamp/conf.d/10-omarchy.toml
++ curl               install from core  <- <home>/.config/pacvamp/pacvamp.toml
+! google-chrome      needs the AUR review flow (not in this build)  <- <home>/.config/pacvamp/pacvamp.toml
+! not-anywhere       not in any repository  <- <home>/.config/pacvamp/pacvamp.toml
+
+1 to install, 0 to remove

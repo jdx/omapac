@@ -2,7 +2,7 @@
 
 Version 1, draft. How a repository builds a package from a vendor's
 binary release without trusting a checksum file fetched over TLS. This is
-the `omapac-repo vendor` command; the document it consumes is a
+the `pacvamp-repo vendor` command; the document it consumes is a
 [packslip](packslip.md).
 
 ## Package declaration
@@ -64,7 +64,7 @@ must verify too.
    `<package>.vendor.json`, and write `vendor.lock`.
 
 Without `--write` the command reports what it would do; `--json` prints
-the report. `OMAPAC_REPO_NOW` fixes the clock for tests.
+the report. `PACVAMP_REPO_NOW` fixes the clock for tests.
 
 ## What a client gets
 

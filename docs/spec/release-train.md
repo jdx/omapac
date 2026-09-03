@@ -58,14 +58,14 @@ carries its own copy at `<snapshot_base>/<id>/release.json`.
 
 ## Client commands
 
-- `omapac channel` shows the channel, the snapshot it points at with its
+- `pacvamp channel` shows the channel, the snapshot it points at with its
   test result and promotion, the tested-package count, whether the
   mirrorlist is pinned, and the last snapshot the machine converged to.
-- `omapac channel pin <id>` writes `/etc/pacman.d/mirrorlist` to point at
+- `pacvamp channel pin <id>` writes `/etc/pacman.d/mirrorlist` to point at
   the snapshot (backing up the previous list once), after fetching and
   verifying the snapshot's manifest and checking it was promoted.
-  `omapac channel unpin` restores the backup.
-- `omapac rollback --snapshot <id>` pins, refreshes, and runs a sync that
+  `pacvamp channel unpin` restores the backup.
+- `pacvamp rollback --snapshot <id>` pins, refreshes, and runs a sync that
   allows downgrades so every package matches the snapshot. Pair it with
   the filesystem snapshot Omarchy takes before updates.
-- `omapac update` records the snapshot it converged to in the ledger.
+- `pacvamp update` records the snapshot it converged to in the ledger.

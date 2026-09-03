@@ -1,7 +1,0 @@
----
-source: crates/omapac/tests/readonly.rs
-expression: out
----
-glibc   2.42-1    core [arch]    dependency
-pacman  7.1.0-2   core [arch]    explicit
-yay     13.0.1-1  omarchy [opr]  dependency

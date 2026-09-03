@@ -8,7 +8,7 @@
 //! when their lengths differ.
 //!
 //! This is a byte-for-byte port rather than a reinterpretation because
-//! omapac must agree with `pacman -Qu` and `vercmp(8)` on every input.
+//! pacvamp must agree with `pacman -Qu` and `vercmp(8)` on every input.
 //! Tests carry pacman's own vector table and, when a `vercmp` binary is on
 //! the machine, a cross-check against it.
 
@@ -315,7 +315,7 @@ mod tests {
     /// Skipped silently elsewhere; CI runs it in an Arch container.
     #[test]
     fn agrees_with_the_vercmp_binary_when_present() {
-        let bin = std::env::var("OMAPAC_VERCMP_BIN").unwrap_or_else(|_| "vercmp".to_string());
+        let bin = std::env::var("PACVAMP_VERCMP_BIN").unwrap_or_else(|_| "vercmp".to_string());
         if std::process::Command::new(&bin)
             .args(["1", "1"])
             .output()

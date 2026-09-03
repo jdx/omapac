@@ -1301,79 +1301,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "omapac"
-version = "0.1.0"
-dependencies = [
- "alpm-db",
- "base64 0.22.1",
- "color-eyre",
- "eyre",
- "indexmap",
- "insta",
- "jiff",
- "landlock",
- "libc",
- "nix 0.31.3",
- "omapac-cli-support",
- "omapac-policy",
- "packslip",
- "ratatui",
- "seccompiler",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror 2.0.20",
- "toml",
- "toml_edit",
- "ureq",
- "usage-rs",
- "which",
-]
-
-[[package]]
-name = "omapac-cli-support"
-version = "0.1.0"
-dependencies = [
- "eyre",
- "serde_json",
- "usage-rs",
-]
-
-[[package]]
-name = "omapac-policy"
-version = "0.1.0"
-dependencies = [
- "regex",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "omapac-repo"
-version = "0.1.0"
-dependencies = [
- "alpm-db",
- "base64 0.22.1",
- "color-eyre",
- "eyre",
- "jiff",
- "nix 0.31.3",
- "omapac",
- "omapac-cli-support",
- "omapac-policy",
- "p256",
- "packslip",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "toml",
- "ureq",
- "usage-rs",
-]
-
-[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1417,7 +1344,7 @@ dependencies = [
  "eyre",
  "getrandom 0.3.4",
  "jiff",
- "omapac-cli-support",
+ "pacvamp-cli-support",
  "schemars",
  "serde",
  "serde_json",
@@ -1426,6 +1353,79 @@ dependencies = [
  "thiserror 2.0.20",
  "usage-rs",
  "which",
+]
+
+[[package]]
+name = "pacvamp"
+version = "0.1.0"
+dependencies = [
+ "alpm-db",
+ "base64 0.22.1",
+ "color-eyre",
+ "eyre",
+ "indexmap",
+ "insta",
+ "jiff",
+ "landlock",
+ "libc",
+ "nix 0.31.3",
+ "packslip",
+ "pacvamp-cli-support",
+ "pacvamp-policy",
+ "ratatui",
+ "seccompiler",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.20",
+ "toml",
+ "toml_edit",
+ "ureq",
+ "usage-rs",
+ "which",
+]
+
+[[package]]
+name = "pacvamp-cli-support"
+version = "0.1.0"
+dependencies = [
+ "eyre",
+ "serde_json",
+ "usage-rs",
+]
+
+[[package]]
+name = "pacvamp-policy"
+version = "0.1.0"
+dependencies = [
+ "regex",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "pacvamp-repo"
+version = "0.1.0"
+dependencies = [
+ "alpm-db",
+ "base64 0.22.1",
+ "color-eyre",
+ "eyre",
+ "jiff",
+ "nix 0.31.3",
+ "p256",
+ "packslip",
+ "pacvamp",
+ "pacvamp-cli-support",
+ "pacvamp-policy",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "toml",
+ "ureq",
+ "usage-rs",
 ]
 
 [[package]]
