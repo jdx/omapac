@@ -8,7 +8,7 @@ use eyre::{Result, bail};
 use serde::Serialize;
 
 use super::transaction;
-use crate::engine::{Engine, Target, Transaction};
+use crate::engine::{Engine, Operation, Target, Transaction};
 use crate::host::Host;
 use crate::manifest::{Manifest, Source, State};
 
@@ -193,7 +193,10 @@ impl Diff {
         }
         let removes = self.removes();
         if !removes.is_empty() {
-            let tx = Transaction::remove(removes);
+            let mut tx = Transaction::remove(removes);
+            if let Operation::Remove { recursive, .. } = &mut tx.operation {
+                *recursive = false;
+            }
             run(host, engine, tx, "remove", yes, dry_run)?;
         }
         let aur: Vec<&str> = self
