@@ -40,17 +40,33 @@ impl RunWith<&App> for Remove {
 
     fn run_with(self, app: &App) -> Self::Output {
         let host = app.host()?;
+        let ledger = app.ledger()?;
         let mut not_installed = Vec::new();
+        let mut packages = Vec::new();
         for name in &self.packages {
             if host.installed_package(name)?.is_none() {
-                not_installed.push(name.as_str());
+                if !ledger.packages.contains_key(name) {
+                    not_installed.push(name.as_str());
+                }
+            } else {
+                packages.push(name.clone());
             }
         }
         if !not_installed.is_empty() {
             bail!("not installed: {}", not_installed.join(", "));
         }
+        if packages.is_empty() {
+            if !self.dry_run && !self.json {
+                app.record(&crate::ledger::Patch {
+                    remove: self.packages,
+                    ..Default::default()
+                })?;
+            }
+            println!("nothing to remove");
+            return Ok(());
+        }
         let engine = app.engine()?;
-        let mut tx = Transaction::remove(self.packages.clone());
+        let mut tx = Transaction::remove(packages);
         if let Operation::Remove {
             recursive,
             cascade,
@@ -85,7 +101,13 @@ impl RunWith<&App> for Remove {
             self.dry_run,
         )?;
         if performed {
-            app.record(&transaction::ledger_patch(&plan, &[], "remove", true))?;
+            let mut patch = transaction::ledger_patch(&plan, &[], "remove", true);
+            patch.remove.extend(
+                self.packages
+                    .into_iter()
+                    .filter(|name| host.installed_package(name).ok().flatten().is_none()),
+            );
+            app.record(&patch)?;
         }
         Ok(())
     }

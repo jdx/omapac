@@ -80,6 +80,9 @@ impl RunWith<&App> for Apply {
         let diff = Diff::compute(&host, &manifest)?;
         print!("{}", diff.render());
         if !diff.has_changes() {
+            if !self.dry_run {
+                diff.record_noops(app, &host, "apply")?;
+            }
             return Ok(());
         }
         let engine = app.engine()?;

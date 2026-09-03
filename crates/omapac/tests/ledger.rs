@@ -76,6 +76,37 @@ fn as_deps_records_named_targets_as_dependencies() {
 }
 
 #[test]
+fn repeated_commands_repair_a_missing_ledger_write() {
+    let rig = Rig::new();
+    let ledger = rig.root.join("var/lib/omapac/state.json");
+
+    let (code, _, err) = rig.run(&["install", "-y", "pacman"], "", 0);
+    assert_eq!(code, 0, "{err}");
+    let state: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+    assert_eq!(state["packages"]["pacman"]["version"], "7.1.0-2");
+
+    rig.write_root(
+        "/var/lib/omapac/state.json",
+        r#"{"schema":1,"packages":{"curl":{"version":"8.16.0-1","tier":{"tier":"arch"},"repo":"core","explicit":true,"by":"install","at":1}}}"#,
+    );
+    let (code, out, err) = rig.run(&["remove", "-y", "curl"], "", 0);
+    assert_eq!(code, 0, "{out}\n{err}");
+    let state: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+    assert!(state["packages"]["curl"].is_null(), "{state}");
+
+    std::fs::create_dir_all(rig.user_manifest().parent().unwrap()).unwrap();
+    std::fs::write(rig.user_manifest(), "[packages]\npacman = {}\n").unwrap();
+    std::fs::remove_file(&ledger).unwrap();
+    let (code, _, err) = rig.run(&["apply", "-y"], "", 0);
+    assert_eq!(code, 0, "{err}");
+    let state: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+    assert_eq!(state["packages"]["pacman"]["by"], "apply");
+}
+
+#[test]
 fn ledger_and_drift_views() {
     let rig = Rig::new();
     // Pretend omapac installed pacman at an older version than the fixture
