@@ -340,9 +340,8 @@ pub fn resolve(
 
     let mut artifacts = BTreeMap::new();
     for (key, selector) in &config.artifacts {
-        let artifact = select(&statement, selector, &chosen.version).ok_or_else(|| {
-            eyre::eyre!("no artifact in release {} matches {key}", chosen.version)
-        })?;
+        let artifact = select(&statement, selector, &chosen.version)
+            .wrap_err_with(|| format!("selecting artifact for {key}"))?;
         let sha256 = statement
             .digest_of(&artifact.name)
             .unwrap_or_default()

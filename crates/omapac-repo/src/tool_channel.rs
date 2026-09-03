@@ -240,6 +240,8 @@ fn publish_release(
         publish.allow_downgrade,
     )?;
     let version = resolved.chosen.version.clone();
+    safe_component(&tool)?;
+    safe_component(&version)?;
     if index
         .tools
         .get(&tool)
@@ -272,6 +274,7 @@ fn publish_release(
     let sidecar = crate::vendor::sidecar(&resolved, now);
     let mut artifacts = BTreeMap::new();
     for (platform, chosen) in &resolved.artifacts {
+        safe_component(&chosen.name)?;
         let Some(url) = &chosen.url else {
             bail!(
                 "{tool} {version}: {} has no download URL in the packslip",
@@ -364,6 +367,7 @@ fn publish_release(
             vetted_at: now.to_string(),
             level: resolved.verified.level,
             key_id: resolved.verified.key_id.clone(),
+            vendor_pubkey: crate::vendor::pubkey_text(&dir, &config.upstream.pubkey)?,
             channels: vec!["edge".into()],
             held: None,
             artifacts,
@@ -379,4 +383,17 @@ fn publish_release(
             format!("; skipped {}", resolved.skipped.join(", "))
         }
     ))
+}
+
+fn safe_component(value: &str) -> Result<()> {
+    let path = Path::new(value);
+    if path.components().count() != 1
+        || !matches!(
+            path.components().next(),
+            Some(std::path::Component::Normal(_))
+        )
+    {
+        bail!("unsafe path component {value:?}");
+    }
+    Ok(())
 }

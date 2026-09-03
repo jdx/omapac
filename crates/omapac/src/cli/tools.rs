@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use eyre::{Context as _, Result, bail};
 use serde::Serialize;
@@ -295,6 +295,18 @@ fn fetch_artifact(
                 .join(", ")
         );
     };
+    if Path::new(&artifact.name).components().count() != 1
+        || !matches!(
+            Path::new(&artifact.name).components().next(),
+            Some(std::path::Component::Normal(_))
+        )
+        || Path::new(&artifact.path).is_absolute()
+        || Path::new(&artifact.path)
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir))
+    {
+        bail!("unsafe artifact path in the signed index");
+    }
     std::fs::create_dir_all(&fetch.dest)
         .wrap_err_with(|| format!("creating {}", fetch.dest.display()))?;
     let path = fetch.dest.join(&artifact.name);
@@ -316,15 +328,24 @@ fn fetch_artifact(
             artifact.size
         );
     }
-    std::fs::write(&path, &bytes).wrap_err_with(|| format!("writing {}", path.display()))?;
-
+    let staging = tempfile::tempdir_in(&fetch.dest)?;
+    let staged = staging.path().join(&artifact.name);
+    std::fs::write(&staged, &bytes)?;
     // The vendor's packslip, verified against the pinned vendor key and
     // the file just written.
-    let vendor_key = packslip::minisign::PublicKey::parse(&entry.vendor_pubkey)
+    if version.vendor_pubkey.is_empty() {
+        bail!(
+            "{} {} has no version-pinned vendor key",
+            fetch.tool,
+            fetch.version
+        );
+    }
+    let vendor_key = packslip::minisign::PublicKey::parse(&version.vendor_pubkey)
         .map_err(|e| eyre::eyre!("{}: vendor key in the index: {e}", fetch.tool))?;
-    let mut packslip_ok = false;
     let vendor_sidecar = format!("{}.vendor.json", artifact.name);
-    if artifact.sidecars.iter().any(|s| s == &vendor_sidecar) {
+    if !artifact.sidecars.iter().any(|s| s == &vendor_sidecar) {
+        bail!("{vendor_sidecar}: required sidecar is absent from the index");
+    } else {
         let sidecar: serde_json::Value = serde_json::from_slice(&download(&format!(
             "{}/{}",
             channel.base,
@@ -337,7 +358,7 @@ fn fetch_artifact(
             .as_str()
             .ok_or_else(|| eyre::eyre!("{vendor_sidecar}: no signature"))?;
         let verified =
-            packslip::verify::verify(document.as_bytes(), signature, &vendor_key, &[&path])
+            packslip::verify::verify(document.as_bytes(), signature, &vendor_key, &[&staged])
                 .map_err(|e| eyre::eyre!("{vendor_sidecar}: {e}"))?;
         if verified.version != fetch.version {
             bail!(
@@ -346,13 +367,13 @@ fn fetch_artifact(
                 fetch.version
             );
         }
-        packslip_ok = true;
     }
 
     // The mirror's provenance, signed by a channel key, naming the digest.
-    let mut provenance_ok = false;
     let provenance_sidecar = format!("{}.provenance.json", artifact.name);
-    if artifact.sidecars.iter().any(|s| s == &provenance_sidecar) {
+    if !artifact.sidecars.iter().any(|s| s == &provenance_sidecar) {
+        bail!("{provenance_sidecar}: required sidecar is absent from the index");
+    } else {
         let envelope: packslip::dsse::Envelope = serde_json::from_slice(&download(&format!(
             "{}/{}",
             channel.base,
@@ -375,8 +396,9 @@ fn fetch_artifact(
         if !named {
             bail!("{provenance_sidecar}: does not name the artifact digest");
         }
-        provenance_ok = true;
     }
+
+    std::fs::rename(&staged, &path).wrap_err_with(|| format!("writing {}", path.display()))?;
 
     Ok(Fetched {
         tool: fetch.tool.clone(),
@@ -390,8 +412,8 @@ fn fetch_artifact(
         channels: version.channels.clone(),
         verified: Verified {
             index_key: index_key.to_string(),
-            packslip: packslip_ok,
-            provenance: provenance_ok,
+            packslip: true,
+            provenance: true,
         },
     })
 }
