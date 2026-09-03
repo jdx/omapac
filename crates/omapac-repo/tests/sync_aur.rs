@@ -375,6 +375,66 @@ fn an_orphaned_clean_bump_needs_review_instead_of_failing_the_sync() {
 }
 
 #[test]
+fn hold_advisories_require_review_while_block_advisories_deny() {
+    let g = Gate::new();
+    g.aur.create(
+        "yay",
+        &[("PKGBUILD", YAY_PKGBUILD), (".SRCINFO", YAY_SRCINFO)],
+        "2024-01-01T00:00:00Z",
+    );
+    let first = g.aur.head("yay");
+    g.write_state("yay", &first, "13.0.1-1");
+    g.aur.commit(
+        "yay",
+        &[
+            ("PKGBUILD", YAY_BUMP_PKGBUILD),
+            (".SRCINFO", YAY_BUMP_SRCINFO),
+        ],
+        "version bump",
+        "2024-02-01T00:00:00Z",
+    );
+    let advisory = |action| {
+        serde_json::json!({
+            "version": 1,
+            "sequence": 1,
+            "issued_at": "2026-09-03T00:00:00Z",
+            "advisories": [{
+                "id": "OPR-2026-0008",
+                "pkgbase": "yay",
+                "action": action,
+                "reason": "manual review required",
+                "issued_at": "2026-09-03T00:00:00Z"
+            }]
+        })
+        .to_string()
+    };
+    std::fs::write(g.rig.path().join("advisories.json"), advisory("hold")).unwrap();
+    let (code, out, err) = g.run(&[
+        "--trusted-maintainer",
+        "jguer",
+        "--advisories",
+        "advisories.json",
+        "--write",
+    ]);
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(out.contains("needs-review yay"), "{out}");
+    assert_eq!(g.state()["packages"]["yay"]["commit"], first);
+
+    std::fs::write(g.rig.path().join("advisories.json"), advisory("block")).unwrap();
+    let (code, out, err) = g.run(&[
+        "--trusted-maintainer",
+        "jguer",
+        "--advisories",
+        "advisories.json",
+        "--write",
+    ]);
+    assert_ne!(code, 0, "{out}");
+    assert!(out.contains("BLOCKED      yay"), "{out}");
+    assert!(err.contains("1 package(s) blocked or failed"), "{err}");
+    assert_eq!(g.state()["packages"]["yay"]["commit"], first);
+}
+
+#[test]
 fn new_packages_and_unknown_ones() {
     let mut g = Gate::new();
     g.rpc = low_reputation_rpc();
