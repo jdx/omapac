@@ -155,11 +155,15 @@ fn build_store(tamper: bool) -> Store {
 }
 
 fn run(s: &Store, args: &[&str]) -> (i32, String, String) {
+    run_with_cache(s, args, &s.rig.dir.path().join("cache"))
+}
+
+fn run_with_cache(s: &Store, args: &[&str], cache: &std::path::Path) -> (i32, String, String) {
     let output = Command::new(env!("CARGO_BIN_EXE_omapac"))
         .env("PATH", format!("{}:/usr/bin:/bin", s.rig.bin.display()))
         .env("HOME", &s.rig.home)
         .env_remove("XDG_CONFIG_HOME")
-        .env("XDG_CACHE_HOME", s.rig.dir.path().join("cache"))
+        .env("XDG_CACHE_HOME", cache)
         .arg("--sysroot")
         .arg(&s.rig.root)
         .arg("tools")
@@ -206,11 +210,11 @@ fn index_and_list() {
     assert!(err.contains("other is not in the tool channel"), "{err}");
 
     // Rollback protection: a lower sequence than the one seen is refused.
+    let cache_key = omapac::trust::sha256_bytes(s.base.trim_end_matches('/').as_bytes());
     std::fs::write(
-        s.rig
-            .dir
-            .path()
-            .join("cache/omapac/trust/tools/index.sequence"),
+        s.rig.dir.path().join(format!(
+            "cache/omapac/trust/tools/{cache_key}/index.sequence"
+        )),
         "9",
     )
     .unwrap();
@@ -220,6 +224,22 @@ fn index_and_list() {
         err.contains("sequence 5 is below the 9 seen before"),
         "{err}"
     );
+}
+
+#[test]
+fn channels_with_the_same_key_do_not_share_cached_indexes() {
+    let first = build_store(false);
+    let second = build_store(false);
+    let cache = first.rig.dir.path().join("shared-cache");
+    let (code, _, err) = run_with_cache(&first, &["index"], &cache);
+    assert_eq!(code, 0, "{err}");
+
+    let (code, out, err) = run_with_cache(&second, &["--offline", "list", "tool"], &cache);
+    assert_ne!(
+        code, 0,
+        "an unrelated base must not reuse the first index: {out}"
+    );
+    assert!(err.contains("not cached and offline"), "{err}");
 }
 
 #[test]

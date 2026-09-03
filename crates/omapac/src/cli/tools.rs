@@ -129,10 +129,12 @@ impl Tools {
         if keyring.is_empty() {
             bail!("no trust keys to verify the tool channel with; pass --pubkey");
         }
+        let base = base.trim_end_matches('/').to_string();
+        let cache_key = crate::trust::sha256_bytes(base.as_bytes());
         Ok(Channel {
-            base: base.trim_end_matches('/').to_string(),
+            base,
             keyring,
-            cache: Cache::for_repo("tools"),
+            cache: Cache::for_repo(&format!("tools/{cache_key}")),
         })
     }
 
