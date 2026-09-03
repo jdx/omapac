@@ -62,11 +62,24 @@ pub type Platform = (
 /// Infer `(os, arch, libc, format)` from a release file name.
 pub fn infer_platform(name: &str) -> Platform {
     let lower = name.to_ascii_lowercase();
-    let os = if lower.contains("linux") {
+    let os = if lower.contains("linux")
+        || lower.ends_with(".deb")
+        || lower.ends_with(".rpm")
+        || lower.ends_with(".appimage")
+    {
         Some("linux")
-    } else if lower.contains("darwin") || lower.contains("macos") || lower.contains("apple") {
+    } else if lower.contains("darwin")
+        || lower.contains("macos")
+        || lower.contains("apple")
+        || lower.ends_with(".dmg")
+        || lower.ends_with(".pkg")
+    {
         Some("darwin")
-    } else if lower.contains("windows") || lower.contains("win64") || lower.ends_with(".exe") {
+    } else if lower.contains("windows")
+        || lower.contains("win64")
+        || lower.ends_with(".exe")
+        || lower.ends_with(".msi")
+    {
         Some("windows")
     } else if lower.contains("freebsd") {
         Some("freebsd")
@@ -204,6 +217,18 @@ mod tests {
             (Some("windows"), Some("x86_64"), None, Some("exe"))
         );
         assert_eq!(infer_platform("SHASUMS256.txt"), (None, None, None, None));
+        assert_eq!(
+            infer_platform("tool_amd64.deb"),
+            (Some("linux"), Some("x86_64"), Some("gnu"), Some("deb"))
+        );
+        assert_eq!(
+            infer_platform("Tool.dmg"),
+            (Some("darwin"), None, None, Some("dmg"))
+        );
+        assert_eq!(
+            infer_platform("Tool.msi"),
+            (Some("windows"), None, None, Some("msi"))
+        );
         assert_eq!(
             infer_platform("tool-linux-x86-64.tar.gz"),
             (Some("linux"), Some("x86_64"), Some("gnu"), Some("tar.gz"))
