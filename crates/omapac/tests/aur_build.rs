@@ -102,7 +102,10 @@ fn build_runs_both_phases_with_a_scrubbed_environment() {
         makepkg[0], "makepkg --verifysource --noconfirm --force",
         "{log:?}"
     );
-    assert_eq!(makepkg[1], "makepkg --noconfirm --force", "{log:?}");
+    assert_eq!(
+        makepkg[1], "makepkg --noconfirm --force --holdver",
+        "{log:?}"
+    );
     assert_eq!(makepkg[2], "makepkg --packagelist", "{log:?}");
     assert!(
         log.contains(&"env GITHUB_TOKEN=unset".to_string()),
