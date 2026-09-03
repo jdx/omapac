@@ -769,12 +769,17 @@ impl Parser<'_> {
             return Err(Error::TooDeep { at });
         }
         self.depth += 1;
+        let parent_section = self.section.clone();
         let result = (|| {
             for path in self.loader.expand(pattern) {
-                self.parse_file(&path)?;
+                self.section = parent_section.clone();
+                let parsed = self.parse_file(&path);
+                self.section = parent_section.clone();
+                parsed?;
             }
             Ok(())
         })();
+        self.section = parent_section;
         self.depth -= 1;
         result
     }
@@ -1096,6 +1101,29 @@ mod tests {
         assert_eq!(
             config.repo("extra").unwrap().servers,
             ["https://a/extra/os/x86_64"]
+        );
+    }
+
+    #[test]
+    fn include_restores_the_parent_section_between_files_and_after_returning() {
+        let loader = MemoryLoader::default()
+            .with(
+                "/pacman.conf",
+                "[options]\nArchitecture = x86_64\n[core]\nInclude = /parts/*.conf\nServer = https://parent/$repo/$arch\n",
+            )
+            .with(
+                "/parts/a.conf",
+                "[nested]\nServer = https://nested/$repo/$arch\n",
+            )
+            .with("/parts/b.conf", "Server = https://included/$repo/$arch\n");
+        let config = Config::load_with(Path::new("/pacman.conf"), &loader).unwrap();
+        assert_eq!(
+            config.repo("core").unwrap().servers,
+            ["https://included/core/x86_64", "https://parent/core/x86_64"]
+        );
+        assert_eq!(
+            config.repo("nested").unwrap().servers,
+            ["https://nested/nested/x86_64"]
         );
     }
 
