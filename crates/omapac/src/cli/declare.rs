@@ -178,6 +178,7 @@ impl RunWith<&App> for Add {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
             Err(err) => return Err(err.into()),
         };
+        let mut declared = Vec::new();
         let result = (|| {
             let mut names = Vec::new();
             for spec in &self.packages {
@@ -197,7 +198,7 @@ impl RunWith<&App> for Add {
                     hold: self.hold,
                 };
                 edit::set_package(&paths.user, &name, &package)?;
-                println!("declared {name} in {}", paths.user.display());
+                declared.push(name.clone());
                 names.push(name);
             }
             let host = app.host()?;
@@ -224,6 +225,9 @@ impl RunWith<&App> for Add {
                 ));
             }
             return Err(err);
+        }
+        for name in declared {
+            println!("declared {name} in {}", paths.user.display());
         }
         Ok(())
     }

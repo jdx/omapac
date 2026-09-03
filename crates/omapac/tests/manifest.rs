@@ -169,8 +169,9 @@ fn failed_add_restores_the_manifest() {
     let original = "# keep me\n[packages]\npacman = {}\n";
     std::fs::write(rig.user_manifest(), original).unwrap();
 
-    let (code, _, _) = rig.run(&["add", "-y", "curl"], HELIX_PLAN, 7);
+    let (code, out, _) = rig.run(&["add", "-y", "curl"], HELIX_PLAN, 7);
     assert_ne!(code, 0);
+    assert!(!out.contains("declared curl"), "{out}");
     assert_eq!(
         std::fs::read_to_string(rig.user_manifest()).unwrap(),
         original
