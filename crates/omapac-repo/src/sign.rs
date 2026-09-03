@@ -105,16 +105,19 @@ impl RunWith<()> for Sign {
                 .and_then(|n| n.to_str())
                 .unwrap_or_default()
                 .to_string();
-            let outcome = match check(package, &keys, self.require_rekor, index.as_ref()) {
-                Err(reason) => Outcome::Refused { reason },
-                Ok(_) if sig_path(package).exists() => Outcome::AlreadySigned,
-                Ok(build_key) if self.dry_run => Outcome::WouldSign { build_key },
-                Ok(build_key) => match gpg_sign(&self.gpg, &self.gpg_key, package) {
-                    Ok(()) => Outcome::Signed { build_key },
-                    Err(err) => Outcome::Refused {
-                        reason: format!("gpg: {err:#}"),
+            let outcome = if sig_path(package).exists() {
+                Outcome::AlreadySigned
+            } else {
+                match check(package, &keys, self.require_rekor, index.as_ref()) {
+                    Err(reason) => Outcome::Refused { reason },
+                    Ok(build_key) if self.dry_run => Outcome::WouldSign { build_key },
+                    Ok(build_key) => match gpg_sign(&self.gpg, &self.gpg_key, package) {
+                        Ok(()) => Outcome::Signed { build_key },
+                        Err(err) => Outcome::Refused {
+                            reason: format!("gpg: {err:#}"),
+                        },
                     },
-                },
+                }
             };
             verdicts.push(Verdict { file, outcome });
         }
