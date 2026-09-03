@@ -145,7 +145,8 @@ impl App {
         let settings = manifest.settings.clone();
         let approved_here = lock
             .aur
-            .get(name)
+            .get(&reviewed.pkgbase)
+            .or_else(|| lock.aur.get(name))
             .is_some_and(|entry| entry.commit == reviewed.target);
         if !approved_here {
             if !interactive {
@@ -172,7 +173,9 @@ impl App {
             )? {
                 bail!("not approved");
             }
-            lock.aur.insert(name.to_string(), reviewed.lock_entry());
+            lock.aur.remove(name);
+            lock.aur
+                .insert(reviewed.pkgbase.clone(), reviewed.lock_entry());
             lock.save(&self.lockfile_path())?;
         }
         if !reviewed.evidence.recipe.install_files.is_empty()
