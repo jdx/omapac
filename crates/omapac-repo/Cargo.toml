@@ -15,6 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 alpm-db.workspace = true
+base64.workspace = true
 color-eyre.workspace = true
 eyre.workspace = true
 jiff.workspace = true
@@ -23,6 +24,9 @@ omapac-policy.workspace = true
 packslip.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
+toml.workspace = true
+ureq.workspace = true
 usage_rs.workspace = true
 
 [dev-dependencies]

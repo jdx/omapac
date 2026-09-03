@@ -77,6 +77,40 @@ is the interim form) and nothing else signs with it. The signer host that
 holds the repository GPG key checks the envelope before signing a package
 (the signer gate, a later layer).
 
+## Transparency
+
+`omapac-repo attest --rekor <log>` uploads each envelope to a Rekor
+instance as a `dsse` entry, with the build key as the verifier in SPKI
+PEM, and stores the log's answer beside the package as
+`<package>.rekor.json`: the entry uuid, log index, log id, integration
+time, the canonical body, the inclusion proof and signed entry timestamp.
+The public log is `https://rekor.sigstore.dev`. Anyone can then find every
+provenance statement a build key ever signed, so a key abused on a
+compromised build host leaves a public trail.
+
+## The signer gate
+
+The repository GPG key lives on a separate signer host. `omapac-repo sign`
+runs there and signs a package only after:
+
+1. the provenance envelope beside it verifies with an allowlisted build
+   key, carries the SLSA provenance predicate, and names the package's
+   digest as a subject;
+2. with `--require-rekor`, a stored log entry exists, is a `dsse` entry
+   whose payload hash is the envelope's payload, and carries an inclusion
+   proof;
+3. with `--index <file>`, the index lists the package with the same
+   digest.
+
+Only then does it run `gpg --detach-sign` with the repository key. Any
+failure refuses the package and the command exits non-zero, so a build
+host compromise cannot produce a repository-signed package on its own.
+`--dry-run` reports without signing; `--json` prints the verdicts.
+
+Not yet checked: the Merkle inclusion proof itself and the signed entry
+timestamp against the log's public key. Both are planned once a
+sigstore verification crate is adopted.
+
 ## Consuming it
 
 `omapac-repo index` verifies envelopes against the accepted build keys and

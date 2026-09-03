@@ -237,6 +237,7 @@ pub fn read_previous(dir: &Path, key: &PublicKey) -> Result<Option<Index>> {
 const SIDECARS: &[&str] = &[
     ".sig",
     crate::attest::SIDECAR,
+    crate::rekor::SIDECAR,
     ".sigstore.json",
     ".vendor.sigstore.json",
     ".vendor.json",
@@ -334,7 +335,7 @@ pub fn build(
     })
 }
 
-fn is_package(path: &Path) -> bool {
+pub fn is_package(path: &Path) -> bool {
     let name = path
         .file_name()
         .and_then(|n| n.to_str())
