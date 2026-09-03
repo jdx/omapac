@@ -86,7 +86,11 @@ impl LocalPackage {
             size: fields.number("SIZE"),
             groups: fields.all("GROUPS").to_vec(),
             licenses: fields.all("LICENSE").to_vec(),
-            validation: fields.all("VALIDATION").to_vec(),
+            validation: fields
+                .all("VALIDATION")
+                .iter()
+                .flat_map(|line| line.split_whitespace().map(str::to_string))
+                .collect(),
             replaces: deps("REPLACES"),
             depends: deps("DEPENDS"),
             optdepends: deps("OPTDEPENDS"),
@@ -220,6 +224,14 @@ mod tests {
         let yay = &packages[2];
         assert_eq!(yay.reason, InstallReason::Dependency);
         assert!(yay.provides.is_empty());
+    }
+
+    #[test]
+    fn validation_methods_are_individual_tokens() {
+        let fields =
+            Fields::parse("%NAME%\nexample\n\n%VERSION%\n1-1\n\n%VALIDATION%\nsha256 pgp  \n");
+        let package = LocalPackage::from_fields(&fields, PathBuf::new()).unwrap();
+        assert_eq!(package.validation, ["sha256", "pgp"]);
     }
 
     #[test]
