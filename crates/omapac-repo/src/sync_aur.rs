@@ -14,7 +14,9 @@ use omapac::host::{Host, HostPaths};
 use omapac::lockfile::AurEntry;
 use omapac::manifest::settings::Settings;
 use omapac::trust::Advisories;
-use omapac::trust::feeds::{Reviewer, Verdict, VerdictKind, VerdictSubject, Verdicts};
+use omapac::trust::feeds::{
+    AdvisoryAction, Reviewer, Verdict, VerdictKind, VerdictSubject, Verdicts,
+};
 use omapac_policy::evidence::Approved;
 use omapac_policy::{Policy, Report};
 use serde::{Deserialize, Serialize};
@@ -201,12 +203,24 @@ impl RunWith<()> for SyncAur {
             let result = match review(package, &request) {
                 Ok(reviewed) => {
                     let report = gate_report(&reviewed, previous.as_ref(), &self.arch);
+                    let hold_only = advisories.as_ref().is_some_and(|feed| {
+                        let matching = feed.matching(
+                            &reviewed.pkgbase,
+                            Some(&reviewed.target),
+                            Some(&reviewed.srcinfo.version()),
+                        );
+                        !matching.is_empty()
+                            && matching
+                                .iter()
+                                .all(|advisory| advisory.action == AdvisoryAction::Hold)
+                    });
                     let result = decide(
                         package,
                         &reviewed,
                         &report,
                         previous.as_ref(),
                         &self.trusted_maintainer,
+                        hold_only,
                     );
                     if result.outcome != Outcome::Unchanged {
                         verdicts.push(static_verdict(&reviewed, &report, &now));
@@ -376,6 +390,7 @@ pub fn decide(
     report: &Report,
     previous: Option<&Synced>,
     trusted: &[String],
+    hold_only: bool,
 ) -> Result1 {
     let maintainer = reviewed
         .evidence
@@ -407,12 +422,13 @@ pub fn decide(
     let actionable_denials: Vec<_> = report
         .denials()
         .filter(|judged| {
-            maintainer.is_some()
-                || !matches!(
-                    judged.finding.id,
-                    omapac_policy::FindingId::Orphaned
-                        | omapac_policy::FindingId::MaintainerChanged
-                )
+            !(hold_only && judged.finding.id == omapac_policy::FindingId::UpstreamAdvisory)
+                && (maintainer.is_some()
+                    || !matches!(
+                        judged.finding.id,
+                        omapac_policy::FindingId::Orphaned
+                            | omapac_policy::FindingId::MaintainerChanged
+                    ))
         })
         .collect();
     if !actionable_denials.is_empty() {
