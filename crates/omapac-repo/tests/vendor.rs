@@ -283,3 +283,26 @@ fn refuses_the_wrong_key_floor_and_project() {
         "{err}"
     );
 }
+
+#[test]
+fn refuses_an_empty_artifact_map_before_rewriting() {
+    let rig = Rig::new();
+    let key = SecretKey::from_seed([9u8; 32]);
+    write_package(&rig, "http://127.0.0.1:9", &key, "");
+    let pkgdir = rig.path().join("tool-bin");
+    let config = std::fs::read_to_string(pkgdir.join("vendor.toml")).unwrap();
+    let config = config.split("[artifacts]").next().unwrap();
+    std::fs::write(pkgdir.join("vendor.toml"), config).unwrap();
+    let before = std::fs::read_to_string(pkgdir.join("PKGBUILD")).unwrap();
+    let (code, _, err) = rig.run_env(
+        &["vendor", "--write", "--pkgdir", "tool-bin"],
+        &[("OMAPAC_REPO_NOW", NOW)],
+    );
+    assert_ne!(code, 0);
+    assert!(err.contains("at least one [artifacts] selector"), "{err}");
+    assert_eq!(
+        std::fs::read_to_string(pkgdir.join("PKGBUILD")).unwrap(),
+        before
+    );
+    assert!(!pkgdir.join("vendor.lock").exists());
+}
