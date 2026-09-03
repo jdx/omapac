@@ -119,6 +119,24 @@ pub fn infer_platform(name: &str) -> Platform {
     (os, arch, libc, format)
 }
 
+fn canonical_os(value: &str) -> String {
+    match value.to_ascii_lowercase().as_str() {
+        "macos" | "osx" | "darwin" => "darwin".to_string(),
+        "win32" | "win64" | "windows" => "windows".to_string(),
+        value => value.to_string(),
+    }
+}
+
+fn canonical_arch(value: &str) -> String {
+    match value.to_ascii_lowercase().as_str() {
+        "amd64" | "x64" | "x86-64" | "x86_64" => "x86_64".to_string(),
+        "arm64" | "aarch64" => "aarch64".to_string(),
+        "armhf" | "armv7l" | "armv7" => "armv7".to_string(),
+        "x86" | "i386" | "i686" => "i686".to_string(),
+        value => value.to_string(),
+    }
+}
+
 /// Build, validate, and sign.
 pub fn create(request: &Request<'_>) -> Result<Created, Error> {
     let mut subject = Vec::new();
@@ -134,12 +152,22 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
             path: input.path.display().to_string(),
             source,
         })?;
-        let (inferred_os, arch, inferred_libc, format) = infer_platform(&name);
-        let os = input.os.or(inferred_os);
-        let libc = input.libc.map(str::to_string).or_else(|| match os {
-            Some("linux") => Some(inferred_libc.unwrap_or("gnu").to_string()),
-            _ => None,
-        });
+        let (inferred_os, inferred_arch, inferred_libc, format) = infer_platform(&name);
+        let os = input
+            .os
+            .map(canonical_os)
+            .or_else(|| inferred_os.map(str::to_string));
+        let arch = input
+            .arch
+            .map(canonical_arch)
+            .or_else(|| inferred_arch.map(str::to_string));
+        let libc = input
+            .libc
+            .map(|value| value.to_ascii_lowercase())
+            .or_else(|| match os.as_deref() {
+                Some("linux") => Some(inferred_libc.unwrap_or("gnu").to_string()),
+                _ => None,
+            });
         subject.push(Subject {
             name: name.clone(),
             digest: Digest { sha256 },
@@ -150,8 +178,8 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
         artifacts.push(Artifact {
             url,
             name,
-            os: os.map(str::to_string),
-            arch: input.arch.or(arch).map(str::to_string),
+            os,
+            arch,
             libc,
             size,
             format: format.map(str::to_string),
@@ -200,6 +228,10 @@ mod tests {
 
     #[test]
     fn infers_platforms() {
+        assert_eq!(canonical_os("macOS"), "darwin");
+        assert_eq!(canonical_os("win64"), "windows");
+        assert_eq!(canonical_arch("x64"), "x86_64");
+        assert_eq!(canonical_arch("arm64"), "aarch64");
         assert_eq!(
             infer_platform("mise-v2026.9.1-linux-x64.tar.xz"),
             (Some("linux"), Some("x86_64"), Some("gnu"), Some("tar.xz"))
