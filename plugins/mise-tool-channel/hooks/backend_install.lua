@@ -48,10 +48,16 @@ function PLUGIN:BackendInstall(ctx)
         local target = file.join_path(bin_dir, ctx.tool)
         if options.exe ~= nil then
             cmd.exec("mkdir -p " .. self:quote(bin_dir))
-            if file.exists(target) then
-                cmd.exec("rm -f -- " .. self:quote(target))
+            local source = file.join_path(ctx.install_path, exe)
+            -- The requested executable can already be bin/<tool>. In that
+            -- case it is the target itself, so replacing it would delete the
+            -- artifact and create a self-referential symlink.
+            if source ~= target then
+                if file.exists(target) then
+                    cmd.exec("rm -f -- " .. self:quote(target))
+                end
+                file.symlink(source, target)
             end
-            file.symlink(file.join_path(ctx.install_path, exe), target)
         elseif not file.exists(target) then
             cmd.exec("mkdir -p " .. self:quote(bin_dir))
             file.symlink(file.join_path(ctx.install_path, exe), target)
@@ -95,17 +101,27 @@ end
 function PLUGIN:find_executable(install_path, tool)
     local file = require("file")
     for _, candidate in ipairs({ tool, file.join_path("bin", tool) }) do
-        if file.exists(file.join_path(install_path, candidate)) then
+        local stat = file.stat(file.join_path(install_path, candidate))
+        if stat ~= nil and stat.is_file then
             return candidate
         end
     end
     local bin = file.join_path(install_path, "bin")
-    if file.exists(bin) then
+    local bin_stat = file.stat(bin)
+    if bin_stat ~= nil and bin_stat.is_dir then
         local entries = file.list(bin)
         if #entries == 1 then
             -- file.list returns the full path. Convert it back to the path
             -- relative to install_path expected by the symlink code above.
             local entry = entries[1]
+            local entry_path = entry
+            if entry:sub(1, #install_path) ~= install_path then
+                entry_path = file.join_path(bin, entry)
+            end
+            local entry_stat = file.stat(entry_path)
+            if entry_stat == nil or not entry_stat.is_file then
+                return nil
+            end
             if entry:sub(1, #install_path) == install_path then
                 return entry:sub(#install_path + 1):gsub("^[/\\]+", "")
             end
