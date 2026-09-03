@@ -310,6 +310,10 @@ fn short(commit: &str) -> &str {
 pub fn gate_report(reviewed: &Reviewed, previous: Option<&Synced>, arch: &str) -> Report {
     let mut evidence = reviewed.evidence.clone();
     evidence.pinned = false;
+    // `first_install` describes the client machine that happened to run the
+    // gate. Repository admission is instead anchored to `previous` below;
+    // new entries already require human review in `decide`.
+    evidence.first_install = false;
     evidence.approved = previous.map(|prev| {
         let srcinfo = reviewed.checkout.srcinfo(&prev.commit).ok();
         let source_hosts = srcinfo
