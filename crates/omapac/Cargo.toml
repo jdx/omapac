@@ -20,6 +20,11 @@ path = "src/lib.rs"
 name = "omapac"
 path = "src/main.rs"
 
+[[test]]
+name = "transactions"
+path = "tests/transactions.rs"
+required-features = ["test-pacman"]
+
 [dependencies]
 alpm-db.workspace = true
 color-eyre.workspace = true

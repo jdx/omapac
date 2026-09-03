@@ -51,17 +51,31 @@ pub fn plan(host: &Host, resolved: &ResolvedTx, command: String) -> Plan {
         {
             let level = source.repo.sig_level;
             let floor = host.config.options.sig_level;
-            let weak = check_rank(level.package()) < check_rank(floor.package())
+            let package_weak = check_rank(level.package()) < check_rank(floor.package())
                 || (floor.package() != Check::Never
                     && trust_rank(level.package_trust()) < trust_rank(floor.package_trust()));
+            let database_weak = check_rank(level.database()) < check_rank(floor.database())
+                || (floor.database() != Check::Never
+                    && trust_rank(level.database_trust()) < trust_rank(floor.database_trust()));
             if level.package() == Check::Never && floor.package() != Check::Never {
                 warnings.push(format!(
                     "{}: repository [{repo}] does not check package signatures",
                     change.name
                 ));
-            } else if weak {
+            } else if package_weak {
                 warnings.push(format!(
                     "{}: repository [{repo}] has package SigLevel {level}, weaker than the floor ({floor})",
+                    change.name
+                ));
+            }
+            if level.database() == Check::Never && floor.database() != Check::Never {
+                warnings.push(format!(
+                    "{}: repository [{repo}] does not check database signatures",
+                    change.name
+                ));
+            } else if database_weak {
+                warnings.push(format!(
+                    "{}: repository [{repo}] has database SigLevel {level}, weaker than the floor ({floor})",
                     change.name
                 ));
             }
