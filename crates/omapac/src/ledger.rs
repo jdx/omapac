@@ -117,7 +117,16 @@ impl Ledger {
             self.packages.remove(name);
         }
         for (name, entry) in &patch.upsert {
-            self.packages.insert(name.clone(), entry.clone());
+            let mut entry = entry.clone();
+            if let Some(existing) = self.packages.get(name)
+                && existing.explicit
+                && !entry.explicit
+            {
+                entry.explicit = true;
+                entry.by = existing.by.clone();
+                entry.at = existing.at;
+            }
+            self.packages.insert(name.clone(), entry);
         }
         if let Some(sequence) = patch.index_sequence {
             self.index_sequence = Some(self.index_sequence.unwrap_or(0).max(sequence));
@@ -274,6 +283,26 @@ mod tests {
                 .all(|e| e.unwrap().file_name() == "state.json"),
             "no temp files left"
         );
+    }
+
+    #[test]
+    fn dependency_updates_preserve_explicit_provenance() {
+        let mut ledger = Ledger::default();
+        ledger.packages.insert("curl".into(), entry("8.0-1"));
+        let mut dependency = entry("8.1-1");
+        dependency.explicit = false;
+        dependency.by = "install dependency".into();
+        dependency.at += 10;
+        let mut patch = Patch::default();
+        patch.upsert.insert("curl".into(), dependency);
+
+        ledger.merge(&patch);
+
+        let curl = &ledger.packages["curl"];
+        assert_eq!(curl.version, "8.1-1");
+        assert!(curl.explicit);
+        assert_eq!(curl.by, "install");
+        assert_eq!(curl.at, 1_756_800_000);
     }
 
     #[test]

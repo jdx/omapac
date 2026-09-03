@@ -63,7 +63,11 @@ impl RunWith<&App> for List {
 
     fn run_with(self, app: &App) -> Self::Output {
         let host = app.host()?;
-        let ledger = app.ledger()?;
+        let ledger = if self.ledger || self.drift {
+            app.ledger()?
+        } else {
+            Ledger::default()
+        };
         let entries = list(&host, &ledger, &self)?;
         if self.json {
             return print_json(&entries);
