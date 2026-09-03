@@ -302,19 +302,9 @@ impl RunWith<()> for Snapshot {
                 } else {
                     if store.target("rc").as_deref() == Some(test.id.as_str()) {
                         release.promoted.rc = None;
-                        let fallback = store
-                            .ids()?
-                            .into_iter()
-                            .rev()
-                            .filter(|id| id != &test.id)
-                            .find(|id| {
-                                store.release(id).is_ok_and(|candidate| {
-                                    !candidate.held
-                                        && candidate.tests.as_ref().map(|tests| tests.result)
-                                            == Some(TestResult::Pass)
-                                })
-                            });
-                        match fallback {
+                        // A failed re-test may only retreat to an earlier rc;
+                        // it must not advance across a deliberate rollback.
+                        match fallback(&store, "rc", &test.id)? {
                             Some(id) => store.point("rc", &id)?,
                             None => store.clear("rc")?,
                         }

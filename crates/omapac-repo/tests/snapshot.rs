@@ -78,6 +78,40 @@ impl Train {
 }
 
 #[test]
+fn failed_retest_never_advances_past_a_manual_rc_rollback() {
+    let t = Train::new();
+    for id in ["2026-09-01T06", "2026-09-02T06", "2026-09-03T06"] {
+        let (code, _, err) = t.run(
+            &format!("{id}:10:00Z"),
+            &["cut", "--from", "mirror", "--id", id],
+        );
+        assert_eq!(code, 0, "{err}");
+        let (code, _, err) = t.run(
+            &format!("{id}:20:00Z"),
+            &["test", "--id", id, "--suite", "true"],
+        );
+        assert_eq!(code, 0, "{err}");
+    }
+    assert_eq!(t.target("rc").as_deref(), Some("2026-09-03T06"));
+
+    let (code, _, err) = t.run(
+        "2026-09-03T07:00:00Z",
+        &["promote", "--channel", "rc", "--id", "2026-09-02T06"],
+    );
+    assert_eq!(code, 0, "{err}");
+    let (code, _, _) = t.run(
+        "2026-09-03T08:00:00Z",
+        &["test", "--id", "2026-09-02T06", "--suite", "false"],
+    );
+    assert_ne!(code, 0);
+    assert_eq!(
+        t.target("rc").as_deref(),
+        Some("2026-09-01T06"),
+        "the newer passing snapshot must not be selected"
+    );
+}
+
+#[test]
 fn cut_test_promote_hold_prune() {
     let t = Train::new();
 
