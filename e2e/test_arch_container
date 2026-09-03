@@ -42,9 +42,9 @@ if run "omapac present definitely-not-a-package"; then
 	exit 1
 fi
 run "omapac list --explicit" | grep -q '^base '
-run "omapac missing pacman glibc"
-if run "omapac missing pacman nonexistent-pkg"; then
-	echo "missing should fail when a package is absent" >&2
+run "omapac missing definitely-not-a-package"
+if run "omapac missing pacman definitely-not-a-package"; then
+	echo "missing should fail when any named package is installed" >&2
 	exit 1
 fi
 
