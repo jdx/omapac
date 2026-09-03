@@ -220,6 +220,33 @@ impl RunWith<&App> for Update {
         // post hooks once the pre hooks succeeded, including on update errors.
         run_hooks(&settings.update_pre_hooks, "pre")?;
         let update_result: Result<()> = (|| {
+            // Resolve and cache the exact release before changing packages. A
+            // pinned mirror must use its snapshot manifest, not today's channel
+            // pointer.
+            let converged_release = if repo_plan
+                .as_ref()
+                .is_some_and(|(resolved, _)| !resolved.is_empty())
+            {
+                let release = match crate::channel::current_pin(&app.mirrorlist_path()) {
+                    Some(id) => match settings.channel_snapshot_base.as_deref() {
+                        Some(base) => app.snapshot_release(base, &id).map(Some),
+                        None => Err(eyre::eyre!(
+                            "mirrorlist is pinned to {id}, but channel.snapshot_base is not configured"
+                        )),
+                    },
+                    None => app.release(&host, false),
+                };
+                match release {
+                    Ok(release) => release,
+                    Err(err) => {
+                        eprintln!("warning: could not cache the release manifest: {err:#}");
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+
             // Repository transaction.
             if let Some((resolved, p)) = &repo_plan
                 && !resolved.is_empty()
@@ -238,12 +265,12 @@ impl RunWith<&App> for Update {
                         }
                     }
                     app.record(&transaction::ledger_patch(p, &explicit, "update", false))?;
-                    if let Ok(Some(release)) = app.release(&host, true) {
+                    if let Some(release) = &converged_release {
                         let patch = crate::ledger::Patch {
                             snapshot: Some(release.id.clone()),
                             ..Default::default()
                         };
-                        let _ = app.record(&patch);
+                        app.record(&patch)?;
                     }
                 }
             }
