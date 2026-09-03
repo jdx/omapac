@@ -28,6 +28,7 @@ impl Mise {
             .env_clear()
             .env("PATH", &self.path)
             .env("HOME", &self.home)
+            .env_remove("XDG_CONFIG_HOME")
             .env("MISE_DATA_DIR", self.home.join("data"))
             .env("MISE_CONFIG_DIR", self.home.join("config"))
             .env("MISE_CACHE_DIR", self.home.join("cache"))
