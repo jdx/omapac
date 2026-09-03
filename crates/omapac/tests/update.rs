@@ -554,6 +554,17 @@ fn age_floor_prefers_the_index_publish_time() {
         "[policy]\naur.jail = false\nrepo.min_release_age.arch = \"30d\"\n",
     )
     .unwrap();
+    // Seed an authenticated qualifying cache entry, then replay an older
+    // signed network index. Falling back to the cache must still mark the
+    // refreshed repository unsafe for packages the cache does not list.
+    let current = core_index(&key, 2, "2024-01-01T00:00:00Z");
+    let conf = common::DEFAULT_CONF.replace(
+        "Server = https://m/$repo/os/$arch",
+        &format!("Server = {current}/$repo/os/$arch"),
+    );
+    s.rig.write_root("/etc/pacman.conf", &conf);
+    let (code, _, err) = run(&s, &["update", "-n", "--no-aur"], UPGRADE);
+    assert_eq!(code, 0, "{err}");
     let replay = core_index(&key, 1, "2024-01-01T00:00:00Z");
     let conf = common::DEFAULT_CONF.replace(
         "Server = https://m/$repo/os/$arch",
