@@ -3,7 +3,9 @@
 //! pinning a machine's mirror to an immutable snapshot. See
 //! `docs/spec/release-train.md` and `PLAN.md`, "Release train".
 
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use eyre::{Context as _, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -160,6 +162,10 @@ fn apply_privileged(request: WriteRequest, sysroot: Option<&Path>) -> Result<()>
     match request.apply(sysroot) {
         Ok(()) => Ok(()),
         Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
+            let ctx = crate::engine::sudo::Context::detect(crate::engine::sudo::Elevation::Auto);
+            if ctx.is_root {
+                return Err(err).wrap_err_with(|| format!("writing {}", request.path.display()));
+            }
             let exe = std::env::current_exe().wrap_err("locating omapac")?;
             let mut args = Vec::new();
             if let Some(root) = sysroot {
@@ -167,7 +173,6 @@ fn apply_privileged(request: WriteRequest, sysroot: Option<&Path>) -> Result<()>
                 args.push(root.to_string_lossy().into_owned());
             }
             args.push("__write".to_string());
-            let ctx = crate::engine::sudo::Context::detect(crate::engine::sudo::Elevation::Auto);
             let invocation = crate::engine::sudo::Invocation::new(exe, args).elevated(&ctx)?;
             let command = invocation.display();
             let mut child = invocation
@@ -242,10 +247,15 @@ impl WriteRequest {
                 ));
             }
             if self.backup && !backup.exists() && self.path.exists() {
-                std::fs::copy(&self.path, &backup)?;
+                let original = std::fs::read(&self.path)?;
+                let permissions = std::fs::metadata(&self.path)?.permissions();
+                atomic_write(&backup, &original, Some(permissions))?;
             }
         }
-        std::fs::write(&self.path, &self.contents)?;
+        let permissions = std::fs::metadata(&self.path)
+            .ok()
+            .map(|metadata| metadata.permissions());
+        atomic_write(&self.path, self.contents.as_bytes(), permissions)?;
         if self.remove_backup {
             match std::fs::remove_file(backup) {
                 Ok(()) => {}
@@ -255,6 +265,39 @@ impl WriteRequest {
         }
         Ok(())
     }
+}
+
+static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+
+fn atomic_write(
+    path: &Path,
+    contents: &[u8],
+    permissions: Option<std::fs::Permissions>,
+) -> std::io::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+    let temp = parent.join(format!(
+        ".omapac-write-{}-{}",
+        std::process::id(),
+        NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
+    ));
+    let result = (|| {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)?;
+        file.write_all(contents)?;
+        if let Some(permissions) = permissions {
+            file.set_permissions(permissions)?;
+        }
+        file.sync_all()?;
+        std::fs::rename(&temp, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
 }
 
 #[cfg(test)]

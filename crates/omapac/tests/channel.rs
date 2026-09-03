@@ -266,6 +266,8 @@ fn rollback_pins_refreshes_and_syncs_with_downgrades() {
     assert!(apply.contains("OMARCHY_UPDATE_PACMAN=1"), "{apply}");
     let ledger = std::fs::read_to_string(s.rig.root.join("var/lib/omapac/state.json")).unwrap();
     assert!(ledger.contains("\"by\": \"rollback\""), "{ledger}");
+    let state: serde_json::Value = serde_json::from_str(&ledger).unwrap();
+    assert_eq!(state["packages"]["pacman"]["explicit"], true);
     assert!(
         ledger.contains("\"snapshot\": \"2026-09-01T06\""),
         "{ledger}"
@@ -286,6 +288,29 @@ fn no_op_rollback_records_the_converged_snapshot() {
 }
 
 #[test]
+fn no_op_rollback_keeps_the_pin_when_ledger_recording_fails() {
+    let s = setup();
+    let ledger_dir = s.rig.root.join("var/lib/omapac");
+    std::fs::create_dir_all(&ledger_dir).unwrap();
+    let mut permissions = std::fs::metadata(&ledger_dir).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o555);
+    std::fs::set_permissions(&ledger_dir, permissions).unwrap();
+
+    let (code, _, err) = run(&s, &["rollback", "--snapshot", "2026-09-01T06", "-y"], "");
+
+    let mut permissions = std::fs::metadata(&ledger_dir).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+    std::fs::set_permissions(&ledger_dir, permissions).unwrap();
+    assert_ne!(code, 0);
+    assert!(err.contains("retaining its pin"), "{err}");
+    assert!(
+        std::fs::read_to_string(s.rig.root.join("etc/pacman.d/mirrorlist"))
+            .unwrap()
+            .contains("2026-09-01T06")
+    );
+}
+
+#[test]
 fn rollback_dry_run_prints_the_downgrade_plan_and_command() {
     let s = setup();
     let plan = "pacman\\t7.0.0-1\\tcore\\thttps://m/pacman.pkg\\t1000\\n";
@@ -294,12 +319,20 @@ fn rollback_dry_run_prints_the_downgrade_plan_and_command() {
     assert!(out.contains("roll back 1 package(s)"), "{out}");
     assert!(out.contains("would run:") && out.contains("-Suu"), "{out}");
     let log = s.rig.log();
-    assert!(log[0].contains("-Syy --noconfirm"), "{log:?}");
+    assert!(
+        log.iter()
+            .any(|line| line.starts_with("sudo ") && line.contains("-Syy --noconfirm")),
+        "staged refresh uses elevation to read the live keyring: {log:?}"
+    );
     assert!(
         log[0].contains("--config") && !log[0].contains("--sysroot"),
         "{log:?}"
     );
-    assert!(log[1].contains("-Suu --noconfirm --print"), "{log:?}");
+    assert!(
+        log.iter()
+            .any(|line| line.contains("-Suu --noconfirm --print")),
+        "{log:?}"
+    );
     assert_eq!(
         std::fs::read_to_string(s.rig.root.join("etc/pacman.d/mirrorlist")).unwrap(),
         "Server = https://stable-mirror.omarchy.org/$repo/os/$arch\n"
