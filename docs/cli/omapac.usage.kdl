@@ -76,6 +76,7 @@ Sources are fetched with network, then makepkg runs in the jail with writes limi
         flag --commit help="Build this commit instead of the approved one" {
             arg <COMMIT>
         }
+        flag "-y --yes" help="Install missing repository dependencies without asking"
         flag "-J --json" help="Print the files as JSON"
         flag "-h --help" help="Print help" action=help builtin=#true
         arg <PACKAGE> help="The package name"
