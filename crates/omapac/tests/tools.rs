@@ -121,6 +121,7 @@ fn build_store(tamper: bool) -> Store {
                 vetted_at: published.into(),
                 level: packslip::model::Level::L2,
                 key_id: "x".into(),
+                vendor_pubkey: vendor_key.public_key().to_file(),
                 channels: channels.iter().map(|c| c.to_string()).collect(),
                 held: held.map(str::to_string),
                 artifacts,

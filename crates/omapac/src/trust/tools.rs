@@ -35,6 +35,9 @@ pub struct ToolVersion {
     pub level: Level,
     /// The vendor key id that signed the packslip.
     pub key_id: String,
+    /// Vendor key pinned for this immutable version.
+    #[serde(default)]
+    pub vendor_pubkey: String,
     /// Which channels carry this version.
     #[serde(default)]
     pub channels: Vec<String>,
@@ -105,6 +108,7 @@ mod tests {
             vetted_at: published.into(),
             level: Level::L2,
             key_id: "k".into(),
+            vendor_pubkey: "key".into(),
             channels: channels.iter().map(|c| c.to_string()).collect(),
             held: held.then(|| "bad".to_string()),
             artifacts: BTreeMap::new(),
