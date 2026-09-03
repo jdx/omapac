@@ -43,7 +43,10 @@ impl RunWith<&App> for Remove {
     fn run_with(mut self, app: &App) -> Self::Output {
         let host = app.host()?;
         if self.pick {
-            crate::tui::require_terminal("remove --pick")?;
+            crate::tui::require_terminal(
+                "remove --pick",
+                "pass package names instead, or run without --pick",
+            )?;
             let mut installed: Vec<&alpm_db::local::LocalPackage> = host
                 .installed()?
                 .iter()

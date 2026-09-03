@@ -468,7 +468,7 @@ impl RunWith<&App> for Review {
             return Ok(());
         }
         if self.pager {
-            crate::tui::require_terminal("aur review --pager")?;
+            crate::tui::require_terminal("aur review --pager", "run without --pager")?;
             let mut text = render(&reviewed);
             if !self.no_diff {
                 let diff = reviewed.review_text()?;
