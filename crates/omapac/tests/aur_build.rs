@@ -274,6 +274,8 @@ const YAY_NEEDS_LIB_SRCINFO: &str = "pkgbase = yay\n\tpkgver = 13.0.1\n\tpkgrel 
 const ZORBQLIB_PKGBUILD: &str = "# Maintainer: jguer\npkgname=zorbqlib\npkgver=1.2\npkgrel=1\nsource=(\"https://github.com/example/zorbqlib/archive/v1.2.tar.gz\")\nsha256sums=('0000000000000000000000000000000000000000000000000000000000000000')\npackage() {\n  :\n}\n";
 const ZORBQLIB_SRCINFO: &str = "pkgbase = zorbqlib\n\tpkgver = 1.2\n\tpkgrel = 1\n\tarch = x86_64\n\tsource = https://github.com/example/zorbqlib/archive/v1.2.tar.gz\n\tsha256sums = 0000000000000000000000000000000000000000000000000000000000000000\n\npkgname = zorbqlib\n";
 const ZORBQLIB_NEEDS_YAY_SRCINFO: &str = "pkgbase = zorbqlib\n\tpkgver = 1.2\n\tpkgrel = 1\n\tarch = x86_64\n\tdepends = yay>13.5\n\tsource = https://github.com/example/zorbqlib/archive/v1.2.tar.gz\n\tsha256sums = 0000000000000000000000000000000000000000000000000000000000000000\n\npkgname = zorbqlib\n";
+const ZORBQLIB_NEEDS_YAY_LIB_SRCINFO: &str = "pkgbase = zorbqlib\n\tpkgver = 1.2\n\tpkgrel = 1\n\tarch = x86_64\n\tdepends = yay-lib\n\tsource = https://github.com/example/zorbqlib/archive/v1.2.tar.gz\n\tsha256sums = 0000000000000000000000000000000000000000000000000000000000000000\n\npkgname = zorbqlib\n";
+const YAY_LIB_SPLIT_SRCINFO: &str = "pkgbase = yay\n\tpkgver = 13.0.1\n\tpkgrel = 1\n\tarch = x86_64\n\tsource = yay-13.0.1.tar.gz::https://github.com/Jguer/yay/archive/v13.0.1.tar.gz\n\tsha256sums = b77454bce87110180a1b6664c2d260de78124c9894b71101610ba84f551eb0d0\n\npkgname = yay\n\npkgname = yay-lib\n\tdepends = zorbqlib>=1.0\n";
 
 fn info_with_zorbqlib() -> String {
     let mut info: serde_json::Value = serde_json::from_str(INFO).unwrap();
@@ -285,6 +287,13 @@ fn info_with_zorbqlib() -> String {
     zorbqlib["MakeDepends"] = serde_json::json!([]);
     info["results"].as_array_mut().unwrap().push(zorbqlib);
     info["resultcount"] = serde_json::json!(info["results"].as_array().unwrap().len());
+    info.to_string()
+}
+
+fn info_with_yay_lib_and_zorbqlib() -> String {
+    let mut info: serde_json::Value = serde_json::from_str(&info_with_zorbqlib()).unwrap();
+    info["results"][0]["Name"] = "yay-lib".into();
+    info["results"][0]["PackageBase"] = "yay".into();
     info.to_string()
 }
 
@@ -407,6 +416,37 @@ fn upgrading_an_explicit_aur_dependency_keeps_it_explicit() {
     )
     .unwrap();
     assert_eq!(ledger["packages"]["zorbqlib"]["explicit"], true);
+}
+
+#[test]
+fn split_siblings_do_not_create_false_aur_cycles() {
+    let mut s = setup_with_zorbqlib(ZORBQLIB_NEEDS_YAY_LIB_SRCINFO);
+    s.aur.commit(
+        "yay",
+        &[
+            (
+                "PKGBUILD",
+                &YAY_NEEDS_LIB_PKGBUILD.replace("pkgname=yay", "pkgname=yay-lib"),
+            ),
+            (".SRCINFO", YAY_LIB_SPLIT_SRCINFO),
+        ],
+        "split out the library",
+        "2026-01-03T00:00:00Z",
+    );
+    s.rpc = common::http::serve(vec![("/rpc/v5/info", info_with_yay_lib_and_zorbqlib())]);
+    no_jail(&s);
+    run(&s, &["aur", "approve", "-y", "yay-lib"], "");
+    run(&s, &["aur", "approve", "-y", "zorbqlib"], "");
+    let (code, out, err) = run(&s, &["install", "--aur", "-y", "yay-lib"], "");
+    assert_eq!(code, 0, "{err}\n{out}");
+    assert!(!err.contains("dependency cycle"), "{err}");
+    let builds = s
+        .rig
+        .log()
+        .into_iter()
+        .filter(|line| line == "makepkg --noconfirm --force --holdver")
+        .count();
+    assert_eq!(builds, 2);
 }
 
 #[test]
