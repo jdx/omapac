@@ -19,6 +19,7 @@ base64.workspace = true
 color-eyre.workspace = true
 eyre.workspace = true
 jiff.workspace = true
+nix = { workspace = true, features = ["fs"] }
 omapac.workspace = true
 omapac-cli-support.workspace = true
 omapac-policy.workspace = true

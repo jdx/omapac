@@ -33,7 +33,7 @@ indexmap.workspace = true
 jiff.workspace = true
 landlock.workspace = true
 libc.workspace = true
-nix.workspace = true
+nix = { workspace = true, features = ["fs"] }
 omapac-cli-support.workspace = true
 omapac-policy.workspace = true
 packslip.workspace = true

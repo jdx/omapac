@@ -114,6 +114,13 @@ impl RunWith<()> for ToolChannel {
         } else {
             Some(key()?)
         };
+        // Every mutation holds this across the authenticated load,
+        // artifact publication, index update, and signed write. A second
+        // publisher therefore re-reads the first publisher's finished index.
+        let _lock = signing_key
+            .as_ref()
+            .map(|_| ToolIndexLock::acquire(store))
+            .transpose()?;
         let mut index: ToolIndex = match &signing_key {
             Some(key) => crate::feed::load_signed(&index_path, &key.public_key())?,
             None => crate::feed::load(&index_path)?,
@@ -195,6 +202,32 @@ impl RunWith<()> for ToolChannel {
             index.sequence
         );
         Ok(())
+    }
+}
+
+struct ToolIndexLock {
+    _flock: nix::fcntl::Flock<std::fs::File>,
+}
+
+impl ToolIndexLock {
+    fn acquire(store: &Path) -> Result<ToolIndexLock> {
+        use nix::fcntl::{Flock, FlockArg};
+
+        let directory = store.join("tools");
+        std::fs::create_dir_all(&directory)
+            .wrap_err_with(|| format!("creating {}", directory.display()))?;
+        let path = directory.join("index.lock");
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+            .wrap_err_with(|| format!("opening {}", path.display()))?;
+        let flock = Flock::lock(file, FlockArg::LockExclusive)
+            .map_err(|(_, err)| err)
+            .wrap_err_with(|| format!("locking {}", path.display()))?;
+        Ok(ToolIndexLock { _flock: flock })
     }
 }
 
@@ -409,4 +442,26 @@ fn safe_component(value: &str) -> Result<()> {
         bail!("unsafe path component {value:?}");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mutations_share_one_index_lock() {
+        use nix::fcntl::{Flock, FlockArg};
+
+        let store = tempfile::tempdir().unwrap();
+        let _held = ToolIndexLock::acquire(store.path()).unwrap();
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(store.path().join("tools/index.lock"))
+            .unwrap();
+        let err = Flock::lock(file, FlockArg::LockExclusiveNonblock)
+            .expect_err("the mutation lock must already be held")
+            .1;
+        assert_eq!(err, nix::errno::Errno::EWOULDBLOCK);
+    }
 }

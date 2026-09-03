@@ -134,7 +134,7 @@ impl Tools {
         Ok(Channel {
             base,
             keyring,
-            cache: Cache::for_repo(&format!("tools/{cache_key}")),
+            cache: Cache::for_repo(&format!("tools/{cache_key}"), app.paths.sysroot.as_deref())?,
         })
     }
 
@@ -152,20 +152,59 @@ impl Tools {
             &channel.cache,
             self.offline,
         )?;
-        let marker = channel.cache.dir.join("index.sequence");
-        if let Ok(seen) = std::fs::read_to_string(&marker)
-            && let Ok(seen) = seen.trim().parse::<u64>()
-            && fetched.value.sequence < seen
-        {
-            bail!(
-                "tool index sequence {} is below the {seen} seen before: a stale or rolled-back channel",
-                fetched.value.sequence
-            );
-        }
-        std::fs::create_dir_all(&channel.cache.dir)?;
-        std::fs::write(&marker, fetched.value.sequence.to_string())?;
+        record_sequence(&channel.cache.dir, fetched.value.sequence)?;
         Ok((fetched.value, fetched.key_id))
     }
+}
+
+/// Check and advance the rollback marker while excluding other clients.
+/// The separate lock remains stable when the marker is atomically replaced.
+fn record_sequence(cache: &Path, sequence: u64) -> Result<()> {
+    use nix::fcntl::{Flock, FlockArg};
+    use std::io::Write as _;
+
+    std::fs::create_dir_all(cache)?;
+    let lock_path = cache.join("index.sequence.lock");
+    let lock_file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)?;
+    let _lock = Flock::lock(lock_file, FlockArg::LockExclusive)
+        .map_err(|(_, err)| err)
+        .wrap_err_with(|| format!("locking {}", lock_path.display()))?;
+
+    let marker = cache.join("index.sequence");
+    if let Ok(seen) = std::fs::read_to_string(&marker)
+        && let Ok(seen) = seen.trim().parse::<u64>()
+        && sequence < seen
+    {
+        bail!(
+            "tool index sequence {sequence} is below the {seen} seen before: a stale or rolled-back channel"
+        );
+    }
+
+    static NEXT_TEMP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let temp = cache.join(format!(
+        ".index.sequence.tmp-{}-{}",
+        std::process::id(),
+        NEXT_TEMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let result = (|| -> std::io::Result<()> {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)?;
+        write!(file, "{sequence}")?;
+        file.sync_all()?;
+        std::fs::rename(&temp, &marker)
+    })();
+    if let Err(err) = result {
+        let _ = std::fs::remove_file(&temp);
+        return Err(err).wrap_err_with(|| format!("writing {}", marker.display()));
+    }
+    Ok(())
 }
 
 impl RunWith<&App> for Tools {
@@ -455,4 +494,26 @@ fn download(url: &str, max_size: u64) -> Result<Vec<u8>> {
         bail!("{url}: response exceeds the {max_size}-byte limit");
     }
     Ok(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn concurrent_sequence_updates_never_rewind() {
+        let cache = tempfile::tempdir().unwrap();
+        std::thread::scope(|scope| {
+            for sequence in 1..=32 {
+                let path = cache.path();
+                scope.spawn(move || {
+                    let _ = record_sequence(path, sequence);
+                });
+            }
+        });
+        assert_eq!(
+            std::fs::read_to_string(cache.path().join("index.sequence")).unwrap(),
+            "32"
+        );
+    }
 }
