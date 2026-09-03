@@ -116,6 +116,36 @@ fn plugin_lists_and_installs_through_omapac() {
     assert_eq!(code, 0, "{out}\n{err}");
     assert!(out.contains("1.0.0"), "{out}");
 
+    // A same-named directory is not mistaken for the executable; bin/tool wins.
+    let (code, out, err) = mise.run(
+        &["install", "tool-channel:tool[platform=linux-x64]@1.2.0"],
+        &edge,
+    );
+    assert_eq!(code, 0, "{out}\n{err}");
+    let linked = mise
+        .home
+        .join("data/installs/tool-channel-tool/1.2.0/bin/tool");
+    assert_eq!(std::fs::read_to_string(&linked).unwrap(), "archived 1.2.0");
+    let (code, out, err) = mise.run(&["uninstall", "tool-channel:tool@1.2.0"], &edge);
+    assert_eq!(code, 0, "{out}\n{err}");
+
+    // An explicit path that already is the install target remains the
+    // verified artifact rather than becoming a dangling self-symlink.
+    let (code, out, err) = mise.run(
+        &[
+            "install",
+            "tool-channel:tool[exe=bin/tool,platform=linux-x64]@1.2.0",
+        ],
+        &edge,
+    );
+    assert_eq!(code, 0, "{out}\n{err}");
+    let linked = mise
+        .home
+        .join("data/installs/tool-channel-tool/1.2.0/bin/tool");
+    assert_eq!(std::fs::read_to_string(&linked).unwrap(), "archived 1.2.0");
+    let (code, out, err) = mise.run(&["uninstall", "tool-channel:tool@1.2.0"], &edge);
+    assert_eq!(code, 0, "{out}\n{err}");
+
     // An explicit executable overrides bin/tool already present in the archive.
     let (code, out, err) = mise.run(
         &[

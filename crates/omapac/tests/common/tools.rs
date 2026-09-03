@@ -45,7 +45,10 @@ pub fn build_store(dir: &Path, tamper: bool) -> Store {
             let name = format!("tool-{version}-linux-x64.tar.gz");
             let tree = work.join(format!("tool-{version}"));
             std::fs::create_dir_all(tree.join("bin")).unwrap();
-            std::fs::write(tree.join("bin/tool"), format!("archived {version}")).unwrap();
+            std::fs::create_dir_all(tree.join("lib")).unwrap();
+            std::fs::create_dir_all(tree.join("tool")).unwrap();
+            std::fs::write(tree.join("lib/tool-real"), format!("archived {version}")).unwrap();
+            std::os::unix::fs::symlink("../lib/tool-real", tree.join("bin/tool")).unwrap();
             std::fs::write(tree.join("alternate"), format!("alternate {version}")).unwrap();
             let status = std::process::Command::new("tar")
                 .args(["czf", &name, &format!("tool-{version}")])
