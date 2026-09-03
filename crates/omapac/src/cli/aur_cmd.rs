@@ -137,6 +137,34 @@ pub struct Prepared {
 /// How deep an AUR dependency chain may go before it is refused.
 const MAX_AUR_DEPTH: usize = 8;
 
+#[derive(Clone)]
+struct AncestorOutputs {
+    packages: Vec<(String, String, Vec<alpm_db::dep::Dependency>)>,
+}
+
+impl AncestorOutputs {
+    fn from_prepared(prepared: &Prepared) -> Self {
+        let version = prepared.reviewed.srcinfo.version();
+        let packages = prepared
+            .reviewed
+            .srcinfo
+            .pkgnames()
+            .into_iter()
+            .map(|name| {
+                let provides = prepared.reviewed.srcinfo.provides(name, &prepared.arch);
+                (name.to_string(), version.clone(), provides)
+            })
+            .collect();
+        Self { packages }
+    }
+
+    fn satisfies(&self, dep: &alpm_db::dep::Dependency) -> bool {
+        self.packages
+            .iter()
+            .any(|(name, version, provides)| dep.satisfied_by(name, version, provides))
+    }
+}
+
 impl App {
     /// Review `name` and check it is approved at the target commit, or
     /// approve it interactively. `yes` means unattended: an unapproved or
@@ -211,7 +239,7 @@ impl App {
 
     /// Install missing repository dependencies, then build.
     pub fn build_aur(&self, prepared: &Prepared, yes: bool) -> Result<Vec<std::path::PathBuf>> {
-        self.build_aur_chain(prepared, &[], &mut Vec::new(), yes)
+        self.build_aur_chain(prepared, &[], &[], &mut Vec::new(), yes)
     }
 
     /// Build with `chain` naming the packages whose dependencies led here.
@@ -219,13 +247,14 @@ impl App {
         &self,
         prepared: &Prepared,
         chain: &[String],
+        ancestors: &[AncestorOutputs],
         built: &mut Vec<(String, String, Vec<alpm_db::dep::Dependency>)>,
         yes: bool,
     ) -> Result<Vec<std::path::PathBuf>> {
         let host = self.host()?;
         let missing = crate::aur::build::missing_deps(&host, &prepared.reviewed, &prepared.arch)?;
         if !missing.other.is_empty() {
-            self.build_aur_dependencies(prepared, &missing.other, chain, built, yes)?;
+            self.build_aur_dependencies(prepared, &missing.other, chain, ancestors, built, yes)?;
         }
         if !missing.repo.is_empty() {
             let engine = self.engine()?;
@@ -278,11 +307,14 @@ impl App {
         parent: &Prepared,
         deps: &[alpm_db::dep::Dependency],
         chain: &[String],
+        ancestors: &[AncestorOutputs],
         built: &mut Vec<(String, String, Vec<alpm_db::dep::Dependency>)>,
         yes: bool,
     ) -> Result<()> {
         let mut chain = chain.to_vec();
         chain.push(parent.reviewed.pkgname.clone());
+        let mut ancestors = ancestors.to_vec();
+        ancestors.push(AncestorOutputs::from_prepared(parent));
         if chain.len() > MAX_AUR_DEPTH {
             bail!("AUR dependency chain too deep: {}", chain.join(" -> "));
         }
@@ -298,6 +330,19 @@ impl App {
             let preserve_explicit = host
                 .installed_package(&dep.name)?
                 .is_some_and(|package| package.reason == alpm_db::local::InstallReason::Explicit);
+            if let Some(ancestor) = ancestors.iter().find(|ancestor| ancestor.satisfies(dep)) {
+                if ancestor.packages.len() > 1 {
+                    // A split sibling will be produced when its ancestor is
+                    // built. Do not mistake that solvable runtime edge for a
+                    // recursive AUR recipe.
+                    continue;
+                }
+                bail!(
+                    "AUR dependency cycle: {} -> {}",
+                    chain.join(" -> "),
+                    dep.name
+                );
+            }
             if chain.iter().any(|name| name == &dep.name) {
                 bail!(
                     "AUR dependency cycle: {} -> {}",
@@ -337,7 +382,7 @@ impl App {
                     dep.spec()
                 );
             }
-            let files = self.build_aur_chain(&prepared, &chain, built, yes)?;
+            let files = self.build_aur_chain(&prepared, &chain, &ancestors, built, yes)?;
             self.install_built(&prepared, &files, !preserve_explicit, "install")?;
             built.push((dep.name.clone(), version, provides));
         }
