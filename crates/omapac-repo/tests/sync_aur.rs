@@ -76,6 +76,31 @@ fn low_reputation_rpc() -> String {
     }))
 }
 
+fn orphan_rpc() -> String {
+    let mut info: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../omapac/fixtures/aur/info.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let yay = info["results"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|result| result["Name"] == "yay")
+        .unwrap();
+    yay["Maintainer"] = serde_json::Value::Null;
+    let body = info.to_string();
+    common::http::serve_with(Arc::new(move |_m, path, _b| {
+        if path.starts_with("/rpc/v5/info") {
+            (200, body.clone())
+        } else {
+            (404, "{}".into())
+        }
+    }))
+}
+
 const YAY_BUMP_PKGBUILD: &str = "# Maintainer: jguer\npkgname=yay\npkgver=13.0.2\npkgrel=1\nsource=(\"yay-${pkgver}.tar.gz::https://github.com/Jguer/yay/archive/v${pkgver}.tar.gz\")\nsha256sums=('0000000000000000000000000000000000000000000000000000000000000000')\nbuild() {\n  make build\n}\npackage() {\n  make DESTDIR=\"$pkgdir\" install\n}\n";
 const YAY_BUMP_SRCINFO: &str = "pkgbase = yay\n\tpkgver = 13.0.2\n\tpkgrel = 1\n\tarch = x86_64\n\tsource = yay-13.0.2.tar.gz::https://github.com/Jguer/yay/archive/v13.0.2.tar.gz\n\tsha256sums = 0000000000000000000000000000000000000000000000000000000000000000\n\npkgname = yay\n";
 
@@ -250,12 +275,13 @@ fn clean_bump_by_trusted_maintainer_auto_merges() {
 
 #[test]
 fn hostile_takeover_is_blocked_with_a_block_verdict() {
-    let g = Gate::new();
+    let mut g = Gate::new();
     g.aur.create(
         "yay",
         &[("PKGBUILD", YAY_PKGBUILD), (".SRCINFO", YAY_SRCINFO)],
         "2024-01-01T00:00:00Z",
     );
+    g.rpc = orphan_rpc();
     let first = g.aur.head("yay");
     g.write_state("yay", &first, "13.0.1-1");
     g.aur.commit(
@@ -315,6 +341,36 @@ fn hostile_takeover_is_blocked_with_a_block_verdict() {
         feed_before,
         "an identical blocked review must not append another verdict"
     );
+}
+
+#[test]
+fn an_orphaned_clean_bump_needs_review_instead_of_failing_the_sync() {
+    let mut g = Gate::new();
+    g.aur.create(
+        "yay",
+        &[("PKGBUILD", YAY_PKGBUILD), (".SRCINFO", YAY_SRCINFO)],
+        "2024-01-01T00:00:00Z",
+    );
+    let first = g.aur.head("yay");
+    g.write_state("yay", &first, "13.0.1-1");
+    g.aur.commit(
+        "yay",
+        &[
+            ("PKGBUILD", YAY_BUMP_PKGBUILD),
+            (".SRCINFO", YAY_BUMP_SRCINFO),
+        ],
+        "version bump",
+        "2024-02-01T00:00:00Z",
+    );
+    g.rpc = orphan_rpc();
+
+    let (code, out, err) = g.run(&["--trusted-maintainer", "jguer"]);
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(
+        out.contains("needs-review yay") && out.contains("orphaned"),
+        "{out}"
+    );
+    assert!(!out.contains("BLOCKED"), "{out}");
 }
 
 #[test]

@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use eyre::{Context as _, Result};
-use packslip::minisign::SecretKey;
+use packslip::minisign::{PublicKey, SecretKey, Sig};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -18,6 +18,26 @@ pub fn load<T: DeserializeOwned>(path: &Path) -> Result<Option<T>> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(err) => Err(err).wrap_err_with(|| format!("reading {}", path.display())),
     }
+}
+
+/// The signed feed at `path`, if it exists. Existing producer state must
+/// authenticate before it can be extended and signed again.
+pub fn load_signed<T: DeserializeOwned>(path: &Path, key: &PublicKey) -> Result<Option<T>> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err).wrap_err_with(|| format!("reading {}", path.display())),
+    };
+    let signature_path = sig_path(path);
+    let signature = std::fs::read_to_string(&signature_path)
+        .wrap_err_with(|| format!("reading {}", signature_path.display()))?;
+    let signature =
+        Sig::parse(&signature).wrap_err_with(|| format!("parsing {}", signature_path.display()))?;
+    key.verify(&bytes, &signature)
+        .wrap_err_with(|| format!("verifying {}", path.display()))?;
+    Ok(Some(
+        serde_json::from_slice(&bytes).wrap_err_with(|| format!("parsing {}", path.display()))?,
+    ))
 }
 
 /// Write `value` and its signature atomically.
@@ -97,5 +117,19 @@ mod tests {
         let key = SecretKey::from_seed([4u8; 32]);
         assert!(write_signed(&path, &serde_json::json!({"new": true}), &key, "test").is_err());
         assert_eq!(std::fs::read(path).unwrap(), b"old");
+    }
+
+    #[test]
+    fn signed_load_refuses_tampered_producer_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("feed.json");
+        let key = SecretKey::from_seed([4u8; 32]);
+        write_signed(&path, &serde_json::json!({"sequence": 1}), &key, "test").unwrap();
+        let value: serde_json::Value = load_signed(&path, &key.public_key()).unwrap().unwrap();
+        assert_eq!(value["sequence"], 1);
+
+        std::fs::write(&path, br#"{"sequence":999}"#).unwrap();
+        let err = load_signed::<serde_json::Value>(&path, &key.public_key()).unwrap_err();
+        assert!(format!("{err:#}").contains("signature does not verify"));
     }
 }

@@ -75,12 +75,13 @@ impl RunWith<()> for Advisories {
         };
         let key = crate::feed::secret_key(key_path)?;
         let now = crate::feed::now();
-        let mut feed: Feed = crate::feed::load(feed_path)?.unwrap_or(Feed {
-            version: 1,
-            sequence: 0,
-            issued_at: now.clone(),
-            advisories: Vec::new(),
-        });
+        let mut feed: Feed =
+            crate::feed::load_signed(feed_path, &key.public_key())?.unwrap_or(Feed {
+                version: 1,
+                sequence: 0,
+                issued_at: now.clone(),
+                advisories: Vec::new(),
+            });
         match self.command {
             AdvisoriesCommands::Add(add) => {
                 if feed.advisories.iter().any(|a| a.id == add.id) {
