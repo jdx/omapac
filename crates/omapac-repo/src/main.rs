@@ -8,6 +8,7 @@ mod rekor;
 mod sign;
 mod snapshot;
 mod sync_aur;
+mod tool_channel;
 mod vendor;
 mod verdict;
 
@@ -48,6 +49,7 @@ enum Commands {
     Sign(sign::Sign),
     Snapshot(snapshot::Snapshot),
     SyncAur(sync_aur::SyncAur),
+    ToolChannel(tool_channel::ToolChannel),
     Vendor(vendor::Vendor),
     Verdict(verdict::VerdictCmd),
     Version(Version),
@@ -65,6 +67,7 @@ fn main() -> Result<()> {
         Some(Commands::Sign(cmd)) => cmd.run_with(()),
         Some(Commands::Snapshot(cmd)) => cmd.run_with(()),
         Some(Commands::SyncAur(cmd)) => cmd.run_with(()),
+        Some(Commands::ToolChannel(cmd)) => cmd.run_with(()),
         Some(Commands::Vendor(cmd)) => cmd.run_with(()),
         Some(Commands::Verdict(cmd)) => cmd.run_with(()),
         Some(Commands::Version(cmd)) => cmd.run_with(BIN),

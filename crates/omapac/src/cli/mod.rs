@@ -22,6 +22,7 @@ mod pacnew;
 mod present;
 mod remove;
 mod search;
+mod tools;
 mod transaction;
 mod update;
 mod verify;
@@ -98,6 +99,7 @@ enum Commands {
     Rollback(channel::Rollback),
     Search(search::Search),
     Status(declare::Status),
+    Tools(tools::Tools),
     Update(update::Update),
     Verify(verify::Verify),
     Version(Version),

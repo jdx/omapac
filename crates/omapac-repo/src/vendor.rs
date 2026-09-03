@@ -1,6 +1,7 @@
 //! `omapac-repo vendor`: the vendor pipeline. A vendor-built package is
 //! generated from the vendor's signed packslip, not from a checksum file
-//! fetched over TLS. See `docs/spec/vendor-pipeline.md`.
+//! fetched over TLS. See `docs/spec/vendor-pipeline.md`. The resolver is
+//! shared with the tool channel publisher.
 
 use std::collections::BTreeMap;
 use std::io::Write as _;
@@ -12,17 +13,21 @@ use std::time::Duration;
 use eyre::{Context as _, Result, bail};
 use packslip::minisign::PublicKey;
 use packslip::model::{Level, Statement};
+use packslip::verify::Verified;
 use serde::{Deserialize, Serialize};
 use usage_rs::RunWith;
 
-/// `vendor.toml` beside the PKGBUILD.
+/// `vendor.toml` beside a PKGBUILD, or `tool.toml` for the tool channel.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VendorToml {
     pub upstream: Upstream,
-    /// pacman architecture → how to pick the artifact.
+    /// pacman architecture (or mise platform) → how to pick the artifact.
     #[serde(default)]
     pub artifacts: BTreeMap<String, Selector>,
+    /// Tool channel settings; absent for a package.
+    #[serde(default)]
+    pub tool: Option<ToolToml>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -53,6 +58,13 @@ pub struct Selector {
     pub name: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolToml {
+    /// The tool name mise sees.
+    pub name: String,
+}
+
 /// The release list a vendor advertises.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Releases {
@@ -78,7 +90,9 @@ pub struct VendorLock {
     pub generated_at: String,
 }
 
-/// The sidecar the built package ships as `<pkg>.vendor.json`.
+/// The sidecar a built package or mirrored artifact ships as
+/// `<file>.vendor.json`. `document` is the packslip's exact bytes as
+/// text, so the signature verifies on the consumer's side.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VendorSidecar {
     /// Exact UTF-8 bytes that the upstream signed.
@@ -106,6 +120,17 @@ pub struct Chosen {
     pub sha256: String,
     pub size: u64,
     pub url: Option<String>,
+}
+
+/// A vendor release resolved and verified against the pinned identity.
+pub struct Resolved {
+    pub chosen: ReleaseRef,
+    pub document: Vec<u8>,
+    pub signature: String,
+    pub verified: Verified,
+    pub skipped: Vec<String>,
+    /// One artifact per configured key.
+    pub artifacts: BTreeMap<String, Chosen>,
 }
 
 /// Generate a vendor-built package from the vendor's packslip
@@ -140,117 +165,25 @@ impl RunWith<()> for Vendor {
     type Output = Result<()>;
 
     fn run_with(self, _: ()) -> Self::Output {
-        let config_path = self.pkgdir.join("vendor.toml");
-        let config: VendorToml = toml::from_str(
-            &std::fs::read_to_string(&config_path)
-                .wrap_err_with(|| format!("reading {}", config_path.display()))?,
-        )
-        .wrap_err_with(|| format!("parsing {}", config_path.display()))?;
-        if config.artifacts.is_empty() {
-            bail!(
-                "{} must declare at least one [artifacts] selector",
-                config_path.display()
-            );
-        }
-        let pubkey = load_pubkey(&self.pkgdir, &config.upstream.pubkey)?;
+        let config = load_config(&self.pkgdir.join("vendor.toml"))?;
         let now = now()?;
-        let min_age = match &config.upstream.min_release_age {
-            Some(age) => parse_age(age)?,
-            None => Duration::ZERO,
-        };
-        let floor = config.upstream.provenance_floor.unwrap_or(Level::L2);
-
-        // The release list, signed with the same key.
-        let list_bytes = fetch(&config.upstream.releases)?;
-        let list_sig = fetch_text(&format!("{}.minisig", config.upstream.releases))?;
-        let sig = packslip::minisign::Sig::parse(&list_sig)?;
-        pubkey
-            .verify(&list_bytes, &sig)
-            .wrap_err("release list signature")?;
-        let releases: Releases =
-            serde_json::from_slice(&list_bytes).wrap_err("parsing the release list")?;
-        if releases.project != config.upstream.project {
-            bail!(
-                "release list is for {}, vendor.toml says {}",
-                releases.project,
-                config.upstream.project
-            );
-        }
-        let (chosen, skipped) = choose(&releases, self.version.as_deref(), now, min_age)?;
-
-        // The packslip.
-        let document = fetch(&chosen.packslip)?;
-        let signature = fetch_text(&format!("{}.minisig", chosen.packslip))?;
-        let verified = packslip::verify::verify(&document, &signature, &pubkey, &[])?;
-        let statement: Statement = serde_json::from_slice(&document)?;
-        if verified.project != config.upstream.project {
-            bail!(
-                "packslip is for {}, vendor.toml says {}",
-                verified.project,
-                config.upstream.project
-            );
-        }
-        if verified.version != chosen.version {
-            bail!(
-                "packslip says version {}, the release list said {}",
-                verified.version,
-                chosen.version
-            );
-        }
-        if verified.level < floor {
-            bail!(
-                "release {} has evidence level {}, below the floor {floor}",
-                chosen.version,
-                verified.level
-            );
-        }
         let lock_path = self.pkgdir.join("vendor.lock");
-        if let Some(previous) = read_lock(&lock_path)? {
-            if verified.level < previous.level && !self.allow_downgrade {
-                bail!(
-                    "release {} has evidence level {}, below the {} recorded for {}; pass --allow-downgrade to accept",
-                    chosen.version,
-                    verified.level,
-                    previous.level,
-                    previous.version
-                );
-            }
-            if previous.key_id != verified.key_id && !self.allow_downgrade {
-                bail!(
-                    "packslip signed by {}, vendor.lock recorded {}",
-                    verified.key_id,
-                    previous.key_id
-                );
-            }
-        }
-
-        // Artifacts per architecture.
-        let mut artifacts = BTreeMap::new();
-        for (arch, selector) in &config.artifacts {
-            let artifact = select(&statement, selector, &chosen.version)
-                .wrap_err_with(|| format!("selecting artifact for {arch}"))?;
-            let sha256 = statement
-                .digest_of(&artifact.name)
-                .unwrap_or_default()
-                .to_string();
-            artifacts.insert(
-                arch.clone(),
-                Chosen {
-                    name: artifact.name.clone(),
-                    sha256,
-                    size: artifact.size,
-                    url: artifact.url.clone(),
-                },
-            );
-        }
-
+        let previous = read_lock(&lock_path)?;
+        let resolved = resolve(
+            &config,
+            &self.pkgdir,
+            self.version.as_deref(),
+            now,
+            previous.as_ref(),
+            self.allow_downgrade,
+        )?;
         let report = Report {
-            version: chosen.version.clone(),
-            published_at: chosen.published_at.clone(),
-            level: verified.level,
-            key_id: verified.key_id.clone(),
-            artifacts,
-            skipped,
+            version: resolved.chosen.version.clone(),
+            published_at: resolved.chosen.published_at.clone(),
+            level: resolved.verified.level,
+            key_id: resolved.verified.key_id.clone(),
+            artifacts: resolved.artifacts.clone(),
+            skipped: resolved.skipped.clone(),
             written: self.write,
         };
         if self.write {
@@ -260,18 +193,12 @@ impl RunWith<()> for Vendor {
             let updated = rewrite_pkgbuild(&pkgbuild, &report)?;
             let pkgbase = pkgbase_of(&pkgbuild).unwrap_or_else(|| "package".to_string());
             let sidecar_path = self.pkgdir.join(format!("{pkgbase}.vendor.json"));
-            let sidecar = VendorSidecar {
-                document: String::from_utf8(document.clone()).wrap_err("packslip is not UTF-8")?,
-                signature,
-                level: verified.level,
-                key_id: verified.key_id.clone(),
-                verified_at: now.to_string(),
-            };
+            let sidecar = sidecar(&resolved, now);
             let lock = VendorLock {
-                version: chosen.version.clone(),
-                level: verified.level,
-                published_at: chosen.published_at.clone(),
-                key_id: verified.key_id.clone(),
+                version: resolved.chosen.version.clone(),
+                level: resolved.verified.level,
+                published_at: resolved.chosen.published_at.clone(),
+                key_id: resolved.verified.key_id.clone(),
                 generated_at: now.to_string(),
             };
             // Commit the protective lock first and PKGBUILD last. A crash or
@@ -307,7 +234,140 @@ impl RunWith<()> for Vendor {
     }
 }
 
-pub(crate) fn now() -> Result<jiff::Timestamp> {
+pub fn load_config(path: &Path) -> Result<VendorToml> {
+    let config = toml::from_str(
+        &std::fs::read_to_string(path).wrap_err_with(|| format!("reading {}", path.display()))?,
+    )
+    .wrap_err_with(|| format!("parsing {}", path.display()))?;
+    if config.artifacts.is_empty() {
+        bail!(
+            "{} must declare at least one [artifacts] selector",
+            path.display()
+        );
+    }
+    Ok(config)
+}
+
+/// The sidecar for a resolved release.
+pub fn sidecar(resolved: &Resolved, now: jiff::Timestamp) -> VendorSidecar {
+    VendorSidecar {
+        document: String::from_utf8_lossy(&resolved.document).into_owned(),
+        signature: resolved.signature.clone(),
+        level: resolved.verified.level,
+        key_id: resolved.verified.key_id.clone(),
+        verified_at: now.to_string(),
+    }
+}
+
+/// Fetch the release list and the chosen release's packslip, verify both
+/// against the pinned key, enforce the floor and no-downgrade, and pick
+/// one artifact per configured selector.
+pub fn resolve(
+    config: &VendorToml,
+    dir: &Path,
+    requested: Option<&str>,
+    now: jiff::Timestamp,
+    previous: Option<&VendorLock>,
+    allow_downgrade: bool,
+) -> Result<Resolved> {
+    let pubkey = load_pubkey(dir, &config.upstream.pubkey)?;
+    let min_age = match &config.upstream.min_release_age {
+        Some(age) => parse_age(age)?,
+        None => Duration::ZERO,
+    };
+    let floor = config.upstream.provenance_floor.unwrap_or(Level::L2);
+
+    let list_bytes = fetch(&config.upstream.releases)?;
+    let list_sig = fetch_text(&format!("{}.minisig", config.upstream.releases))?;
+    let sig = packslip::minisign::Sig::parse(&list_sig)?;
+    pubkey
+        .verify(&list_bytes, &sig)
+        .wrap_err("release list signature")?;
+    let releases: Releases =
+        serde_json::from_slice(&list_bytes).wrap_err("parsing the release list")?;
+    if releases.project != config.upstream.project {
+        bail!(
+            "release list is for {}, vendor.toml says {}",
+            releases.project,
+            config.upstream.project
+        );
+    }
+    let (chosen, skipped) = choose(&releases, requested, now, min_age)?;
+
+    let document = fetch(&chosen.packslip)?;
+    let signature = fetch_text(&format!("{}.minisig", chosen.packslip))?;
+    let verified = packslip::verify::verify(&document, &signature, &pubkey, &[])?;
+    let statement: Statement = serde_json::from_slice(&document)?;
+    if verified.project != config.upstream.project {
+        bail!(
+            "packslip is for {}, vendor.toml says {}",
+            verified.project,
+            config.upstream.project
+        );
+    }
+    if verified.version != chosen.version {
+        bail!(
+            "packslip says version {}, the release list said {}",
+            verified.version,
+            chosen.version
+        );
+    }
+    if verified.level < floor {
+        bail!(
+            "release {} has evidence level {}, below the floor {floor}",
+            chosen.version,
+            verified.level
+        );
+    }
+    if let Some(previous) = previous {
+        if verified.level < previous.level && !allow_downgrade {
+            bail!(
+                "release {} has evidence level {}, below the {} recorded for {}; pass --allow-downgrade to accept",
+                chosen.version,
+                verified.level,
+                previous.level,
+                previous.version
+            );
+        }
+        if previous.key_id != verified.key_id && !allow_downgrade {
+            bail!(
+                "packslip signed by {}, vendor.lock recorded {}",
+                verified.key_id,
+                previous.key_id
+            );
+        }
+    }
+
+    let mut artifacts = BTreeMap::new();
+    for (key, selector) in &config.artifacts {
+        let artifact = select(&statement, selector, &chosen.version).ok_or_else(|| {
+            eyre::eyre!("no artifact in release {} matches {key}", chosen.version)
+        })?;
+        let sha256 = statement
+            .digest_of(&artifact.name)
+            .unwrap_or_default()
+            .to_string();
+        artifacts.insert(
+            key.clone(),
+            Chosen {
+                name: artifact.name.clone(),
+                sha256,
+                size: artifact.size,
+                url: artifact.url.clone(),
+            },
+        );
+    }
+    Ok(Resolved {
+        chosen,
+        document,
+        signature,
+        verified,
+        skipped,
+        artifacts,
+    })
+}
+
+pub fn now() -> Result<jiff::Timestamp> {
     match std::env::var("OMAPAC_REPO_NOW") {
         Ok(fixed) => jiff::Timestamp::from_str(&fixed).wrap_err("OMAPAC_REPO_NOW"),
         Err(_) => Ok(jiff::Timestamp::now()),
@@ -334,24 +394,29 @@ pub fn parse_age(s: &str) -> Result<Duration> {
     Ok(Duration::from_secs(number * seconds))
 }
 
-fn load_pubkey(pkgdir: &Path, spec: &str) -> Result<PublicKey> {
-    let candidate = pkgdir.join(spec);
+pub fn load_pubkey(dir: &Path, spec: &str) -> Result<PublicKey> {
+    let candidate = dir.join(spec);
     let text = if candidate.is_file() {
         std::fs::read_to_string(&candidate)?
     } else {
         spec.to_string()
     };
-    PublicKey::parse(&text).map_err(|e| eyre::eyre!("vendor.toml pubkey: {e}"))
+    PublicKey::parse(&text).map_err(|e| eyre::eyre!("pubkey: {e}"))
 }
 
-fn fetch(url: &str) -> Result<Vec<u8>> {
+/// The pinned key's file text, for publishing in an index.
+pub fn pubkey_text(dir: &Path, spec: &str) -> Result<String> {
+    Ok(load_pubkey(dir, spec)?.to_file())
+}
+
+pub fn fetch(url: &str) -> Result<Vec<u8>> {
     let mut response = ureq::get(url)
         .call()
         .wrap_err_with(|| format!("fetching {url}"))?;
     let bytes = response
         .body_mut()
         .with_config()
-        .limit(64 * 1024 * 1024)
+        .limit(4 * 1024 * 1024 * 1024)
         .read_to_vec()
         .wrap_err_with(|| format!("reading {url}"))?;
     Ok(bytes)
@@ -432,7 +497,7 @@ fn select<'a>(
     }
 }
 
-fn read_lock(path: &Path) -> Result<Option<VendorLock>> {
+pub fn read_lock(path: &Path) -> Result<Option<VendorLock>> {
     match std::fs::read_to_string(path) {
         Ok(text) => Ok(Some(toml::from_str(&text).wrap_err("parsing vendor.lock")?)),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -534,8 +599,7 @@ pub fn rewrite_pkgbuild(pkgbuild: &str, report: &Report) -> Result<String> {
     let mut replaced_sums = Vec::new();
     while let Some(line) = lines.next() {
         let trimmed = line.trim_start();
-        if let Some(rest) = trimmed.strip_prefix("pkgver=") {
-            let _ = rest;
+        if trimmed.starts_with("pkgver=") {
             out.push_str(&format!("pkgver={}\n", report.version));
             continue;
         }

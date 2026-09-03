@@ -223,6 +223,8 @@ pub struct ScannerToml {
 pub struct ChannelToml {
     /// Where immutable Arch snapshots live, for `channel pin`.
     pub snapshot_base: Option<String>,
+    /// The tool channel store, for `omapac tools` and the mise plugin.
+    pub tools_base: Option<String>,
 }
 
 /// The `[update]` table.
@@ -268,6 +270,7 @@ pub struct Settings {
     pub update_pre_hooks: Vec<String>,
     pub update_post_hooks: Vec<String>,
     pub channel_snapshot_base: Option<String>,
+    pub channel_tools_base: Option<String>,
 }
 
 impl Default for Settings {
@@ -309,6 +312,7 @@ impl Default for Settings {
             update_pre_hooks: Vec::new(),
             update_post_hooks: Vec::new(),
             channel_snapshot_base: None,
+            channel_tools_base: None,
         }
     }
 }
@@ -326,6 +330,9 @@ impl Settings {
     pub fn merge(&mut self, policy: &PolicyToml, update: &UpdateToml, channel: &ChannelToml) {
         if channel.snapshot_base.is_some() {
             self.channel_snapshot_base = channel.snapshot_base.clone();
+        }
+        if channel.tools_base.is_some() {
+            self.channel_tools_base = channel.tools_base.clone();
         }
         macro_rules! set {
             ($field:ident, $value:expr) => {

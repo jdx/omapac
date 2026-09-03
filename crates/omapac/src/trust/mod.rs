@@ -9,6 +9,7 @@
 //! the cache never touch the network.
 
 pub mod feeds;
+pub mod tools;
 
 use std::{
     io::Write as _,
@@ -151,9 +152,9 @@ impl Cache {
     }
 
     pub fn write(&self, name: &str, bytes: &[u8], signature: &str) -> Result<()> {
-        std::fs::create_dir_all(&self.dir)
-            .wrap_err_with(|| format!("creating {}", self.dir.display()))?;
         let path = self.path(&format!("{name}.cache"));
+        let dir = path.parent().unwrap_or(&self.dir);
+        std::fs::create_dir_all(dir).wrap_err_with(|| format!("creating {}", dir.display()))?;
         let data = serde_json::to_vec(&CachedFeed {
             bytes: bytes.to_vec(),
             signature: signature.to_string(),
@@ -161,9 +162,11 @@ impl Cache {
         static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
         let (temp_path, mut temp) = loop {
             let nonce = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
-            let temp_path = self
-                .dir
-                .join(format!(".{name}.cache.tmp-{}-{nonce}", std::process::id()));
+            let leaf = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("feed.cache");
+            let temp_path = dir.join(format!(".{leaf}.tmp-{}-{nonce}", std::process::id()));
             match std::fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
@@ -348,6 +351,13 @@ fn http_get(url: &str) -> Result<Vec<u8>> {
 }
 
 /// The sha256 of a file, lowercase hex.
+/// Lowercase hex sha256 of bytes.
+pub fn sha256_bytes(bytes: &[u8]) -> String {
+    use sha2::Digest as _;
+    let digest = sha2::Sha256::digest(bytes);
+    digest.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 pub fn sha256_file(path: &Path) -> Result<String> {
     let (digest, _) =
         packslip::digest_file(path).wrap_err_with(|| format!("hashing {}", path.display()))?;
