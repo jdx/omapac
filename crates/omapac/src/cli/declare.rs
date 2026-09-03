@@ -232,24 +232,28 @@ impl RunWith<&App> for Drop {
         }
         let host = app.host()?;
         let manifest = app.manifest()?;
-        let removals: Vec<String> = self
-            .packages
-            .iter()
-            .filter(|name| {
-                // Still declared present by a lower layer: keep it.
-                !manifest
-                    .declared(name)
-                    .is_some_and(|d| d.package.state == State::Present)
-            })
-            .filter(|name| host.installed_package(name).ok().flatten().is_some())
-            .cloned()
-            .collect();
+        let mut removals = Vec::new();
+        for name in &self.packages {
+            // Still declared present by a lower layer: keep it.
+            if manifest
+                .declared(name)
+                .is_some_and(|d| d.package.state == State::Present)
+            {
+                continue;
+            }
+            if host.installed_package(name)?.is_some() {
+                removals.push(name.clone());
+            }
+        }
         if removals.is_empty() {
             println!("nothing to remove");
             return Ok(());
         }
         let engine = app.engine()?;
-        let tx = crate::engine::Transaction::remove(removals);
+        let mut tx = crate::engine::Transaction::remove(removals);
+        if let crate::engine::Operation::Remove { recursive, .. } = &mut tx.operation {
+            *recursive = false;
+        }
         let resolved = engine.plan(&tx)?;
         let command = engine
             .apply_invocation(

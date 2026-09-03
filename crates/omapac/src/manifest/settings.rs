@@ -189,7 +189,7 @@ pub struct AurToml {
 #[serde(deny_unknown_fields, default)]
 pub struct RepoToml {
     pub min_release_age: PerTierToml,
-    pub min_release_age_excludes: Vec<String>,
+    pub min_release_age_excludes: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -332,10 +332,9 @@ impl Settings {
             repo_min_release_age_custom,
             policy.repo.min_release_age.custom
         );
-        append_unique(
-            &mut self.repo_min_release_age_excludes,
-            &policy.repo.min_release_age_excludes,
-        );
+        if let Some(excludes) = &policy.repo.min_release_age_excludes {
+            append_unique(&mut self.repo_min_release_age_excludes, excludes);
+        }
         set!(trust_index, policy.trust.index);
         set!(trust_provenance, policy.trust.provenance);
         for (kind, weight) in &policy.trust.reviewers {
@@ -394,8 +393,8 @@ impl Settings {
             repo_min_release_age_custom,
             managed.repo.min_release_age.custom
         );
-        if !managed.repo.min_release_age_excludes.is_empty() {
-            self.repo_min_release_age_excludes = managed.repo.min_release_age_excludes.clone();
+        if let Some(excludes) = &managed.repo.min_release_age_excludes {
+            self.repo_min_release_age_excludes = excludes.clone();
         }
         max!(trust_index, managed.trust.index);
         max!(trust_provenance, managed.trust.provenance);
@@ -489,14 +488,14 @@ mod tests {
             &policy(
                 "aur.min_commit_age = \"12h\"\naur.jail = false\ntrust.index = \"off\"\n\
                  trust.custom_repos = \"allow\"\naur.allow_network_build = [\"chrome\", \"electron-app\"]\n\
-                 repo.min_release_age.opr = \"7d\"",
+                 repo.min_release_age.opr = \"7d\"\nrepo.min_release_age_excludes = [\"linux\"]",
             ),
             &UpdateToml::default(),
         );
         settings.apply_managed(&policy(
             "aur.min_commit_age = \"48h\"\naur.jail = true\ntrust.index = \"verify\"\n\
              trust.custom_repos = \"warn\"\naur.deny_network_build = [\"chrome\"]\n\
-             repo.min_release_age.opr = \"1d\"\ntrust.reviewers = { ai = \"gate\" }",
+             repo.min_release_age.opr = \"1d\"\nrepo.min_release_age_excludes = []\ntrust.reviewers = { ai = \"gate\" }",
         ));
         assert_eq!(settings.aur_min_commit_age, Age::hours(48), "max");
         assert!(settings.aur_jail, "trueWins");
@@ -511,6 +510,10 @@ mod tests {
             settings.repo_min_release_age_opr,
             Age::days(7),
             "user may lag more"
+        );
+        assert!(
+            settings.repo_min_release_age_excludes.is_empty(),
+            "an explicitly empty managedWins list clears user values"
         );
         assert_eq!(
             settings.trust_reviewers["ai"],

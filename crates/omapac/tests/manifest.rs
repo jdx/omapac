@@ -185,7 +185,7 @@ fn drop_keeps_what_a_lower_layer_declares() {
     // yay stays because the distro layer declares it; glibc goes.
     let log = rig.log();
     assert!(
-        log[0].ends_with("-R --print --print-format %n\t%v\t%r\t%l\t%s -s -- glibc"),
+        log[0].ends_with("-R --print --print-format %n\t%v\t%r\t%l\t%s -- glibc"),
         "{log:?}"
     );
     let manifest = std::fs::read_to_string(rig.user_manifest()).unwrap();
