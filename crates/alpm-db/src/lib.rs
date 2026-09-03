@@ -8,7 +8,15 @@
 #![forbid(unsafe_code)]
 
 pub mod conf;
+pub mod dep;
+pub mod desc;
+pub mod local;
+pub mod sync;
 pub mod vercmp;
 
 pub use conf::{Check, Config, Options, Repo, SigLevel, Trust, Usage};
+pub use dep::{Dependency, Op};
+pub use desc::Fields;
+pub use local::{InstallReason, LocalDb, LocalFiles, LocalPackage};
+pub use sync::{SyncDb, SyncPackage};
 pub use vercmp::{Evr, vercmp};
