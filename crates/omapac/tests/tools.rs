@@ -157,6 +157,7 @@ fn run(s: &Store, args: &[&str]) -> (i32, String, String) {
     let output = Command::new(env!("CARGO_BIN_EXE_omapac"))
         .env("PATH", format!("{}:/usr/bin:/bin", s.rig.bin.display()))
         .env("HOME", &s.rig.home)
+        .env_remove("XDG_CONFIG_HOME")
         .env("XDG_CACHE_HOME", s.rig.dir.path().join("cache"))
         .arg("--sysroot")
         .arg(&s.rig.root)
@@ -361,6 +362,7 @@ fn channel_must_be_configured() {
     let rig = Rig::new();
     let output = Command::new(env!("CARGO_BIN_EXE_omapac"))
         .env("HOME", &rig.home)
+        .env_remove("XDG_CONFIG_HOME")
         .arg("--sysroot")
         .arg(&rig.root)
         .args(["tools", "index"])
@@ -375,6 +377,7 @@ fn channel_must_be_configured() {
     );
     let output = Command::new(env!("CARGO_BIN_EXE_omapac"))
         .env("HOME", &rig.home)
+        .env_remove("XDG_CONFIG_HOME")
         .arg("--sysroot")
         .arg(&rig.root)
         .args(["tools", "index"])
