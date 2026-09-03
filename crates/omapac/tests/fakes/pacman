@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# A stand-in for pacman that answers --print requests with canned output
+# and records every invocation, so the install and remove flows can be
+# tested on a machine without pacman. Behaviour is driven by the
+# environment:
+#   FAKE_PACMAN_LOG    file every argv is appended to
+#   FAKE_PACMAN_PRINT  what to print for --print (already in print-format)
+#   FAKE_PACMAN_STATUS exit status for non-print invocations (default 0)
+set -euo pipefail
+printf '%s\n' "$*" >>"${FAKE_PACMAN_LOG:?}"
+for arg in "$@"; do
+  if [ "$arg" = "--print" ]; then
+    printf '%b' "${FAKE_PACMAN_PRINT:-}"
+    exit 0
+  fi
+done
+exit "${FAKE_PACMAN_STATUS:-0}"
