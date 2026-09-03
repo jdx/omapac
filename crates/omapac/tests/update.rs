@@ -69,6 +69,7 @@ fn run_with_status(s: &Setup, args: &[&str], print: &str, status: i32) -> (i32, 
         .env("PATH", format!("{}:/usr/bin:/bin", s.rig.bin.display()))
         .env("HOME", &s.rig.home)
         .env_remove("XDG_CONFIG_HOME")
+        .env_remove("XDG_RUNTIME_DIR")
         .env("XDG_CACHE_HOME", s.rig.dir.path().join("cache"))
         .env("OMAPAC_AUR_RPC_BASE", &s.rpc)
         .env("OMAPAC_AUR_GIT_BASE", s.aur.base())
