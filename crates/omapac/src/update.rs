@@ -233,17 +233,18 @@ pub struct UpdateLock {
 
 impl UpdateLock {
     /// Where the lock lives: the ledger directory when this process can
-    /// write there (root), else the user's runtime or cache directory.
+    /// create or write it (root, or a sysroot the user owns), else the
+    /// user's runtime or cache directory.
     pub fn path(sysroot: Option<&Path>) -> PathBuf {
         let system = crate::ledger::Ledger::path(sysroot)
             .parent()
             .map(|dir| dir.join("update.lock"))
             .unwrap_or_else(|| PathBuf::from("/var/lib/omapac/update.lock"));
-        if system
-            .parent()
-            .is_some_and(|dir| dir.is_dir() && is_writable(dir))
-        {
-            return system;
+        if let Some(dir) = system.parent() {
+            let _ = std::fs::create_dir_all(dir);
+            if dir.is_dir() && is_writable(dir) {
+                return system;
+            }
         }
         if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") {
             return PathBuf::from(runtime).join("omapac/update.lock");
