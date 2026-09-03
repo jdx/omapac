@@ -1,5 +1,8 @@
 #![forbid(unsafe_code)]
 
+mod attest;
+mod index;
+
 use std::ffi::OsString;
 
 use eyre::Result;
@@ -12,6 +15,11 @@ const BIN: BinInfo = BinInfo {
 };
 
 /// Server-side tooling for a repository that serves omapac clients
+///
+/// Everything a repository needs to publish what omapac verifies: the
+/// signed index, build provenance, and (in later releases) the signer
+/// gate, the vendor pipeline, the AUR sync gate, verdicts, advisories,
+/// and snapshots. See PLAN.md in the omapac repository.
 #[derive(usage_rs::Cli)]
 #[usage(
     bin = "omapac-repo",
@@ -25,8 +33,9 @@ struct Cli {
 }
 
 #[derive(usage_rs::Subcommands)]
-#[usage(run_with)]
 enum Commands {
+    Attest(attest::Attest),
+    Index(index::IndexCmd),
     Version(Version),
 }
 
@@ -36,7 +45,9 @@ fn main() -> Result<()> {
     let argv = omapac_cli_support::argv(&args);
     let cli = omapac_cli_support::unwrap_or_exit(Cli::spec(), &argv, Cli::parse_from_argv(&argv));
     match cli.command {
-        Some(command) => command.run_with(BIN),
+        Some(Commands::Attest(cmd)) => cmd.run_with(()),
+        Some(Commands::Index(cmd)) => cmd.run_with(()),
+        Some(Commands::Version(cmd)) => cmd.run_with(BIN),
         None => Ok(()),
     }
 }

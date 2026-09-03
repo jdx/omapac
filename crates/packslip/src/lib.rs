@@ -10,6 +10,7 @@
 #![forbid(unsafe_code)]
 
 pub mod create;
+pub mod dsse;
 pub mod minisign;
 pub mod model;
 pub mod verify;
