@@ -107,4 +107,11 @@ fn an_unreachable_aur_is_a_clear_error() {
     let (code, _, err) = run(&rig, "http://127.0.0.1:9", &["search", "--aur", "yay"]);
     assert_ne!(code, 0);
     assert!(err.contains("searching the AUR"), "{err}");
+
+    // Installed foreign metadata remains useful during an AUR outage.
+    std::fs::remove_file(rig.root.join("var/lib/pacman/sync/omarchy.db")).unwrap();
+    let (code, out, err) = run(&rig, "http://127.0.0.1:9", &["info", "yay"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("Repository       none [foreign]"), "{out}");
+    assert!(err.contains("AUR metadata unavailable"), "{err}");
 }
