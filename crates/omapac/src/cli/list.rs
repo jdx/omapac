@@ -88,6 +88,15 @@ pub fn list(host: &Host, ledger: &Ledger, filter: &List) -> Result<Vec<Entry>> {
         // Recorded but gone: only the ledger knows about these.
         for (name, recorded) in &ledger.packages {
             if host.installed_package(name)?.is_none() {
+                let foreign = recorded.repo.is_none();
+                if filter.explicit && !recorded.explicit
+                    || filter.deps && recorded.explicit
+                    || filter.orphans
+                    || filter.foreign && !foreign
+                    || filter.native && foreign
+                {
+                    continue;
+                }
                 entries.push(Entry {
                     name: name.clone(),
                     version: recorded.version.clone(),

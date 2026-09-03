@@ -35,6 +35,14 @@ fn install_records_and_remove_forgets() {
         out.contains("curl") && out.contains("removed outside omapac"),
         "{out}"
     );
+    let (_, out, _) = rig.run(&["list", "--drift", "--explicit"], "", 0);
+    assert!(out.contains("curl") && !out.contains("libpsl"), "{out}");
+    let (_, out, _) = rig.run(&["list", "--drift", "--deps"], "", 0);
+    assert!(!out.contains("curl") && out.contains("libpsl"), "{out}");
+    let (_, out, _) = rig.run(&["list", "--drift", "--foreign"], "", 0);
+    assert!(out.is_empty(), "{out}");
+    let (_, out, _) = rig.run(&["list", "--drift", "--orphans"], "", 0);
+    assert!(out.is_empty(), "{out}");
 
     let remove = "yay\\t13.0.1-1\\tlocal\\tyay-13.0.1-1\\t(null)\\ncurl\\t8.16.0-1\\tlocal\\tcurl\\t(null)\\n";
     let (code, _, err) = rig.run(&["remove", "-y", "yay"], remove, 0);
