@@ -375,7 +375,7 @@ fn a_tampered_mirror_is_caught() {
         "{err}"
     );
     assert!(
-        !dest.join("tool-1.2.0-linux-x64.tar.gz").exists(),
+        !dest.join("tool-1.2.0-linux-x64.bin").exists(),
         "nothing written"
     );
 }
