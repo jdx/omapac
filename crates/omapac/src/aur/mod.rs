@@ -13,7 +13,9 @@ pub fn cache_dir() -> PathBuf {
     let cache_home = std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))
-        .unwrap_or_else(|| PathBuf::from("/tmp"));
+        // An environment-less process should fail safely rather than share a
+        // predictable world-writable checkout with other users.
+        .unwrap_or_else(|| PathBuf::from("/root/.cache"));
     cache_home.join("omapac/aur")
 }
 

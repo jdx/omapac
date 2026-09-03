@@ -162,9 +162,11 @@ impl Checkout {
 
     /// A file's content at a commit, `None` when it does not exist there.
     pub fn show(&self, commit: &str, path: &str) -> Result<Option<String>> {
-        match self.git(&["show", &format!("{commit}:{path}")]) {
-            Ok(text) => Ok(Some(text)),
-            Err(_) => Ok(None),
+        let listed = self.git(&["ls-tree", "--name-only", commit, "--", path])?;
+        if listed.lines().any(|candidate| candidate == path) {
+            Ok(Some(self.git(&["show", &format!("{commit}:{path}")])?))
+        } else {
+            Ok(None)
         }
     }
 
@@ -352,6 +354,11 @@ mod tests {
         let new = checkout.srcinfo(&head).unwrap();
         assert!(new.has_skipped_checksum("x86_64"));
         assert_eq!(checkout.show(first, "foo.install").unwrap(), None);
+        assert!(
+            checkout
+                .show("0000000000000000000000000000000000000000", ".SRCINFO")
+                .is_err()
+        );
 
         checkout.checkout(first).unwrap();
         assert_eq!(checkout.head().unwrap(), *first);
