@@ -13,6 +13,7 @@ use omapac::aur::rpc::Client;
 use omapac::host::{Host, HostPaths};
 use omapac::lockfile::AurEntry;
 use omapac::manifest::settings::Settings;
+use omapac::trust::Advisories;
 use omapac::trust::feeds::{Reviewer, Verdict, VerdictKind, VerdictSubject, Verdicts};
 use omapac_policy::evidence::Approved;
 use omapac_policy::{Policy, Report};
@@ -97,6 +98,9 @@ pub struct SyncAur {
     /// Append a static verdict per reviewed commit to this feed
     #[usage(long, value_hint = usage_rs::ValueHint::FilePath)]
     verdicts: Option<PathBuf>,
+    /// Advisory kill list to enforce while gating commits
+    #[usage(long, value_hint = usage_rs::ValueHint::FilePath)]
+    advisories: Option<PathBuf>,
     /// The feed signing key (with --verdicts)
     #[usage(short = 'k', long, value_hint = usage_rs::ValueHint::FilePath)]
     key: Option<PathBuf>,
@@ -144,6 +148,10 @@ impl RunWith<()> for SyncAur {
             .wrap_err_with(|| format!("creating {}", cache.display()))?;
         let settings = Settings::default();
         let now = crate::feed::now();
+        let advisories: Option<Advisories> = match &self.advisories {
+            Some(path) => crate::feed::load(path)?,
+            None => None,
+        };
 
         let mut results = Vec::new();
         let mut verdicts = Vec::new();
@@ -168,7 +176,7 @@ impl RunWith<()> for SyncAur {
                 commit: None,
                 interactive: false,
                 arch: &self.arch,
-                advisories: None,
+                advisories: advisories.as_ref(),
                 verdicts: None,
             };
             let result = match review(package, &request) {
