@@ -78,7 +78,7 @@ pub const RULES: &[Rule] = &[
         id: "hidden-download",
         kind: Kind::Suspicious,
         description: "downloads into a hidden or temp path at install time",
-        pattern: r#"(curl|wget)\b[^\n]*-[oO]\s*["']?(/tmp/|/dev/shm/|\$HOME/\.|~/\.)"#,
+        pattern: r#"(curl|wget)\b[^\n]*(?:-[A-Za-z]*[oO][A-Za-z]*|--output(?:-document)?)\s+["']?(/tmp/|/dev/shm/|\$HOME/\.|~/\.)"#,
     },
     Rule {
         id: "persistence",
@@ -199,6 +199,12 @@ mod tests {
             rules_hit("curl -o ~/.cache/tool https://example.test/tool\n")
                 .contains(&"hidden-download")
         );
+        for command in [
+            "curl -fsSLo /tmp/tool https://example.test/tool",
+            "wget -qO /dev/shm/tool https://example.test/tool",
+        ] {
+            assert!(rules_hit(command).contains(&"hidden-download"), "{command}");
+        }
     }
 
     #[test]
