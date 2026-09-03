@@ -6,6 +6,7 @@ use usage_rs::RunWith;
 
 use super::{App, print_json};
 use crate::aur::review::{Request, Reviewed, review};
+use crate::aur::rpc::Rpc as _;
 use crate::lockfile::Lockfile;
 
 /// Review, approve, and build AUR packages
@@ -129,7 +130,12 @@ pub struct Prepared {
     pub reviewed: Reviewed,
     pub settings: crate::manifest::Settings,
     pub arch: String,
+    /// Whether the run may ask questions; dependencies inherit it.
+    pub unattended: bool,
 }
+
+/// How deep an AUR dependency chain may go before it is refused.
+const MAX_AUR_DEPTH: usize = 8;
 
 impl App {
     /// Review `name` and check it is approved at the target commit, or
@@ -197,6 +203,7 @@ impl App {
             .unwrap_or_else(|| alpm_db::conf::host_arch().to_string());
         Ok(Prepared {
             reviewed,
+            unattended: !interactive,
             settings,
             arch,
         })
@@ -204,14 +211,21 @@ impl App {
 
     /// Install missing repository dependencies, then build.
     pub fn build_aur(&self, prepared: &Prepared, yes: bool) -> Result<Vec<std::path::PathBuf>> {
+        self.build_aur_chain(prepared, &[], &mut Vec::new(), yes)
+    }
+
+    /// Build with `chain` naming the packages whose dependencies led here.
+    fn build_aur_chain(
+        &self,
+        prepared: &Prepared,
+        chain: &[String],
+        built: &mut Vec<(String, String, Vec<alpm_db::dep::Dependency>)>,
+        yes: bool,
+    ) -> Result<Vec<std::path::PathBuf>> {
         let host = self.host()?;
         let missing = crate::aur::build::missing_deps(&host, &prepared.reviewed, &prepared.arch)?;
         if !missing.other.is_empty() {
-            bail!(
-                "{}: dependencies not in any repository: {}; install them first (AUR dependencies are not resolved yet)",
-                prepared.reviewed.pkgname,
-                missing.other.join(", ")
-            );
+            self.build_aur_dependencies(prepared, &missing.other, chain, built, yes)?;
         }
         if !missing.repo.is_empty() {
             let engine = self.engine()?;
@@ -253,6 +267,144 @@ impl App {
             &crate::aur::cache_dir(),
         )?;
         crate::aur::build::build(&prepared.reviewed, &opts)
+    }
+
+    /// Dependencies no repository carries: each must be an AUR package,
+    /// reviewed and approved like the parent, built first, and installed
+    /// as a dependency. Version constraints are checked against what the
+    /// recipe builds and provides.
+    fn build_aur_dependencies(
+        &self,
+        parent: &Prepared,
+        deps: &[alpm_db::dep::Dependency],
+        chain: &[String],
+        built: &mut Vec<(String, String, Vec<alpm_db::dep::Dependency>)>,
+        yes: bool,
+    ) -> Result<()> {
+        let mut chain = chain.to_vec();
+        chain.push(parent.reviewed.pkgname.clone());
+        if chain.len() > MAX_AUR_DEPTH {
+            bail!("AUR dependency chain too deep: {}", chain.join(" -> "));
+        }
+        for dep in deps {
+            let host = self.host()?;
+            if host.is_satisfied(dep)?
+                || built
+                    .iter()
+                    .any(|(name, version, provides)| dep.satisfied_by(name, version, provides))
+            {
+                continue;
+            }
+            let preserve_explicit = host
+                .installed_package(&dep.name)?
+                .is_some_and(|package| package.reason == alpm_db::local::InstallReason::Explicit);
+            if chain.iter().any(|name| name == &dep.name) {
+                bail!(
+                    "AUR dependency cycle: {} -> {}",
+                    chain.join(" -> "),
+                    dep.name
+                );
+            }
+            let known = self
+                .aur_rpc()
+                .info(&[&dep.name])
+                .wrap_err_with(|| format!("looking up {} on the AUR", dep.name))?;
+            if !known.iter().any(|p| p.name == dep.name) {
+                bail!(
+                    "{}: dependency {} is in no repository and not on the AUR",
+                    parent.reviewed.pkgname,
+                    dep.spec()
+                );
+            }
+            println!(
+                "{} needs {} from the AUR; reviewing it first",
+                parent.reviewed.pkgname,
+                dep.spec()
+            );
+            let prepared = self.prepare_aur(&dep.name, None, true, parent.unattended)?;
+            let version = prepared.reviewed.srcinfo.version();
+            let provides: Vec<alpm_db::dep::Dependency> = prepared
+                .reviewed
+                .srcinfo
+                .provides(&dep.name, &prepared.arch);
+            if !dep.satisfied_by(&dep.name, &version, &provides) {
+                bail!(
+                    "{}: AUR {} builds {} {}, which does not satisfy {}",
+                    parent.reviewed.pkgname,
+                    dep.name,
+                    dep.name,
+                    version,
+                    dep.spec()
+                );
+            }
+            let files = self.build_aur_chain(&prepared, &chain, built, yes)?;
+            self.install_built(&prepared, &files, !preserve_explicit, "install")?;
+            built.push((dep.name.clone(), version, provides));
+        }
+        Ok(())
+    }
+
+    /// Install package files a build produced and record them in the
+    /// ledger.
+    pub fn install_built(
+        &self,
+        prepared: &Prepared,
+        files: &[std::path::PathBuf],
+        as_deps: bool,
+        by: &str,
+    ) -> Result<()> {
+        let packages = crate::aur::build::built_packages(files)?;
+        let selected: Vec<_> = files
+            .iter()
+            .cloned()
+            .zip(packages)
+            .filter(|(_, package)| package.name == prepared.reviewed.pkgname)
+            .collect();
+        if selected.is_empty() {
+            bail!(
+                "{}: makepkg did not produce the requested package",
+                prepared.reviewed.pkgname
+            );
+        }
+        let files: Vec<_> = selected.iter().map(|(file, _)| file.clone()).collect();
+        let engine = self.engine()?;
+        let install = crate::engine::FileInstall {
+            files,
+            as_deps,
+            overwrite: Vec::new(),
+        };
+        crate::engine::Engine::install_files(
+            &engine,
+            &install,
+            crate::engine::ApplyOpts {
+                dry_run: false,
+                no_confirm: true,
+            },
+        )?;
+        let mut patch = crate::ledger::Patch::default();
+        for (_, package) in selected {
+            patch.upsert.insert(
+                package.name,
+                crate::ledger::Entry {
+                    version: package.version,
+                    tier: crate::resolve::Tier::Aur,
+                    repo: None,
+                    aur_commit: Some(prepared.reviewed.target.clone()),
+                    explicit: !as_deps,
+                    by: by.to_string(),
+                    at: crate::ledger::now(),
+                },
+            );
+        }
+        self.record(&patch)?;
+        println!(
+            "installed {} {} from AUR commit {}{}",
+            prepared.reviewed.pkgname,
+            prepared.reviewed.srcinfo.version(),
+            &prepared.reviewed.target[..12],
+            if as_deps { " as a dependency" } else { "" }
+        );
+        Ok(())
     }
 
     /// Where AUR repositories are cloned from; `OMAPAC_AUR_GIT_BASE`
