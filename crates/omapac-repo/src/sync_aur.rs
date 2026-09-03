@@ -398,12 +398,6 @@ pub fn decide(
             .push("new package: a human must approve the first commit".into());
         return result;
     };
-    let Some(maintainer) = maintainer else {
-        result
-            .reasons
-            .push("orphaned: no maintainer to trust".into());
-        return result;
-    };
     if report.denied() {
         result.outcome = Outcome::Blocked;
         for judged in report.denials() {
@@ -413,6 +407,12 @@ pub fn decide(
         }
         return result;
     }
+    let Some(maintainer) = maintainer else {
+        result
+            .reasons
+            .push("orphaned: no maintainer to trust".into());
+        return result;
+    };
     if report.flagged() {
         for judged in &report.findings {
             result
