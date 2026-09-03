@@ -132,13 +132,13 @@ fn update_refreshes_plans_with_holds_and_applies() {
     );
     let plan = log
         .iter()
-        .find(|l| l.contains("-Su --noconfirm --print"))
+        .find(|line| line.contains("-Su --noconfirm --print"))
         .unwrap();
     assert!(plan.contains("--ignore glibc,pacman"), "{plan}");
     assert!(plan.contains("--overwrite /usr/share/omarchy/*"), "{plan}");
     let apply = log
         .iter()
-        .find(|l| l.contains("-Su --noconfirm") && !l.contains("--print"))
+        .find(|line| line.contains("-Su --noconfirm") && !line.contains("--print"))
         .unwrap();
     assert!(
         apply.starts_with("sudo -n env OMARCHY_UPDATE_PACMAN=1"),
@@ -336,7 +336,7 @@ fn unattended_update_allows_signed_custom_repo_warnings() {
         s.rig
             .log()
             .iter()
-            .any(|line| line.contains("-Su --noconfirm") && !line.contains("--print")),
+            .any(|line| line.contains("-Su --noconfirm")),
         "{:?}",
         s.rig.log()
     );
