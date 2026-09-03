@@ -289,7 +289,14 @@ impl UpdateLock {
                             std::thread::sleep(Duration::from_millis(250));
                             file = Some(returned);
                         }
-                        _ => bail!(
+                        Some(limit) => bail!(
+                            "timed out after {:.1}s waiting for another omapac update{}",
+                            limit.as_secs_f64(),
+                            holder
+                                .map(|pid| format!(" (pid {pid})"))
+                                .unwrap_or_default()
+                        ),
+                        None => bail!(
                             "another omapac update is running{}; pass --wait to queue behind it",
                             holder
                                 .map(|pid| format!(" (pid {pid})"))
@@ -348,6 +355,19 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("still exists"), "{err}");
+    }
+
+    #[test]
+    fn update_lock_wait_reports_timeout() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("update.lock");
+        let _held = UpdateLock::acquire(&path, None).unwrap();
+        let err = UpdateLock::acquire(&path, Some(Duration::ZERO))
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(err.contains("timed out"), "{err}");
+        assert!(!err.contains("pass --wait"), "{err}");
     }
 
     #[test]
