@@ -200,4 +200,12 @@ fn bad_signatures_and_missing_keys_are_refused() {
     let (code, _, err) = run(&s, &base, &["verify", "pacman"]);
     assert_ne!(code, 0);
     assert!(err.contains("publishes no omapac index"), "{err}");
+
+    let core =
+        alpm_db::SyncDb::read(&s.rig.root.join("var/lib/pacman/sync/core.db"), "core").unwrap();
+    let file = s.rig.home.join(&core.package("pacman").unwrap().filename);
+    std::fs::write(&file, b"fake arch package").unwrap();
+    let (code, _, err) = run(&s, &base, &["verify", file.to_str().unwrap()]);
+    assert_ne!(code, 0);
+    assert!(err.contains("publishes no omapac index"), "{err}");
 }
