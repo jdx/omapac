@@ -164,11 +164,22 @@ impl Options {
 
 /// What `uname -m` reports on this machine, for `Architecture = auto`.
 pub fn host_arch() -> &'static str {
-    match std::env::consts::ARCH {
-        "x86" => "i686",
-        "arm" => "armv7l",
-        other => other,
-    }
+    static ARCH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    ARCH.get_or_init(|| {
+        std::process::Command::new("uname")
+            .arg("-m")
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .and_then(|output| String::from_utf8(output.stdout).ok())
+            .map(|arch| arch.trim().to_string())
+            .filter(|arch| !arch.is_empty())
+            .unwrap_or_else(|| match std::env::consts::ARCH {
+                "x86" => "i686".to_string(),
+                "arm" => "armv7l".to_string(),
+                other => other.to_string(),
+            })
+    })
 }
 
 /// A `[repo]` section after `Include` expansion and `$var` substitution.
@@ -997,6 +1008,19 @@ mod tests {
             assert_eq!(repo.usage, Usage::ALL);
         }
         assert!(config.warnings.is_empty(), "{:?}", config.warnings);
+    }
+
+    #[test]
+    fn automatic_architecture_matches_uname() {
+        let output = std::process::Command::new("uname")
+            .arg("-m")
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(
+            host_arch(),
+            String::from_utf8(output.stdout).unwrap().trim()
+        );
     }
 
     #[test]
