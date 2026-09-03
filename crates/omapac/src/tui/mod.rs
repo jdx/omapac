@@ -24,7 +24,6 @@ pub fn require_terminal(what: &str, alternative: &str) -> Result<()> {
 
 /// Open a picker; `None` when cancelled, else the chosen item indexes.
 pub fn pick(title: &str, items: Vec<Item>, multi: bool) -> Result<Option<Vec<usize>>> {
-    require_terminal("the picker", "run without --pick")?;
     let mut picker = Picker::new(title, items, multi);
     let mut terminal = ratatui::init();
     let outcome = loop {
@@ -59,7 +58,6 @@ pub fn pick(title: &str, items: Vec<Item>, multi: bool) -> Result<Option<Vec<usi
 
 /// Show text in a scrollable pager until the user leaves.
 pub fn page(title: &str, text: &str) -> Result<()> {
-    require_terminal("the pager", "run without --pager")?;
     let mut pager = Pager::new(title, text);
     let mut terminal = ratatui::init();
     loop {
