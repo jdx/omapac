@@ -120,7 +120,11 @@ impl Diff {
         patch.remove.extend(
             self.steps
                 .iter()
-                .filter(|step| step.action == Action::Noop && step.state == State::Absent)
+                .filter(|step| {
+                    step.action == Action::Noop
+                        && step.state == State::Absent
+                        && ledger.packages.contains_key(&step.name)
+                })
                 .map(|step| step.name.clone()),
         );
         app.record(&patch)

@@ -82,12 +82,13 @@ impl RunWith<&App> for Install {
                 };
                 transaction::ledger_patch(&plan, &explicit, "install", false)
             } else {
-                transaction::ledger_patch_for_installed(
-                    &host,
-                    &target_names,
-                    !self.as_deps,
-                    "install",
-                )?
+                let ledger = app.ledger()?;
+                let missing: Vec<String> = target_names
+                    .iter()
+                    .filter(|name| !ledger.packages.contains_key(*name))
+                    .cloned()
+                    .collect();
+                transaction::ledger_patch_for_installed(&host, &missing, !self.as_deps, "install")?
             };
             app.record(&patch)?;
         }

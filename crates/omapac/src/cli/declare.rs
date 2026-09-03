@@ -303,7 +303,9 @@ impl RunWith<&App> for Drop {
         }
         let host = app.host()?;
         let manifest = app.manifest()?;
+        let ledger = (!self.dry_run).then(|| app.ledger()).transpose()?;
         let mut removals = Vec::new();
+        let mut stale = Vec::new();
         for target in &packages {
             let name = &target.name;
             // Still declared present by a lower layer: keep it.
@@ -315,10 +317,21 @@ impl RunWith<&App> for Drop {
             }
             if host.installed_package(name)?.is_some() {
                 removals.push(name.clone());
+            } else if ledger
+                .as_ref()
+                .is_some_and(|ledger| ledger.packages.contains_key(name))
+            {
+                stale.push(name.clone());
             }
         }
         if removals.is_empty() {
             println!("nothing to remove");
+            if !stale.is_empty() {
+                app.record(&crate::ledger::Patch {
+                    remove: stale,
+                    ..Default::default()
+                })?;
+            }
             return Ok(());
         }
         let engine = app.engine()?;
@@ -357,8 +370,14 @@ impl RunWith<&App> for Drop {
             self.yes,
             self.dry_run,
         )?;
-        if performed {
-            app.record(&super::transaction::ledger_patch(&plan, &[], "drop", true))?;
+        if !self.dry_run {
+            let mut patch = if performed {
+                super::transaction::ledger_patch(&plan, &[], "drop", true)
+            } else {
+                Default::default()
+            };
+            patch.remove.extend(stale);
+            app.record(&patch)?;
         }
         Ok(())
     }
