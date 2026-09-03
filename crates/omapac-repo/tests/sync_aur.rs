@@ -298,6 +298,23 @@ fn hostile_takeover_is_blocked_with_a_block_verdict() {
         "{:?}",
         verdict.findings
     );
+
+    let feed_before = std::fs::read(g.rig.path().join("verdicts.json")).unwrap();
+    let (code, _, _) = g.run(&[
+        "--trusted-maintainer",
+        "jguer",
+        "--write",
+        "--verdicts",
+        "verdicts.json",
+        "--key",
+        "feed.key",
+    ]);
+    assert_ne!(code, 0);
+    assert_eq!(
+        std::fs::read(g.rig.path().join("verdicts.json")).unwrap(),
+        feed_before,
+        "an identical blocked review must not append another verdict"
+    );
 }
 
 #[test]
