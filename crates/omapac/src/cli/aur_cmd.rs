@@ -162,9 +162,9 @@ impl App {
                 print!("{text}");
             }
             if reviewed.report.denied() {
-                eprintln!(
-                    "{} finding(s) deny this commit",
-                    reviewed.report.denials().count()
+                bail!(
+                    "{} finding(s) deny this commit; review it and use `omapac aur approve --force {name}` to override explicitly",
+                    reviewed.report.denials().count(),
                 );
             }
             if !crate::ui::confirm(
