@@ -239,6 +239,33 @@ fn diagnose_host(host: &Host, add: &mut impl FnMut(Status, &str, String)) {
         ),
     }
 
+    match crate::trust::Keyring::load(host.paths.sysroot.as_deref()) {
+        Ok(keyring) if keyring.is_empty() => add(
+            Status::Warn,
+            "trust",
+            "no omapac trust keys under /etc/omapac/keys or /usr/share/omapac/keys; repository feeds cannot be verified".to_string(),
+        ),
+        Ok(keyring) => add(
+            Status::Ok,
+            "trust",
+            format!(
+                "{} key(s): {}",
+                keyring.keys.len(),
+                keyring
+                    .keys
+                    .iter()
+                    .map(|(p, k)| format!(
+                        "{} ({})",
+                        p.display(),
+                        packslip::minisign::key_id_hex(&k.key_id)
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        ),
+        Err(err) => add(Status::Fail, "trust", format!("{err:#}")),
+    }
+
     let gpg_dir = host.config.options.gpg_dir();
     let gpg_dir = host
         .paths

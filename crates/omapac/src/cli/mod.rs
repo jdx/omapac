@@ -22,6 +22,7 @@ mod remove;
 mod search;
 mod transaction;
 mod update;
+mod verify;
 
 fn check_rank(check: alpm_db::Check) -> u8 {
     match check {
@@ -91,6 +92,7 @@ enum Commands {
     Search(search::Search),
     Status(declare::Status),
     Update(update::Update),
+    Verify(verify::Verify),
     Version(Version),
 }
 
