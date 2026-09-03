@@ -241,7 +241,10 @@ fn rollback_dry_run_prints_the_downgrade_plan_and_command() {
     assert!(out.contains("would run:") && out.contains("-Suu"), "{out}");
     let log = s.rig.log();
     assert!(log[0].contains("-Syy --noconfirm"), "{log:?}");
-    assert!(log[0].contains("--sysroot"), "{log:?}");
+    assert!(
+        log[0].contains("--config") && !log[0].contains("--sysroot"),
+        "{log:?}"
+    );
     assert!(log[1].contains("-Suu --print"), "{log:?}");
     assert_eq!(
         std::fs::read_to_string(s.rig.root.join("etc/pacman.d/mirrorlist")).unwrap(),
