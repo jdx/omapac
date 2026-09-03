@@ -153,9 +153,10 @@ impl PacmanCli {
             .iter()
             .position(|a| a.starts_with('-') && !a.starts_with("--"))
             .map_or(0, |i| i + 1);
-        args.insert(at, "--print".to_string());
-        args.insert(at + 1, "--print-format".to_string());
-        args.insert(at + 2, PRINT_FORMAT.to_string());
+        args.insert(at, "--noconfirm".to_string());
+        args.insert(at + 1, "--print".to_string());
+        args.insert(at + 2, "--print-format".to_string());
+        args.insert(at + 3, PRINT_FORMAT.to_string());
         Invocation::new(&self.pacman, args)
     }
 
@@ -279,10 +280,14 @@ impl Engine for PacmanCli {
     fn plan(&self, tx: &Transaction) -> Result<ResolvedTx> {
         let invocation = self.plan_invocation(tx);
         let command = invocation.display();
-        let output = invocation.command().output().map_err(|source| Error::Io {
-            command: command.clone(),
-            source,
-        })?;
+        let output = invocation
+            .command()
+            .stdin(std::process::Stdio::null())
+            .output()
+            .map_err(|source| Error::Io {
+                command: command.clone(),
+                source,
+            })?;
         if !output.status.success() {
             return Err(Error::Command {
                 command,
@@ -331,7 +336,7 @@ mod tests {
         .overwriting(["/usr/share/omarchy/*".to_string()]);
         assert_eq!(
             engine().plan_invocation(&tx).display(),
-            "/usr/bin/pacman -S --print --print-format '%n\t%v\t%r\t%l\t%s' --needed --ignore gcc14,gcc14-libs --overwrite '/usr/share/omarchy/*' -- helix extra/zathura"
+            "/usr/bin/pacman -S --noconfirm --print --print-format '%n\t%v\t%r\t%l\t%s' --needed --ignore gcc14,gcc14-libs --overwrite '/usr/share/omarchy/*' -- helix extra/zathura"
         );
         let apply = engine().apply_invocation(
             &tx,
@@ -371,7 +376,7 @@ mod tests {
         }
         assert_eq!(
             engine().plan_invocation(&tx).display(),
-            "/usr/bin/pacman -R --print --print-format '%n\t%v\t%r\t%l\t%s' -c -n -u -- yay"
+            "/usr/bin/pacman -R --noconfirm --print --print-format '%n\t%v\t%r\t%l\t%s' -c -n -u -- yay"
         );
     }
 
@@ -396,7 +401,7 @@ mod tests {
         });
         assert_eq!(
             engine().plan_invocation(&down).display(),
-            "/usr/bin/pacman -Suu --print --print-format '%n\t%v\t%r\t%l\t%s'"
+            "/usr/bin/pacman -Suu --noconfirm --print --print-format '%n\t%v\t%r\t%l\t%s'"
         );
     }
 
