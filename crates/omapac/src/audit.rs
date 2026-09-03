@@ -89,12 +89,21 @@ impl Source {
                 let bytes = fetch(&self.url)?;
                 let groups: Vec<Group> =
                     serde_json::from_slice(&bytes).wrap_err("parsing the security tracker")?;
-                if let Some(parent) = self.cache.parent() {
-                    std::fs::create_dir_all(parent)?;
+                let cached = (|| -> Result<()> {
+                    if let Some(parent) = self.cache.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    let temp = self.cache.with_extension("tmp");
+                    std::fs::write(&temp, &bytes)?;
+                    std::fs::rename(&temp, &self.cache)?;
+                    Ok(())
+                })();
+                if let Err(err) = cached {
+                    eprintln!(
+                        "warning: could not cache the live security tracker at {}: {err:#}",
+                        self.cache.display()
+                    );
                 }
-                let temp = self.cache.with_extension("tmp");
-                std::fs::write(&temp, &bytes)?;
-                std::fs::rename(&temp, &self.cache)?;
                 Ok(groups)
             })();
             match live {
