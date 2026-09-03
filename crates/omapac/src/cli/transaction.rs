@@ -41,6 +41,20 @@ pub struct Plan {
 
 /// Annotate `resolved` with tiers and policy warnings.
 pub fn plan(host: &Host, resolved: &ResolvedTx, command: String) -> Plan {
+    plan_with_custom_repos(
+        host,
+        resolved,
+        command,
+        crate::manifest::settings::CustomRepos::Warn,
+    )
+}
+
+pub fn plan_with_custom_repos(
+    host: &Host,
+    resolved: &ResolvedTx,
+    command: String,
+    custom_repos: crate::manifest::settings::CustomRepos,
+) -> Plan {
     let mut warnings = Vec::new();
     let changes: Vec<TieredChange> = resolved
         .changes
@@ -83,10 +97,17 @@ pub fn plan(host: &Host, resolved: &ResolvedTx, command: String) -> Plan {
                 ));
             }
             if matches!(change.tier, Tier::Custom(_)) {
-                warnings.push(format!(
-                    "{}: repository [{repo}] is outside Arch and Omarchy review",
-                    change.name
-                ));
+                match custom_repos {
+                    crate::manifest::settings::CustomRepos::Allow => {}
+                    crate::manifest::settings::CustomRepos::Warn => warnings.push(format!(
+                        "{}: repository [{repo}] is outside Arch and Omarchy review",
+                        change.name
+                    )),
+                    crate::manifest::settings::CustomRepos::Deny => warnings.push(format!(
+                        "{}: repository [{repo}] is denied by trust.custom_repos policy",
+                        change.name
+                    )),
+                }
             }
         }
     }
