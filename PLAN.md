@@ -611,13 +611,14 @@ snapshot and OPR index sequence it was built from, creation time, test suite res
 with logs, promotion times, and whether it was expedited or held. It also contains a
 map keyed by repository name with the SHA-256 digest of each exact sync database and a
 canonical package map keyed by `repo/name` whose value is the selected version and
-`tested` or `snapshot` label. The signed test result records the repository-qualified
-`repo/name`, exact package output, and selected version it exercised. `tested` is
-assigned only when the repository, output name, and version all match; unexercised
-siblings from a split PKGBUILD remain `snapshot`. Imported results are held to the same
-rule: their signed records carry the same repository-qualified identity for each exact
-output and selected version exercised, and never expand a pkgbase result to sibling
-outputs. Keys are unique and sorted bytewise before signing, so
+`tested` or `snapshot` label. The signed test result records the snapshot id, OPR index
+sequence, repository-qualified `repo/name`, exact package output, selected version, and
+SHA-256 digest of the package bytes it exercised. `tested` is assigned only when the
+snapshot, index sequence, repository, output name, version, and digest all match;
+unexercised siblings from a split PKGBUILD remain `snapshot`. Imported results are held
+to the same rule: their signed records carry that complete immutable identity for each
+exact output exercised, and never expand a pkgbase result to sibling outputs. Keys are
+unique and sorted bytewise before signing, so
 clients can deterministically match a transaction package to its version and label.
 The whole manifest is signed with the index key.
 
@@ -840,6 +841,9 @@ stays manageable; the first group is layers 1 through 6, a working pacman fronte
   network; it fails under the default policy and succeeds with a grant.
 - Trust: fixture bundles and packslips for valid, wrong key, wrong digest, expired
   trust root, and stale sequence. `packslip verify` round-trips `packslip create`.
+- Release train: imported-result fixtures use identical repository/output/version
+  triples with different package digests and prove only the exact snapshot and bytes
+  exercised receive the `tested` label.
 - Signer gate: a test build key and signer key in the container; a package without a
   valid provenance bundle is refused a repo signature.
 - End-to-end in an `archlinux:base-devel` container with a local repo produced by
