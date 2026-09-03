@@ -358,7 +358,7 @@ impl App {
                 return unavailable(format!("loading trust keys: {err:#}"));
             }
         };
-        let cache = crate::trust::Cache::for_repo(&source.name);
+        let cache = crate::trust::Cache::for_repo(&source.name, self.paths.sysroot.as_deref())?;
         let advisories = crate::trust::fetch(&feed, "advisories.json", &keyring, &cache, false)
             .map(|fetched: crate::trust::Fetched<crate::trust::Advisories>| fetched.value);
         let verdicts = crate::trust::fetch(&feed, "verdicts.json", &keyring, &cache, false)
