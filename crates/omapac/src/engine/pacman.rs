@@ -36,11 +36,17 @@ pub struct PacmanCli {
 }
 
 impl PacmanCli {
-    /// Find pacman on `PATH`.
+    /// Find pacman, preferring Arch's root-owned system location. Falling
+    /// back to PATH keeps development fixtures and nonstandard sysroots usable.
     pub fn detect() -> Result<PacmanCli> {
-        let pacman = which::which("pacman").map_err(|_| {
-            Error::NotAvailable("pacman is not on PATH; omapac needs pacman".to_string())
-        })?;
+        let system = PathBuf::from("/usr/bin/pacman");
+        let pacman = if system.is_file() {
+            system
+        } else {
+            which::which("pacman").map_err(|_| {
+                Error::NotAvailable("pacman is not on PATH; omapac needs pacman".to_string())
+            })?
+        };
         Ok(PacmanCli::with_binary(pacman))
     }
 
