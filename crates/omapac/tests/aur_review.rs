@@ -288,6 +288,24 @@ fn feeds_shape_the_review() {
         !out.contains("verdict: ai reviewer"),
         "ai is warn-weighted: {out}"
     );
+    let (_, out, _) = run(
+        &s,
+        &[
+            "aur",
+            "review",
+            "--json",
+            "--unattended",
+            "--no-diff",
+            "yay",
+        ],
+    );
+    let json: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert!(
+        json["notes"][0]
+            .as_str()
+            .is_some_and(|note| note.contains("ai reviewer opr-reviewer")),
+        "{json}"
+    );
 
     // With the feeds unreachable, `on` warns and continues; `required` fails.
     let conf = common::DEFAULT_CONF.replace(

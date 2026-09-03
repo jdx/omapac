@@ -441,6 +441,7 @@ impl RunWith<&App> for Review {
                 "version": reviewed.evidence.recipe.version,
                 "approved": reviewed.evidence.approved.as_ref().map(|a| a.commit.clone()),
                 "report": reviewed.report,
+                "notes": reviewed.notes,
                 "diff": if self.no_diff { None } else { Some(reviewed.review_text()?) },
             }))?;
             if denied {

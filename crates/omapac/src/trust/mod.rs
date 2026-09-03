@@ -194,11 +194,7 @@ pub fn fetch<T: serde::de::DeserializeOwned>(
             })
         }) {
             Ok(fetched) => return Ok(fetched),
-            Err(err)
-                if cached.is_some()
-                    && !err.to_string().contains("sequence is older")
-                    && !err.to_string().contains("different repository") =>
-            {
+            Err(err) if cached.is_some() && !err.to_string().contains("different repository") => {
                 eprintln!("warning: {name}: {err:#}; using the cached copy");
             }
             Err(err) => return Err(err.wrap_err(format!("fetching {name} from {}", source.base))),

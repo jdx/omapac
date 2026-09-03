@@ -106,7 +106,8 @@ fn verify_checks_the_cached_file_and_the_database_against_the_index() {
     );
     assert!(out.contains("database: matches the index"), "{out}");
 
-    // The sequence is now recorded; an older index is refused.
+    // The sequence is now recorded; an older network index is ignored in
+    // favor of the newer verified cache.
     let ledger = std::fs::read_to_string(s.rig.root.join("var/lib/omapac/state.json")).unwrap();
     assert!(
         ledger.contains("\"index_sequences\": {\n    \"omarchy\": 5"),
@@ -116,10 +117,11 @@ fn verify_checks_the_cached_file_and_the_database_against_the_index() {
         &s,
         &index(4, &db_sha, &yay_sha).replace("yay-13.0.1-1-x86_64.pkg.tar.zst", &filename),
     );
-    let (code, _, err) = run(&s, &older, &["verify", "yay"]);
-    assert_ne!(code, 0);
+    let (code, out, err) = run(&s, &older, &["verify", "yay"]);
+    assert_eq!(code, 0, "{err}\n{out}");
     assert!(
-        err.contains("sequence is older than the cached copy"),
+        err.contains("sequence is older than the cached copy")
+            && err.contains("using the cached copy"),
         "{err}"
     );
 
