@@ -96,6 +96,34 @@ fn apply_refuses_unavailable_then_installs_and_removes() {
 }
 
 #[test]
+fn apply_and_add_refuse_a_lone_unavailable_package() {
+    let rig = Rig::new();
+    std::fs::create_dir_all(rig.user_manifest().parent().unwrap()).unwrap();
+    std::fs::write(rig.user_manifest(), "[packages]\nnot-anywhere = {}\n").unwrap();
+
+    let (code, _, err) = rig.run(&["apply", "-y"], "", 0);
+    assert_ne!(code, 0);
+    assert!(err.contains("declared but in no repository: not-anywhere"), "{err}");
+
+    let rig = Rig::new();
+    let (code, _, err) = rig.run(&["add", "-y", "not-anywhere"], "", 0);
+    assert_ne!(code, 0);
+    assert!(err.contains("declared but in no repository: not-anywhere"), "{err}");
+}
+
+#[test]
+fn held_packages_are_ignored_by_the_install_transaction() {
+    let rig = Rig::new();
+    let (code, _, err) = rig.run(&["add", "-y", "--hold", "curl"], HELIX_PLAN, 0);
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        rig.log().last().unwrap().contains("--ignore curl"),
+        "{:?}",
+        rig.log()
+    );
+}
+
+#[test]
 fn add_writes_the_user_manifest_and_converges_only_those() {
     let rig = Rig::new();
     let (code, out, err) = rig.run(&["add", "-y", "core/pacman", "curl"], HELIX_PLAN, 0);
