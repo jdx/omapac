@@ -169,9 +169,11 @@ fn cut_test_promote_hold_prune() {
     assert_eq!(t.target("rc").as_deref(), Some("2026-09-01T06"));
     let (code, out, err) = t.run(
         "2026-09-02T08:00:00Z",
-        &["test", "--id", "2026-09-02T06", "--suite", "echo tested: hyprland; echo tested: omarchy; echo tested: hyprland; test \"$OMAPAC_SNAPSHOT_ID\" = 2026-09-02T06", "--commit", "abc", "--log-url", "https://ci/1"],
+        &["test", "--id", "2026-09-02T06", "--suite", "echo suite-log; echo suite-error >&2; echo tested: hyprland; echo tested: omarchy; echo tested: hyprland; test \"$OMAPAC_SNAPSHOT_ID\" = 2026-09-02T06", "--commit", "abc", "--log-url", "https://ci/1"],
     );
     assert_eq!(code, 0, "{err}");
+    assert!(out.contains("suite-log"), "{out}");
+    assert!(err.contains("suite-error"), "{err}");
     assert!(
         out.contains("tests pass, 2 tested pkgbase(s), rc -> 2026-09-02T06"),
         "{out}"
