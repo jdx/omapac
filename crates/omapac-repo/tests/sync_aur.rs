@@ -126,6 +126,19 @@ fn clean_bump_by_trusted_maintainer_auto_merges() {
     assert_eq!(code, 0, "{err}\n{out}");
     assert!(out.contains("unchanged    yay"), "{out}");
 
+    // State written before maintainer tracking was added must bootstrap the
+    // current maintainer rather than treating the first later bump as a takeover.
+    std::fs::write(
+        g.rig.path().join("state.json"),
+        serde_json::json!({"packages": {"yay": {
+            "commit": first,
+            "pkgver": "13.0.1-1",
+            "synced_at": "2026-01-01T00:00:00Z"
+        }}})
+        .to_string(),
+    )
+    .unwrap();
+
     g.aur.commit(
         "yay",
         &[
