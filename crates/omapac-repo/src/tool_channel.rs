@@ -111,6 +111,7 @@ impl RunWith<()> for ToolChannel {
             };
             crate::feed::secret_key(path)
         };
+        let mut loaded_key = None;
         match &self.command {
             ToolChannelCommands::Status(_) => {
                 if self.json {
@@ -136,11 +137,13 @@ impl RunWith<()> for ToolChannel {
                 return Ok(());
             }
             ToolChannelCommands::Publish(publish) => {
-                let key = key()?;
-                let Some(line) = publish_release(store, &mut index, publish, now, &key)? else {
+                let signing_key = key()?;
+                let line = publish_release(store, &mut index, publish, now, &signing_key)?;
+                let Some(line) = line else {
                     println!("tool channel already up to date");
                     return Ok(());
                 };
+                loaded_key = Some(signing_key);
                 println!("{line}");
             }
             ToolChannelCommands::Promote(promote) => {
@@ -170,7 +173,10 @@ impl RunWith<()> for ToolChannel {
                 println!("unheld {} {}", unhold.tool, unhold.version);
             }
         }
-        let key = key()?;
+        let key = match loaded_key {
+            Some(key) => key,
+            None => key()?,
+        };
         index.sequence += 1;
         index.generated_at = now.to_string();
         std::fs::create_dir_all(index_path.parent().unwrap_or(store))?;
