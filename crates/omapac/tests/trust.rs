@@ -338,7 +338,7 @@ fn verify_checks_the_provenance_sidecar_and_the_log_entry() {
         "{out}"
     );
     assert!(
-        out.contains("transparency: FAILED: entry is not about the provenance envelope"),
+        out.contains("transparency: FAILED: the provenance envelope did not verify"),
         "{out}"
     );
 }
