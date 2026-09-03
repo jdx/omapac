@@ -5,11 +5,11 @@
 use std::fmt::Write as _;
 use std::io::Write as _;
 
-use alpm_db::{Check, Trust};
+use alpm_db::Check;
 use eyre::{Result, bail};
 use serde::Serialize;
 
-use super::format_size;
+use super::{check_rank, format_size, trust_rank};
 use crate::engine::{ApplyOpts, Change, Engine, ResolvedTx};
 use crate::host::Host;
 use crate::resolve::Tier;
@@ -51,15 +51,6 @@ pub fn plan(host: &Host, resolved: &ResolvedTx, command: String) -> Plan {
         {
             let level = source.repo.sig_level;
             let floor = host.config.options.sig_level;
-            let check_rank = |check| match check {
-                Check::Never => 0,
-                Check::Optional => 1,
-                Check::Required => 2,
-            };
-            let trust_rank = |trust| match trust {
-                Trust::TrustAll => 0,
-                Trust::TrustedOnly => 1,
-            };
             let weak = check_rank(level.package()) < check_rank(floor.package())
                 || (floor.package() != Check::Never
                     && trust_rank(level.package_trust()) < trust_rank(floor.package_trust()));
