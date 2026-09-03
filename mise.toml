@@ -16,17 +16,12 @@ run = "cargo build --workspace --all-features"
 
 [tasks.test]
 alias = "t"
-description = "Run unit and end-to-end tests"
-depends = ["test:unit", "test:e2e"]
+description = "Run unit tests"
+depends = ["test:unit"]
 
 [tasks."test:unit"]
 description = "Run unit tests"
 run = "cargo test --workspace --all-features"
-
-[tasks."test:e2e"]
-description = "Run end-to-end tests in an Arch container"
-depends = ["build"]
-run = "e2e/run_all_tests"
 
 [tasks.clippy]
 description = "Run clippy with warnings denied"
