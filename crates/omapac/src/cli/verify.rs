@@ -467,6 +467,14 @@ impl RunWith<&App> for Verify {
                     "transparency: FAILED: {}",
                     t.error.as_deref().unwrap_or("unknown")
                 ),
+                None if self.offline
+                    && report
+                        .sidecars
+                        .iter()
+                        .any(|sidecar| sidecar == &format!("{}.rekor.json", report.filename)) =>
+                {
+                    println!("transparency: published, not checked offline")
+                }
                 None => {}
             }
         }
