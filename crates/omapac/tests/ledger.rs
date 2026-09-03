@@ -86,6 +86,19 @@ fn repeated_commands_repair_a_missing_ledger_write() {
         serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
     assert_eq!(state["packages"]["pacman"]["version"], "7.1.0-2");
 
+    let mut drifted = state;
+    drifted["packages"]["pacman"]["version"] = "7.0.0-1".into();
+    drifted["packages"]["pacman"]["by"] = "add".into();
+    drifted["packages"]["pacman"]["at"] = 123.into();
+    std::fs::write(&ledger, serde_json::to_vec(&drifted).unwrap()).unwrap();
+    let (code, _, err) = rig.run(&["install", "-y", "pacman"], "", 0);
+    assert_eq!(code, 0, "{err}");
+    let state: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+    assert_eq!(state["packages"]["pacman"]["version"], "7.0.0-1");
+    assert_eq!(state["packages"]["pacman"]["by"], "add");
+    assert_eq!(state["packages"]["pacman"]["at"], 123);
+
     rig.write_root(
         "/var/lib/omapac/state.json",
         r#"{"schema":1,"packages":{"curl":{"version":"8.16.0-1","tier":{"tier":"arch"},"repo":"core","explicit":true,"by":"install","at":1}}}"#,
@@ -122,6 +135,31 @@ fn repeated_commands_repair_a_missing_ledger_write() {
     let state: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
     assert_eq!(state["packages"]["pacman"]["by"], "add");
+
+    std::fs::remove_file(&ledger).unwrap();
+    std::fs::write(
+        rig.user_manifest(),
+        "[packages]\npacman = {}\ncurl = { state = \"absent\" }\n",
+    )
+    .unwrap();
+    let (code, _, err) = rig.run(&["apply", "-y"], "", 0);
+    assert_eq!(code, 0, "{err}");
+    assert!(ledger.is_file(), "present pacman repairs the ledger");
+    let before = std::fs::read_to_string(&ledger).unwrap();
+    let (code, _, err) = rig.run(&["apply", "-y"], "", 0);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(std::fs::read_to_string(&ledger).unwrap(), before);
+
+    rig.write_root(
+        "/var/lib/omapac/state.json",
+        r#"{"schema":1,"packages":{"curl":{"version":"8.16.0-1","tier":{"tier":"arch"},"repo":"core","explicit":true,"by":"add","at":1}}}"#,
+    );
+    std::fs::write(rig.user_manifest(), "[packages]\ncurl = {}\n").unwrap();
+    let (code, _, err) = rig.run(&["drop", "-y", "curl"], "", 0);
+    assert_eq!(code, 0, "{err}");
+    let state: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+    assert!(state["packages"]["curl"].is_null(), "{state}");
 }
 
 #[test]
