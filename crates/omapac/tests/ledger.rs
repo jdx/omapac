@@ -63,6 +63,19 @@ fn install_records_and_remove_forgets() {
 }
 
 #[test]
+fn as_deps_records_named_targets_as_dependencies() {
+    let rig = Rig::new();
+    let (code, _, err) = rig.run(&["install", "-y", "--as-deps", "curl"], CURL_PLAN, 0);
+    assert_eq!(code, 0, "{err}");
+    let state: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(rig.root.join("var/lib/omapac/state.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(state["packages"]["curl"]["explicit"], false);
+    assert_eq!(state["packages"]["libpsl"]["explicit"], false);
+}
+
+#[test]
 fn ledger_and_drift_views() {
     let rig = Rig::new();
     // Pretend omapac installed pacman at an older version than the fixture
