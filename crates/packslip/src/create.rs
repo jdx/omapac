@@ -62,50 +62,60 @@ pub type Platform = (
 /// Infer `(os, arch, libc, format)` from a release file name.
 pub fn infer_platform(name: &str) -> Platform {
     let lower = name.to_ascii_lowercase();
-    let os = if lower.contains("freebsd") {
-        Some("freebsd")
-    } else if lower.contains("windows")
-        || lower.contains("win64")
-        || lower.contains("win32")
-        || lower.ends_with(".exe")
-        || lower.ends_with(".msi")
+    let os = last_marker(
+        &lower,
+        &[
+            ("freebsd", "freebsd"),
+            ("windows", "windows"),
+            ("win64", "windows"),
+            ("win32", "windows"),
+            ("linux", "linux"),
+            ("darwin", "darwin"),
+            ("macos", "darwin"),
+            ("osx", "darwin"),
+            ("apple", "darwin"),
+        ],
+    )
+    .or_else(|| {
+        if lower.ends_with(".exe") || lower.ends_with(".msi") {
+            Some("windows")
+        } else if lower.ends_with(".deb") || lower.ends_with(".rpm") || lower.ends_with(".appimage")
+        {
+            Some("linux")
+        } else if lower.ends_with(".dmg") || lower.ends_with(".pkg") {
+            Some("darwin")
+        } else {
+            None
+        }
+    });
+    let arch = last_marker(
+        &lower,
+        &[
+            ("x86_64", "x86_64"),
+            ("x86-64", "x86_64"),
+            ("x64", "x86_64"),
+            ("amd64", "x86_64"),
+            ("aarch64", "aarch64"),
+            ("arm64", "aarch64"),
+            ("armv7l", "armv7"),
+            ("armv7", "armv7"),
+            ("armhf", "armv7"),
+            ("riscv64", "riscv64"),
+            ("i386", "i686"),
+            ("i686", "i686"),
+            ("x86", "i686"),
+        ],
+    );
+    let libc = if last_marker(
+        &lower,
+        &[
+            ("musleabihf", "musl"),
+            ("musleabi", "musl"),
+            ("musl", "musl"),
+        ],
+    )
+    .is_some()
     {
-        Some("windows")
-    } else if lower.contains("linux")
-        || lower.ends_with(".deb")
-        || lower.ends_with(".rpm")
-        || lower.ends_with(".appimage")
-    {
-        Some("linux")
-    } else if lower.contains("darwin")
-        || lower.contains("macos")
-        || lower.contains("osx")
-        || lower.contains("apple")
-        || lower.ends_with(".dmg")
-        || lower.ends_with(".pkg")
-    {
-        Some("darwin")
-    } else {
-        None
-    };
-    let arch = if lower.contains("x86_64")
-        || lower.contains("x86-64")
-        || lower.contains("x64")
-        || lower.contains("amd64")
-    {
-        Some("x86_64")
-    } else if lower.contains("aarch64") || lower.contains("arm64") {
-        Some("aarch64")
-    } else if lower.contains("armv7") || lower.contains("armhf") {
-        Some("armv7")
-    } else if lower.contains("riscv64") {
-        Some("riscv64")
-    } else if lower.contains("i386") || lower.contains("i686") || lower.contains("x86") {
-        Some("i686")
-    } else {
-        None
-    };
-    let libc = if lower.contains("musl") {
         Some("musl")
     } else if os == Some("linux") {
         Some("gnu")
@@ -119,6 +129,25 @@ pub fn infer_platform(name: &str) -> Platform {
     .into_iter()
     .find(|ext| lower.ends_with(&format!(".{}", ext.to_ascii_lowercase())));
     (os, arch, libc, format)
+}
+
+fn last_marker<'a>(name: &str, markers: &[(&str, &'a str)]) -> Option<&'a str> {
+    markers
+        .iter()
+        .flat_map(|(marker, value)| {
+            name.match_indices(marker)
+                .filter(move |(at, _)| marker_boundaries(name, *at, marker.len()))
+                .map(move |(at, _)| (at, marker.len(), *value))
+        })
+        .max_by_key(|(at, length, _)| (*at, *length))
+        .map(|(_, _, value)| value)
+}
+
+fn marker_boundaries(name: &str, at: usize, length: usize) -> bool {
+    let before = name[..at].bytes().next_back();
+    let after = name[at + length..].bytes().next();
+    before.is_none_or(|byte| !byte.is_ascii_alphanumeric())
+        && after.is_none_or(|byte| !byte.is_ascii_alphanumeric())
 }
 
 fn canonical_os(value: &str) -> String {
@@ -282,6 +311,18 @@ mod tests {
         assert_eq!(
             infer_platform("pineapple-windows-x64.exe"),
             (Some("windows"), Some("x86_64"), None, Some("exe"))
+        );
+        assert_eq!(
+            infer_platform("linux-helper-v1.0-darwin-arm64.tar.gz"),
+            (Some("darwin"), Some("aarch64"), None, Some("tar.gz"))
+        );
+        assert_eq!(
+            infer_platform("x64proxy-v1.0-linux-arm64.tar.gz"),
+            (Some("linux"), Some("aarch64"), Some("gnu"), Some("tar.gz"))
+        );
+        assert_eq!(
+            infer_platform("tool-linux-armv7l-musleabihf.tar.gz"),
+            (Some("linux"), Some("armv7"), Some("musl"), Some("tar.gz"))
         );
     }
 
