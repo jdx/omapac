@@ -160,6 +160,21 @@ fn pin_writes_the_mirrorlist_and_unpin_restores_it() {
 }
 
 #[test]
+fn offline_pin_uses_the_cached_snapshot_manifest() {
+    let s = setup();
+    let (code, _, err) = run(&s, &["channel", "pin", "2026-09-01T06"], "");
+    assert_eq!(code, 0, "{err}");
+    let (code, _, err) = run(&s, &["channel", "unpin"], "");
+    assert_eq!(code, 0, "{err}");
+    s.rig.write_root(
+        "/etc/omapac/conf.d/10-omarchy.toml",
+        "[channel]\nsnapshot_base = \"http://127.0.0.1:9/snapshots\"\n",
+    );
+    let (code, _, err) = run(&s, &["channel", "--offline", "pin", "2026-09-01T06"], "");
+    assert_eq!(code, 0, "cached offline pin failed: {err}");
+}
+
+#[test]
 fn rollback_pins_refreshes_and_syncs_with_downgrades() {
     let s = setup();
     let plan = "pacman\\t7.0.0-1\\tcore\\thttps://m/pacman.pkg\\t1000\\n";
@@ -180,6 +195,17 @@ fn rollback_pins_refreshes_and_syncs_with_downgrades() {
     assert!(apply.contains("OMARCHY_UPDATE_PACMAN=1"), "{apply}");
     let ledger = std::fs::read_to_string(s.rig.root.join("var/lib/omapac/state.json")).unwrap();
     assert!(ledger.contains("\"by\": \"rollback\""), "{ledger}");
+}
+
+#[test]
+fn rollback_dry_run_prints_the_downgrade_plan_and_command() {
+    let s = setup();
+    let plan = "pacman\\t7.0.0-1\\tcore\\thttps://m/pacman.pkg\\t1000\\n";
+    let (code, out, err) = run(&s, &["rollback", "--snapshot", "2026-09-01T06", "-n"], plan);
+    assert_eq!(code, 0, "{err}\n{out}");
+    assert!(out.contains("roll back 1 package(s)"), "{out}");
+    assert!(out.contains("would run:") && out.contains("-Suu"), "{out}");
+    assert!(s.rig.log().iter().all(|line| line.contains("--print")));
 }
 
 #[test]

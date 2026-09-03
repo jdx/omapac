@@ -229,7 +229,7 @@ impl RunWith<&App> for Update {
             {
                 let release = match crate::channel::current_pin(&app.mirrorlist_path()) {
                     Some(id) => match settings.channel_snapshot_base.as_deref() {
-                        Some(base) => app.snapshot_release(base, &id).map(Some),
+                        Some(base) => app.snapshot_release(base, &id, false).map(Some),
                         None => Err(eyre::eyre!(
                             "mirrorlist is pinned to {id}, but channel.snapshot_base is not configured"
                         )),
