@@ -140,6 +140,28 @@ fn verify_checks_the_cached_file_and_the_database_against_the_index() {
 }
 
 #[test]
+fn verified_network_feed_survives_an_unwritable_cache() {
+    let s = setup();
+    let filename = yay_filename(&s);
+    let package_cache = s.rig.root.join("var/cache/pacman/pkg");
+    std::fs::create_dir_all(&package_cache).unwrap();
+    std::fs::write(package_cache.join(&filename), b"fake pkg!").unwrap();
+    let (yay_sha, _) = packslip::digest_file(&package_cache.join(&filename)).unwrap();
+    let (db_sha, _) =
+        packslip::digest_file(&s.rig.root.join("var/lib/pacman/sync/omarchy.db")).unwrap();
+    let body = index(1, &db_sha, &yay_sha).replace("yay-13.0.1-1-x86_64.pkg.tar.zst", &filename);
+    let base = serve(&s, &body);
+
+    // A file at XDG_CACHE_HOME makes cache directory creation fail. The
+    // already verified network response remains usable for this invocation.
+    std::fs::write(s.rig.dir.path().join("cache"), b"not a directory").unwrap();
+    let (code, out, err) = run(&s, &base, &["verify", "yay"]);
+    assert_eq!(code, 0, "{err}\n{out}");
+    assert!(err.contains("verified feed could not be cached"), "{err}");
+    assert!(out.contains("index sequence 1"), "{out}");
+}
+
+#[test]
 fn bad_signatures_and_missing_keys_are_refused() {
     let s = setup();
     let filename = yay_filename(&s);
