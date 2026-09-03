@@ -834,11 +834,13 @@ stays manageable; the first group is layers 1 through 6, a working pacman fronte
 25. Documentation: specs, adoption guides, rendered CLI docs.
 
 Status, 2026-09-03: all 25 layers are open as one stack of pull requests, each
-citing its layer. Follow-ups noted in the pull requests: feeding the index's
-`published_at` into release-age floors, verifying sigstore-scheme sidecars, AUR
-dependency recursion, an omapac-level update lock, Merkle inclusion-proof
-verification for transparency log entries, native tool-channel support in mise, and
-the Arch-container end-to-end suite.
+citing its layer, followed by pull requests closing the follow-ups the layers noted:
+release-age floors from the index's `published_at`, one update at a time, AUR
+dependency recursion, tested and snapshot labels in `info` and `update`, Merkle
+inclusion-proof and checkpoint verification for transparency log entries, client
+verification of the provenance and log-entry sidecars, and the Arch-container
+end-to-end suite. Still open: verifying sigstore-scheme sidecars, and native
+tool-channel support in mise, which is a mise change.
 
 ## Verification
 
