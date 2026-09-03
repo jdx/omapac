@@ -453,6 +453,7 @@ fn pkgbase_of(pkgbuild: &str) -> Option<String> {
 /// matched per architecture (`sha256sums_x86_64=(...)`) with a plain
 /// `sha256sums=(...)` used when only one architecture is configured.
 pub fn rewrite_pkgbuild(pkgbuild: &str, report: &Report) -> Result<String> {
+    validate_pkgver(&report.version)?;
     let mut out = String::with_capacity(pkgbuild.len());
     let mut lines = pkgbuild.lines().peekable();
     let mut replaced_sums = Vec::new();
@@ -515,6 +516,18 @@ pub fn rewrite_pkgbuild(pkgbuild: &str, report: &Report) -> Result<String> {
     Ok(out)
 }
 
+fn validate_pkgver(version: &str) -> Result<()> {
+    if version.is_empty()
+        || version.starts_with('.')
+        || !version
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'+'))
+    {
+        bail!("release version {version:?} is not a safe Arch pkgver");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -557,6 +570,26 @@ mod tests {
         let out = rewrite_pkgbuild(plain, &report(&[("x86_64", "cc")])).unwrap();
         assert!(out.contains("sha256sums=('cc')"), "{out}");
         assert!(rewrite_pkgbuild("pkgver=1\n", &report(&[("x86_64", "cc")])).is_err());
+    }
+
+    #[test]
+    fn rejects_unsafe_pkgver() {
+        let pkgbuild = "pkgver=1\npkgrel=1\nsha256sums=('old')\n";
+        for version in [
+            "",
+            ".1",
+            "1-rc1",
+            "1\nprepare() { :; }",
+            "$(touch /tmp/pwn)",
+            "1;false",
+        ] {
+            let mut report = report(&[("x86_64", "cc")]);
+            report.version = version.into();
+            assert!(rewrite_pkgbuild(pkgbuild, &report).is_err(), "{version:?}");
+        }
+        let mut report = report(&[("x86_64", "cc")]);
+        report.version = "v2.0_rc1+build.4".into();
+        rewrite_pkgbuild(pkgbuild, &report).unwrap();
     }
 
     #[test]
