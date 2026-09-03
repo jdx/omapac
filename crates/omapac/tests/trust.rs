@@ -117,6 +117,15 @@ fn verify_checks_the_cached_file_and_the_database_against_the_index() {
         ledger.contains("\"index_sequences\": {\n    \"omarchy\": 5"),
         "{ledger}"
     );
+    // A verified cache hit repairs a missing sequence record too.
+    std::fs::remove_file(s.rig.root.join("var/lib/omapac/state.json")).unwrap();
+    let (code, _, err) = run(&s, "http://127.0.0.1:9", &["verify", "--offline", "yay"]);
+    assert_eq!(code, 0, "{err}");
+    let ledger = std::fs::read_to_string(s.rig.root.join("var/lib/omapac/state.json")).unwrap();
+    assert!(
+        ledger.contains("\"index_sequences\": {\n    \"omarchy\": 5"),
+        "{ledger}"
+    );
     let older = serve(
         &s,
         &index(4, &db_sha, &yay_sha).replace("yay-13.0.1-1-x86_64.pkg.tar.zst", &filename),
