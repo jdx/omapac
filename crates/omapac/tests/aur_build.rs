@@ -28,6 +28,15 @@ fn setup() -> Setup {
     let mut perms = std::fs::metadata(&makepkg).unwrap().permissions();
     std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
     std::fs::set_permissions(&makepkg, perms).unwrap();
+    let bsdtar = rig.bin.join("bsdtar");
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fakes/bsdtar"),
+        &bsdtar,
+    )
+    .unwrap();
+    let mut perms = std::fs::metadata(&bsdtar).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+    std::fs::set_permissions(&bsdtar, perms).unwrap();
     let aur = FakeAur::new(rig.dir.path());
     aur.create(
         "yay",
