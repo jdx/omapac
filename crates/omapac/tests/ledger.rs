@@ -104,6 +104,24 @@ fn repeated_commands_repair_a_missing_ledger_write() {
     let state: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
     assert_eq!(state["packages"]["pacman"]["by"], "apply");
+
+    let mut preserved = state;
+    preserved["packages"]["pacman"]["by"] = "install".into();
+    preserved["packages"]["pacman"]["at"] = 123.into();
+    std::fs::write(&ledger, serde_json::to_vec(&preserved).unwrap()).unwrap();
+    let (code, _, err) = rig.run(&["apply", "-y"], "", 0);
+    assert_eq!(code, 0, "{err}");
+    let state: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+    assert_eq!(state["packages"]["pacman"]["by"], "install");
+    assert_eq!(state["packages"]["pacman"]["at"], 123);
+
+    std::fs::remove_file(&ledger).unwrap();
+    let (code, _, err) = rig.run(&["add", "-y", "pacman"], "", 0);
+    assert_eq!(code, 0, "{err}");
+    let state: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+    assert_eq!(state["packages"]["pacman"]["by"], "add");
 }
 
 #[test]

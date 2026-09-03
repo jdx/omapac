@@ -105,10 +105,15 @@ impl Diff {
 
     /// Repair ledger state for declarations the machine already satisfies.
     pub fn record_noops(&self, app: &super::App, host: &Host, by: &str) -> Result<()> {
+        let ledger = app.ledger()?;
         let present: Vec<String> = self
             .steps
             .iter()
-            .filter(|step| step.action == Action::Noop && step.state == State::Present)
+            .filter(|step| {
+                step.action == Action::Noop
+                    && step.state == State::Present
+                    && !ledger.packages.contains_key(&step.name)
+            })
             .map(|step| step.name.clone())
             .collect();
         let mut patch = transaction::ledger_patch_for_installed(host, &present, true, by)?;
