@@ -181,20 +181,32 @@ fn cut_test_promote_hold_prune() {
     assert_eq!(r2.tests.as_ref().unwrap().commit.as_deref(), Some("abc"));
     assert!(r2.is_tested("omarchy"));
 
+    // A failed re-test removes a snapshot from rc, and a later pass can
+    // promote it again.
+    let (code, _, _) = t.run(
+        "2026-09-02T09:00:00Z",
+        &["test", "--id", "2026-09-02T06", "--suite", "exit 1"],
+    );
+    assert_ne!(code, 0);
+    assert_eq!(t.target("rc").as_deref(), Some("2026-09-01T06"));
+    let (code, _, err) = t.run(
+        "2026-09-02T10:00:00Z",
+        &["test", "--id", "2026-09-02T06", "--suite", "true"],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(t.target("rc").as_deref(), Some("2026-09-02T06"));
+
     // Stable needs the soak.
     let (code, _, err) = t.run("2026-09-03T08:00:00Z", &["promote", "--channel", "stable"]);
     assert_ne!(code, 0);
-    assert!(
-        err.contains("has soaked 1d0h of 3d; not promoting"),
-        "{err}"
-    );
+    assert!(err.contains("has soaked 22h of 3d; not promoting"), "{err}");
     assert!(t.target("stable").is_none());
-    let (code, out, err) = t.run("2026-09-05T09:00:00Z", &["promote", "--channel", "stable"]);
+    let (code, out, err) = t.run("2026-09-05T10:00:00Z", &["promote", "--channel", "stable"]);
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("stable -> 2026-09-02T06"), "{out}");
     assert_eq!(
         t.release("2026-09-02T06").promoted.stable.as_deref(),
-        Some("2026-09-05T09:00:00Z")
+        Some("2026-09-05T10:00:00Z")
     );
     let (code, out, _) = t.run("2026-09-05T10:00:00Z", &["promote", "--channel", "stable"]);
     assert_eq!(code, 0);
@@ -259,10 +271,7 @@ fn cut_test_promote_hold_prune() {
     assert_eq!(status["channels"]["stable"], "2026-09-01T06");
     assert_eq!(status["snapshots"][0]["id"], "2026-09-02T06");
     assert_eq!(status["snapshots"][0]["held"], "hyprland regression #42");
-    assert_eq!(
-        status["snapshots"][0]["tests"],
-        "echo tested: hyprland; echo tested: omarchy; echo tested: hyprland; test \"$OMAPAC_SNAPSHOT_ID\" = 2026-09-02T06:pass"
-    );
+    assert_eq!(status["snapshots"][0]["tests"], "true:pass");
     let (_, out, _) = t.run("2026-09-06T02:00:00Z", &["status"]);
     assert!(out.contains("stable  -> 2026-09-01T06"), "{out}");
     assert!(out.contains("HELD: hyprland regression #42"), "{out}");
