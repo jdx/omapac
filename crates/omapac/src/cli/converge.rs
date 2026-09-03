@@ -38,6 +38,15 @@ pub struct Step {
     pub declared_in: String,
 }
 
+/// How to run a convergence.
+#[derive(Debug, Clone, Copy)]
+pub struct RunOpts<'a> {
+    /// Which command is recording, for the ledger.
+    pub by: &'a str,
+    pub yes: bool,
+    pub dry_run: bool,
+}
+
 /// The difference between the manifest and the machine.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Diff {
@@ -160,12 +169,13 @@ impl Diff {
     /// transaction, each shown and confirmed like `install` and `remove`.
     pub fn apply(
         &self,
+        app: &super::App,
         host: &Host,
         manifest: &Manifest,
         engine: &crate::engine::pacman::PacmanCli,
-        yes: bool,
-        dry_run: bool,
+        opts: RunOpts<'_>,
     ) -> Result<()> {
+        let RunOpts { by, yes, dry_run } = opts;
         let unavailable: Vec<&str> = self
             .steps
             .iter()
@@ -177,6 +187,7 @@ impl Diff {
         }
         let installs = self.installs();
         if !installs.is_empty() {
+            let targets: Vec<String> = installs.iter().map(|t| t.name.clone()).collect();
             let mut tx = Transaction::install(installs)
                 .ignoring(
                     manifest.settings.update_ignore.iter().cloned().chain(
@@ -189,7 +200,9 @@ impl Diff {
                 .overwriting(manifest.settings.update_overwrite.iter().cloned());
             tx.ignore_group
                 .extend(manifest.settings.update_ignore_group.iter().cloned());
-            run(host, engine, tx, "install", yes, dry_run)?;
+            if let Some(plan) = run(host, engine, tx, "install", yes, dry_run)? {
+                app.record(&transaction::ledger_patch(&plan, &targets, by, false))?;
+            }
         }
         let removes = self.removes();
         if !removes.is_empty() {
@@ -197,7 +210,9 @@ impl Diff {
             if let Operation::Remove { recursive, .. } = &mut tx.operation {
                 *recursive = false;
             }
-            run(host, engine, tx, "remove", yes, dry_run)?;
+            if let Some(plan) = run(host, engine, tx, "remove", yes, dry_run)? {
+                app.record(&transaction::ledger_patch(&plan, &[], by, true))?;
+            }
         }
         let aur: Vec<&str> = self
             .steps
@@ -222,7 +237,7 @@ fn run(
     verb: &str,
     yes: bool,
     dry_run: bool,
-) -> Result<()> {
+) -> Result<Option<transaction::Plan>> {
     let resolved = engine.plan(&tx)?;
     let mut plan = transaction::plan(
         host,
@@ -246,5 +261,6 @@ fn run(
             },
         )
         .display();
-    transaction::confirm_and_apply(engine, &resolved, &plan, verb, yes, dry_run)
+    let performed = transaction::confirm_and_apply(engine, &resolved, &plan, verb, yes, dry_run)?;
+    Ok(performed.then_some(plan))
 }

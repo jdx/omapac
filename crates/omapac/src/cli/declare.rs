@@ -5,7 +5,7 @@ use std::io::Write as _;
 use eyre::{Result, bail};
 use usage_rs::RunWith;
 
-use super::converge::{Action, Diff};
+use super::converge::{Action, Diff, RunOpts};
 use super::{App, print_json};
 use crate::engine::Engine;
 use crate::manifest::{Manifest, ManifestPaths, PackageToml, Source, State, edit};
@@ -83,7 +83,17 @@ impl RunWith<&App> for Apply {
             return Ok(());
         }
         let engine = app.engine()?;
-        diff.apply(&host, &manifest, &engine, self.yes, self.dry_run)
+        diff.apply(
+            app,
+            &host,
+            &manifest,
+            &engine,
+            RunOpts {
+                by: "apply",
+                yes: self.yes,
+                dry_run: self.dry_run,
+            },
+        )
     }
 }
 
@@ -206,10 +216,23 @@ impl RunWith<&App> for Add {
             let diff = Diff::compute(&host, &manifest)?.restricted_to(&names);
             if !diff.has_changes() {
                 print!("{}", diff.render());
+                if !self.dry_run {
+                    diff.record_noops(app, &host, "add")?;
+                }
                 return Ok(());
             }
             let engine = app.engine()?;
-            diff.apply(&host, &manifest, &engine, self.yes, self.dry_run)
+            diff.apply(
+                app,
+                &host,
+                &manifest,
+                &engine,
+                RunOpts {
+                    by: "add",
+                    yes: self.yes,
+                    dry_run: self.dry_run,
+                },
+            )
         })();
         if let Err(err) = result {
             let restore = match previous {
@@ -323,13 +346,17 @@ impl RunWith<&App> for Drop {
                 },
             )
             .display();
-        super::transaction::confirm_and_apply(
+        let performed = super::transaction::confirm_and_apply(
             &engine,
             &resolved,
             &plan,
             "remove",
             self.yes,
             self.dry_run,
-        )
+        )?;
+        if performed {
+            app.record(&super::transaction::ledger_patch(&plan, &[], "drop", true))?;
+        }
+        Ok(())
     }
 }

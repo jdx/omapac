@@ -12,6 +12,7 @@ mod declare;
 mod doctor;
 mod info;
 mod install;
+mod ledger_cmd;
 mod list;
 mod present;
 mod remove;
@@ -72,6 +73,8 @@ enum Commands {
     Drop(declare::Drop),
     Info(info::Info),
     Install(install::Install),
+    #[usage(name = "__ledger", hide)]
+    LedgerMerge(ledger_cmd::LedgerMerge),
     List(list::List),
     Missing(present::Missing),
     Plan(declare::Plan),

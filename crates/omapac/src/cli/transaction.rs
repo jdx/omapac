@@ -12,6 +12,7 @@ use serde::Serialize;
 use super::{check_rank, format_size, trust_rank};
 use crate::engine::{ApplyOpts, Change, Engine, ResolvedTx};
 use crate::host::Host;
+use crate::ledger::{Entry, Patch};
 use crate::resolve::Tier;
 use crate::ui;
 
@@ -176,15 +177,15 @@ pub fn confirm_and_apply(
     verb: &str,
     yes: bool,
     dry_run: bool,
-) -> Result<()> {
+) -> Result<bool> {
     print!("{}", render(verb, plan));
     std::io::stdout().flush()?;
     if plan.changes.is_empty() {
-        return Ok(());
+        return Ok(false);
     }
     if dry_run {
         println!("would run: {}", plan.command);
-        return Ok(());
+        return Ok(false);
     }
     if yes {
         if !plan.warnings.is_empty() {
@@ -206,7 +207,33 @@ pub fn confirm_and_apply(
             no_confirm: apply_no_confirm(plan, yes),
         },
     )?;
-    Ok(())
+    Ok(true)
+}
+
+/// The ledger patch for a plan that was performed: every installed change
+/// is recorded, explicit when it was a target, and every removal dropped.
+pub fn ledger_patch(plan: &Plan, targets: &[String], by: &str, removing: bool) -> Patch {
+    let mut patch = Patch::default();
+    if removing {
+        patch.remove = plan.changes.iter().map(|c| c.name.clone()).collect();
+        return patch;
+    }
+    let at = crate::ledger::now();
+    for change in &plan.changes {
+        patch.upsert.insert(
+            change.name.clone(),
+            Entry {
+                version: change.version.clone(),
+                tier: change.tier.clone(),
+                repo: change.repo.clone(),
+                aur_commit: None,
+                explicit: targets.iter().any(|t| t == &change.name),
+                by: by.to_string(),
+                at,
+            },
+        );
+    }
+    patch
 }
 
 /// Whether the eventual pacman command may suppress prompts. Interactive
