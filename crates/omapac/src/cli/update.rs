@@ -358,7 +358,7 @@ fn update_aur_package(app: &App, name: &str, yes: bool) -> Result<AurOutcome> {
     {
         return Ok(AurOutcome::Skipped("not approved".to_string()));
     }
-    let prepared = app.prepare_aur(name, None, true, yes)?;
+    let prepared = app.prepare_aur(name, Some(&reviewed.target), true, yes)?;
     let files = app.build_aur(&prepared, yes)?;
     let built = crate::aur::build::built_packages(&files)?;
     let engine = app.engine()?;
