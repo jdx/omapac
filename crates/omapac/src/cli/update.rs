@@ -57,7 +57,6 @@ impl RunWith<&App> for Update {
     fn run_with(self, app: &App) -> Self::Output {
         let manifest = app.manifest()?;
         let settings = &manifest.settings;
-        let unattended = self.yes || !crate::ui::interactive();
         let dry_run = self.dry_run || self.json;
         let engine = app.engine()?;
 
@@ -221,7 +220,7 @@ impl RunWith<&App> for Update {
         // AUR upgrades, one at a time.
         let mut skipped = Vec::new();
         for candidate in &aur {
-            match update_aur_package(app, &candidate.name, unattended)? {
+            match update_aur_package(app, &candidate.name, self.yes)? {
                 AurOutcome::Updated(commit) => {
                     println!(
                         "updated {} to {} from AUR commit {}",
@@ -292,16 +291,16 @@ enum AurOutcome {
     Skipped(String),
 }
 
-/// Review the package at its current commit; unattended, a denial skips
-/// it and a clean report approves it; interactive, the user decides.
-fn update_aur_package(app: &App, name: &str, unattended: bool) -> Result<AurOutcome> {
-    let (reviewed, mut lock) = app.review_aur(name, None, !unattended)?;
+/// Review the package at its current commit. With explicit `-y`, a denial
+/// skips it and a clean report approves it; otherwise the user decides.
+fn update_aur_package(app: &App, name: &str, yes: bool) -> Result<AurOutcome> {
+    let (reviewed, mut lock) = app.review_aur(name, None, !yes && crate::ui::interactive())?;
     let approved_here = lock
         .aur
         .get(name)
         .is_some_and(|e| e.commit == reviewed.target);
     if !approved_here {
-        if unattended {
+        if yes {
             if reviewed.report.denied() {
                 let reasons: Vec<String> = reviewed
                     .report
@@ -326,6 +325,13 @@ fn update_aur_package(app: &App, name: &str, unattended: bool) -> Result<AurOutc
         }
         lock.aur.insert(name.to_string(), reviewed.lock_entry());
         lock.save(&app.lockfile_path())?;
+    } else if !yes
+        && !crate::ui::confirm(
+            &format!("Update {name} to {}?", reviewed.evidence.recipe.version),
+            true,
+        )?
+    {
+        return Ok(AurOutcome::Skipped("not approved".to_string()));
     }
     let prepared = app.prepare_aur(name, None, true, true)?;
     let files = app.build_aur(&prepared, true)?;

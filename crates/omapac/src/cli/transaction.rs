@@ -195,10 +195,17 @@ pub fn confirm_and_apply(
         return Ok(false);
     }
     if yes {
-        if !plan.warnings.is_empty() {
+        let blocking = plan
+            .warnings
+            .iter()
+            .filter(|warning| {
+                verb != "upgrade" || !warning.contains("is outside Arch and Omarchy review")
+            })
+            .count();
+        if blocking != 0 {
             bail!(
                 "refusing to {verb} unattended with {} warning(s); run interactively to decide",
-                plan.warnings.len()
+                blocking
             );
         }
     } else {
