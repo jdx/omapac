@@ -188,8 +188,11 @@ pub fn confirm_and_apply(
                 plan.warnings.len()
             );
         }
-    } else if !ui::confirm("Proceed?", true)? {
-        bail!("cancelled");
+    } else {
+        println!("run: {}", plan.command);
+        if !ui::confirm("Proceed?", true)? {
+            bail!("cancelled");
+        }
     }
     engine.apply(
         resolved,
