@@ -12,7 +12,12 @@ const CURL_PLAN: &str = "curl\\t8.16.0-1\\tcore\\thttps://m/core/os/x86_64/curl-
 fn install_records_and_remove_forgets() {
     let rig = Rig::new();
     let ledger = rig.root.join("var/lib/omapac/state.json");
-    let (code, _, err) = rig.run(&["install", "-y", "curl"], CURL_PLAN, 0);
+    rig.write_root(
+        "/var/lib/omapac/state.json",
+        r#"{"schema":1,"packages":{"oldcurl":{"version":"1","tier":{"tier":"arch"},"repo":"core","explicit":true,"by":"install","at":1}}}"#,
+    );
+    let replace_plan = format!("{CURL_PLAN}oldcurl\t1\tlocal\toldcurl\t(null)\n");
+    let (code, _, err) = rig.run(&["install", "-y", "curl"], &replace_plan, 0);
     assert_eq!(code, 0, "{err}");
     let state: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
@@ -21,6 +26,10 @@ fn install_records_and_remove_forgets() {
     assert_eq!(state["packages"]["curl"]["by"], "install");
     assert_eq!(state["packages"]["curl"]["tier"]["tier"], "arch");
     assert_eq!(state["packages"]["libpsl"]["explicit"], false);
+    assert!(
+        state["packages"]["oldcurl"].is_null(),
+        "install-time replacements are removed from the ledger: {state}"
+    );
 
     // Dry runs and refused plans record nothing.
     let before = std::fs::read_to_string(&ledger).unwrap();

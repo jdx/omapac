@@ -22,6 +22,8 @@ pub struct TieredChange {
     pub name: String,
     pub version: String,
     pub repo: Option<String>,
+    /// Pacman reports packages removed by this transaction from `local`.
+    pub removal: bool,
     pub tier: Tier,
     pub download_size: Option<u64>,
 }
@@ -108,6 +110,7 @@ pub fn plan(host: &Host, resolved: &ResolvedTx, command: String) -> Plan {
 }
 
 fn tiered(host: &Host, change: &Change) -> TieredChange {
+    let removal = change.repo.as_deref() == Some("local");
     let tier = match change.repo.as_deref() {
         Some("local") | None => host
             .find_sync(&change.name)
@@ -121,6 +124,7 @@ fn tiered(host: &Host, change: &Change) -> TieredChange {
         name: change.name.clone(),
         version: change.version.clone(),
         repo: change.repo.clone().filter(|r| r != "local"),
+        removal,
         tier,
         download_size: change.download_size,
     }
@@ -214,12 +218,12 @@ pub fn confirm_and_apply(
 /// is recorded, explicit when it was a target, and every removal dropped.
 pub fn ledger_patch(plan: &Plan, targets: &[String], by: &str, removing: bool) -> Patch {
     let mut patch = Patch::default();
-    if removing {
-        patch.remove = plan.changes.iter().map(|c| c.name.clone()).collect();
-        return patch;
-    }
     let at = crate::ledger::now();
     for change in &plan.changes {
+        if removing || change.removal {
+            patch.remove.push(change.name.clone());
+            continue;
+        }
         patch.upsert.insert(
             change.name.clone(),
             Entry {
