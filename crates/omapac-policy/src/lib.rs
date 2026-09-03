@@ -405,7 +405,9 @@ pub fn evaluate(evidence: &Evidence, policy: &Policy) -> Report {
 }
 
 fn short(hash: &str) -> &str {
-    &hash[..hash.len().min(12)]
+    hash.char_indices()
+        .nth(12)
+        .map_or(hash, |(boundary, _)| &hash[..boundary])
 }
 
 fn days(secs: i64) -> String {
@@ -709,5 +711,11 @@ mod tests {
         assert_eq!(json["findings"][0]["id"], "checksum-skip");
         assert_eq!(json["findings"][0]["decision"], "deny");
         assert_eq!(json["mode"], "unattended");
+    }
+
+    #[test]
+    fn short_hashes_respect_utf8_boundaries() {
+        assert_eq!(short("0123456789éérest"), "0123456789éé");
+        assert_eq!(short("短い"), "短い");
     }
 }
