@@ -598,7 +598,15 @@ impl Loader for MemoryLoader {
         let matches: Vec<PathBuf> = self
             .files
             .keys()
-            .filter(|path| matcher.matches_path(path))
+            .filter(|path| {
+                matcher.matches_path_with(
+                    path,
+                    glob::MatchOptions {
+                        require_literal_separator: true,
+                        ..glob::MatchOptions::new()
+                    },
+                )
+            })
             .cloned()
             .collect();
         if matches.is_empty() {
@@ -686,7 +694,7 @@ impl Parser<'_> {
             };
             if trimmed.starts_with('[') && trimmed.ends_with(']') {
                 let name = &trimmed[1..trimmed.len() - 1];
-                self.open_section(name, at());
+                self.open_section(name, at())?;
                 continue;
             }
             let (key, value) = match trimmed.split_once('=') {
@@ -698,10 +706,16 @@ impl Parser<'_> {
         Ok(())
     }
 
-    fn open_section(&mut self, name: &str, at: Location) {
+    fn open_section(&mut self, name: &str, at: Location) -> Result<(), Error> {
         if name == "options" {
             self.section = Some(Section::Options);
         } else {
+            if self.config.repos.iter().any(|repo| repo.name == name) {
+                return Err(Error::Syntax {
+                    at,
+                    message: format!("repository '{name}' is already defined."),
+                });
+            }
             self.config.repos.push(Repo {
                 name: name.to_string(),
                 servers: Vec::new(),
@@ -714,6 +728,7 @@ impl Parser<'_> {
             self.repo_masks.push(0);
             self.section = Some(Section::Repo(self.config.repos.len() - 1));
         }
+        Ok(())
     }
 
     fn directive(&mut self, key: &str, value: Option<&str>, at: Location) -> Result<(), Error> {
@@ -1052,6 +1067,39 @@ mod tests {
         assert_eq!(
             config.repo("extra").unwrap().servers,
             ["https://a/extra/os/x86_64"]
+        );
+    }
+
+    #[test]
+    fn memory_include_globs_do_not_cross_directories() {
+        let loader = MemoryLoader::default()
+            .with(
+                "/pacman.conf",
+                "[options]\nArchitecture = x86_64\n[core]\nInclude = /mirrors/*.list\n",
+            )
+            .with("/mirrors/a.list", "Server = https://a/$repo/$arch\n")
+            .with(
+                "/mirrors/nested/b.list",
+                "Server = https://nested/$repo/$arch\n",
+            );
+        let config = Config::load_with(Path::new("/pacman.conf"), &loader).unwrap();
+        assert_eq!(
+            config.repo("core").unwrap().servers,
+            ["https://a/core/x86_64"]
+        );
+    }
+
+    #[test]
+    fn duplicate_repositories_are_rejected() {
+        let loader = MemoryLoader::default().with(
+            "/pacman.conf",
+            "[options]\nArchitecture = x86_64\n[core]\nServer = https://a\n[core]\nServer = https://b\n",
+        );
+        let err = Config::load_with(Path::new("/pacman.conf"), &loader).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("repository 'core' is already defined"),
+            "{err}"
         );
     }
 
