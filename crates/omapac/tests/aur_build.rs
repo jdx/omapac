@@ -172,6 +172,36 @@ fn install_aur_builds_then_installs_the_file_and_records_the_commit() {
 }
 
 #[test]
+fn install_aur_only_installs_the_requested_split_package() {
+    let s = setup();
+    no_jail(&s);
+    let split = format!("{YAY_SRCINFO}\npkgname = yay-docs\n\tdepends = yay\n");
+    s.aur.commit(
+        "yay",
+        &[(".SRCINFO", &split)],
+        "add sibling package",
+        "2026-01-02T00:00:00Z",
+    );
+    run(&s, &["aur", "approve", "-y", "yay"], "");
+    let (code, out, err) = run(&s, &["install", "--aur", "-y", "yay"], "");
+    assert_eq!(code, 0, "{err}\n{out}");
+    let install = s
+        .rig
+        .log()
+        .into_iter()
+        .find(|line| line.contains("-U --noconfirm --"))
+        .unwrap();
+    assert!(
+        install.ends_with("yay-13.0.1-1-x86_64.pkg.tar.zst"),
+        "{install}"
+    );
+    assert!(!install.contains("yay-docs"), "{install}");
+    let ledger = std::fs::read_to_string(s.rig.root.join("var/lib/omapac/state.json")).unwrap();
+    let state: serde_json::Value = serde_json::from_str(&ledger).unwrap();
+    assert!(state["packages"]["yay-docs"].is_null());
+}
+
+#[test]
 fn install_aur_installs_missing_repo_dependencies_first() {
     let s = setup();
     no_jail(&s);

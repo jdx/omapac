@@ -136,6 +136,16 @@ impl Install {
                 bail!("cancelled");
             }
             let files = app.build_aur(&prepared, self.yes)?;
+            let packages = crate::aur::build::built_packages(&files)?;
+            let selected: Vec<_> = files
+                .into_iter()
+                .zip(packages)
+                .filter(|(_, package)| package.name == *name)
+                .collect();
+            if selected.is_empty() {
+                bail!("{name}: makepkg did not produce the requested package");
+            }
+            let files: Vec<_> = selected.iter().map(|(file, _)| file.clone()).collect();
             let engine = app.engine()?;
             let install = crate::engine::FileInstall {
                 files: files.clone(),
@@ -151,7 +161,7 @@ impl Install {
                 },
             )?;
             let mut patch = crate::ledger::Patch::default();
-            for package in crate::aur::build::built_packages(&files)? {
+            for (_, package) in selected {
                 patch.upsert.insert(
                     package.name,
                     crate::ledger::Entry {
