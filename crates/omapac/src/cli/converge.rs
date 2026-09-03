@@ -224,15 +224,27 @@ fn run(
     dry_run: bool,
 ) -> Result<()> {
     let resolved = engine.plan(&tx)?;
-    let command = engine
+    let mut plan = transaction::plan(
+        host,
+        &resolved,
+        engine
+            .apply_invocation(
+                &tx,
+                crate::engine::ApplyOpts {
+                    dry_run: true,
+                    no_confirm: false,
+                },
+            )
+            .display(),
+    );
+    plan.command = engine
         .apply_invocation(
             &tx,
             crate::engine::ApplyOpts {
                 dry_run: true,
-                no_confirm: true,
+                no_confirm: transaction::apply_no_confirm(&plan, yes),
             },
         )
         .display();
-    let plan = transaction::plan(host, &resolved, command);
     transaction::confirm_and_apply(engine, &resolved, &plan, verb, yes, dry_run)
 }

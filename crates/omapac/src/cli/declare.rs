@@ -266,16 +266,28 @@ impl RunWith<&App> for Drop {
             *recursive = false;
         }
         let resolved = engine.plan(&tx)?;
-        let command = engine
+        let mut plan = super::transaction::plan(
+            &host,
+            &resolved,
+            engine
+                .apply_invocation(
+                    &tx,
+                    crate::engine::ApplyOpts {
+                        dry_run: true,
+                        no_confirm: false,
+                    },
+                )
+                .display(),
+        );
+        plan.command = engine
             .apply_invocation(
                 &tx,
                 crate::engine::ApplyOpts {
                     dry_run: true,
-                    no_confirm: true,
+                    no_confirm: super::transaction::apply_no_confirm(&plan, self.yes),
                 },
             )
             .display();
-        let plan = super::transaction::plan(&host, &resolved, command);
         super::transaction::confirm_and_apply(
             &engine,
             &resolved,
