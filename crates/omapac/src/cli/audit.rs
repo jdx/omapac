@@ -45,6 +45,7 @@ impl RunWith<&App> for Audit {
             .collect();
         let (groups, from_cache) = Source::default_source().load(self.offline)?;
         let mut vulnerabilities = evaluate(&installed, &groups);
+        let open_count = vulnerabilities.len();
         if self.upgradable {
             vulnerabilities.retain(|v| v.fix_available);
         }
@@ -59,7 +60,13 @@ impl RunWith<&App> for Audit {
                 eprintln!("note: tracker read from the cache");
             }
             if report.vulnerabilities.is_empty() {
-                println!("no open security issues among installed packages");
+                if self.upgradable && open_count > 0 {
+                    println!(
+                        "no open security issues with an available upgrade; {open_count} open issue(s) have no fix yet"
+                    );
+                } else {
+                    println!("no open security issues among installed packages");
+                }
             }
             for v in &report.vulnerabilities {
                 println!(

@@ -96,6 +96,23 @@ fn audit_with_nothing_open() {
 }
 
 #[test]
+fn upgradable_filter_does_not_report_an_all_clear_for_unfixed_issues() {
+    let rig = Rig::new();
+    let tracker = r#"[
+      {"name":"AVG-102","packages":["yay"],"status":"Vulnerable","severity":"Medium","type":"denial of service","affected":"13.0.1-1","fixed":null,"ticket":null,"issues":["CVE-2026-1002"],"advisories":[]}
+    ]"#;
+    let base = common::http::serve(vec![("/all.json", tracker.to_string())]);
+    let (code, out, err) = run(
+        &rig,
+        &format!("{base}/all.json"),
+        &["audit", "--upgradable"],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("1 open issue(s) have no fix yet"), "{out}");
+    assert!(!out.contains("no open security issues among"), "{out}");
+}
+
+#[test]
 fn audit_uses_live_data_when_the_cache_cannot_be_written() {
     let rig = Rig::new();
     let cache_parent = rig.dir.path().join("cache/omapac");
