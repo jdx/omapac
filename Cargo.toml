@@ -20,12 +20,14 @@ packslip = { path = "crates/packslip" }
 color-eyre = "0.6"
 eyre = "0.6"
 indexmap = { version = "2", features = ["serde"] }
+nix = { version = "0.31", features = ["user"] }
 insta = { version = "1", features = ["filters", "json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"
 thiserror = "2"
 usage_rs = { package = "usage-rs", version = "6", features = ["completions"] }
+which = "8"
 
 [profile.release]
 lto = "thin"

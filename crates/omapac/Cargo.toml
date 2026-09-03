@@ -9,6 +9,10 @@ repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
 
+[lib]
+name = "omapac"
+path = "src/lib.rs"
+
 [[bin]]
 name = "omapac"
 path = "src/main.rs"
@@ -17,12 +21,15 @@ path = "src/main.rs"
 alpm-db.workspace = true
 color-eyre.workspace = true
 eyre.workspace = true
+nix.workspace = true
 omapac-cli-support.workspace = true
 omapac-policy.workspace = true
 packslip.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
 usage_rs.workspace = true
+which.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
