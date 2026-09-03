@@ -87,9 +87,7 @@ impl App {
                 seen
             );
         }
-        if fetched.fresh
-            && ledger.index_sequences.get(repo).copied() != Some(fetched.value.sequence)
-        {
+        if ledger.index_sequences.get(repo).copied() != Some(fetched.value.sequence) {
             let mut patch = crate::ledger::Patch::default();
             patch
                 .index_sequences
