@@ -119,20 +119,26 @@ fn update_refreshes_plans_with_holds_and_applies() {
     let pre = log.iter().position(|line| line == "hook-pre").unwrap();
     let plan_pos = log
         .iter()
-        .position(|line| line.contains("-Su --print"))
+        .position(|line| line.contains("-Su --noconfirm --print"))
         .unwrap();
     let apply_pos = log
         .iter()
-        .position(|line| line.contains("-Su --noconfirm"))
+        .position(|line| line.contains("-Su --noconfirm") && !line.contains("--print"))
         .unwrap();
     assert!(
         plan_pos < pre && pre < apply_pos,
         "hooks bracket apply: {log:?}"
     );
-    let plan = log.iter().find(|l| l.contains("-Su --print")).unwrap();
+    let plan = log
+        .iter()
+        .find(|l| l.contains("-Su --noconfirm --print"))
+        .unwrap();
     assert!(plan.contains("--ignore glibc,pacman"), "{plan}");
     assert!(plan.contains("--overwrite /usr/share/omarchy/*"), "{plan}");
-    let apply = log.iter().find(|l| l.contains("-Su --noconfirm")).unwrap();
+    let apply = log
+        .iter()
+        .find(|l| l.contains("-Su --noconfirm") && !l.contains("--print"))
+        .unwrap();
     assert!(
         apply.starts_with("sudo -n env OMARCHY_UPDATE_PACMAN=1"),
         "the guard variable: {apply}"
@@ -235,7 +241,7 @@ fn unattended_update_allows_signed_custom_repo_warnings() {
         s.rig
             .log()
             .iter()
-            .any(|line| line.contains("-Su --noconfirm")),
+            .any(|line| line.contains("-Su --noconfirm") && !line.contains("--print")),
         "{:?}",
         s.rig.log()
     );
