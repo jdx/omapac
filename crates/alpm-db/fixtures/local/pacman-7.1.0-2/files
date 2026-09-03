@@ -1,0 +1,14 @@
+%FILES%
+etc/
+etc/makepkg.conf
+etc/pacman.conf
+usr/
+usr/bin/
+usr/bin/makepkg
+usr/bin/pacman
+usr/bin/vercmp
+
+%BACKUP%
+etc/makepkg.conf	0123456789abcdef0123456789abcdef
+etc/pacman.conf	fedcba9876543210fedcba9876543210
+

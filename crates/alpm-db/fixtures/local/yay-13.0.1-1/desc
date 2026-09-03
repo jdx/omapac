@@ -1,0 +1,35 @@
+%NAME%
+yay
+
+%VERSION%
+13.0.1-1
+
+%BASE%
+yay
+
+%DESC%
+Yet another yogurt. Pacman wrapper and AUR helper written in go.
+
+%ARCH%
+x86_64
+
+%SIZE%
+9000000
+
+%REASON%
+1
+
+%VALIDATION%
+pgp
+
+%DEPENDS%
+pacman>6.1
+git
+
+%OPTDEPENDS%
+sudo: privilege elevation
+doas: privilege elevation
+
+%XDATA%
+pkgtype=pkg
+
