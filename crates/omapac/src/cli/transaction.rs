@@ -74,7 +74,7 @@ pub fn plan(host: &Host, resolved: &ResolvedTx, command: String) -> Plan {
                     change.name
                 ));
             }
-            if matches!(change.tier, Tier::Custom(_)) && level.package() != Check::Never {
+            if matches!(change.tier, Tier::Custom(_)) {
                 warnings.push(format!(
                     "{}: repository [{repo}] is outside Arch and Omarchy review",
                     change.name
