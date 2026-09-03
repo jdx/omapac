@@ -1,11 +1,13 @@
 use std::fmt::Write as _;
 
 use alpm_db::{Dependency, LocalPackage, SyncPackage};
-use eyre::{Result, bail};
+use eyre::{Context as _, Result, bail};
 use serde::Serialize;
 use usage_rs::RunWith;
 
+use super::search::AurMeta;
 use super::{App, format_size, format_time, print_json};
+use crate::aur::rpc::Rpc;
 use crate::host::Host;
 use crate::resolve::Tier;
 
@@ -13,12 +15,19 @@ use crate::resolve::Tier;
 ///
 /// Looks each name up in the sync databases in repository order and in the
 /// local database, and shows the repository, trust tier, metadata, and
-/// installed state.
+/// installed state. A name no repository carries is looked up on the AUR,
+/// where the maintainer, votes, and ages are what matter.
 #[derive(Debug, usage_rs::Args)]
 pub struct Info {
     /// Package names
     #[usage(required = true)]
     packages: Vec<String>,
+    /// Look on the AUR even when a repository carries the name
+    #[usage(short = 'a', long)]
+    aur: bool,
+    /// Never consult the AUR
+    #[usage(long)]
+    no_aur: bool,
     /// Print as JSON
     #[usage(short = 'J', long)]
     json: bool,
@@ -46,6 +55,8 @@ pub struct PackageInfo {
     pub sha256sum: Option<String>,
     pub signed: bool,
     pub installed: Option<Installed>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aur: Option<AurMeta>,
 }
 
 #[derive(Debug, Serialize)]
@@ -64,7 +75,13 @@ impl RunWith<&App> for Info {
         let mut infos = Vec::new();
         let mut missing = Vec::new();
         for name in &self.packages {
-            match info(&host, name)? {
+            let found = if self.aur { None } else { info(&host, name)? };
+            let found = match found {
+                Some(found) => Some(found),
+                None if self.no_aur => None,
+                None => info_aur(&host, &app.aur_rpc(), name)?,
+            };
+            match found {
                 Some(found) => infos.push(found),
                 None => missing.push(name.clone()),
             }
@@ -72,11 +89,12 @@ impl RunWith<&App> for Info {
         if self.json {
             print_json(&infos)?;
         } else {
+            let now = crate::ledger::now();
             for (i, found) in infos.iter().enumerate() {
                 if i > 0 {
                     println!();
                 }
-                print!("{}", render(found));
+                print!("{}", render(found, now));
             }
         }
         if !missing.is_empty() {
@@ -90,9 +108,8 @@ fn names(deps: &[Dependency]) -> Vec<String> {
     deps.iter().map(ToString::to_string).collect()
 }
 
-pub fn info(host: &Host, name: &str) -> Result<Option<PackageInfo>> {
-    let installed = host.installed_package(name)?;
-    let installed_info = installed.map(|p: &LocalPackage| Installed {
+fn installed_info(p: &LocalPackage) -> Installed {
+    Installed {
         version: p.version.clone(),
         install_date: p.install_date,
         reason: match p.reason {
@@ -100,7 +117,11 @@ pub fn info(host: &Host, name: &str) -> Result<Option<PackageInfo>> {
             alpm_db::InstallReason::Dependency => "dependency".to_string(),
         },
         validation: p.validation.clone(),
-    });
+    }
+}
+
+pub fn info(host: &Host, name: &str) -> Result<Option<PackageInfo>> {
+    let installed = host.installed_package(name)?.map(installed_info);
     if let Some((source, package)) = host.find_sync(name)? {
         let p: &SyncPackage = package;
         return Ok(Some(PackageInfo {
@@ -123,10 +144,11 @@ pub fn info(host: &Host, name: &str) -> Result<Option<PackageInfo>> {
             build_date: p.build_date,
             sha256sum: p.sha256sum.clone(),
             signed: p.pgpsig.is_some(),
-            installed: installed_info,
+            installed,
+            aur: None,
         }));
     }
-    let Some(p) = installed else {
+    let Some(p) = host.installed_package(name)? else {
         return Ok(None);
     };
     Ok(Some(PackageInfo {
@@ -149,11 +171,44 @@ pub fn info(host: &Host, name: &str) -> Result<Option<PackageInfo>> {
         build_date: p.build_date,
         sha256sum: None,
         signed: false,
-        installed: installed_info,
+        installed,
+        aur: None,
     }))
 }
 
-pub fn render(info: &PackageInfo) -> String {
+/// What the AUR knows about `name`.
+pub fn info_aur(host: &Host, rpc: &dyn Rpc, name: &str) -> Result<Option<PackageInfo>> {
+    let packages = rpc.info(&[name]).wrap_err("asking the AUR")?;
+    let Some(p) = packages.into_iter().find(|p| p.name == name) else {
+        return Ok(None);
+    };
+    let installed = host.installed_package(name)?.map(installed_info);
+    Ok(Some(PackageInfo {
+        name: p.name.clone(),
+        tier: Tier::Aur,
+        repo: Some("aur".to_string()),
+        version: Some(p.version.clone()),
+        description: p.description.clone(),
+        url: p.url.clone(),
+        licenses: p.license.clone(),
+        groups: p.groups.clone(),
+        provides: p.provides.clone(),
+        depends: p.depends.clone(),
+        optdepends: p.opt_depends.clone(),
+        conflicts: p.conflicts.clone(),
+        replaces: p.replaces.clone(),
+        download_size: None,
+        installed_size: None,
+        packager: None,
+        build_date: None,
+        sha256sum: None,
+        signed: false,
+        installed,
+        aur: Some(AurMeta::from_rpc(&p)),
+    }))
+}
+
+pub fn render(info: &PackageInfo, now: i64) -> String {
     let mut out = String::new();
     let mut row = |label: &str, value: String| {
         if !value.is_empty() {
@@ -171,6 +226,47 @@ pub fn render(info: &PackageInfo) -> String {
     row("Version", info.version.clone().unwrap_or_default());
     row("Description", info.description.clone().unwrap_or_default());
     row("URL", info.url.clone().unwrap_or_default());
+    if let Some(aur) = &info.aur {
+        row(
+            "Maintainer",
+            aur.maintainer
+                .clone()
+                .unwrap_or_else(|| "none (orphan)".to_string()),
+        );
+        if let Some(submitter) = &aur.submitter {
+            let hands = match &aur.maintainer {
+                Some(m) if m != submitter => " (package changed hands)",
+                _ => "",
+            };
+            row("Submitter", format!("{submitter}{hands}"));
+        }
+        row(
+            "Votes",
+            format!("{} (popularity {:.2})", aur.votes, aur.popularity),
+        );
+        row(
+            "First Submitted",
+            format!(
+                "{} ({})",
+                format_time(aur.first_submitted),
+                crate::aur::format_age(aur.first_submitted, now)
+            ),
+        );
+        row(
+            "Last Modified",
+            format!(
+                "{} ({})",
+                format_time(aur.last_modified),
+                crate::aur::format_age(aur.last_modified, now)
+            ),
+        );
+        row(
+            "Out Of Date",
+            aur.out_of_date
+                .map(|t| format!("yes, since {}", format_time(t)))
+                .unwrap_or_else(|| "no".to_string()),
+        );
+    }
     row("Licenses", info.licenses.join("  "));
     row("Groups", info.groups.join("  "));
     row("Provides", info.provides.join("  "));
@@ -193,7 +289,7 @@ pub fn render(info: &PackageInfo) -> String {
     );
     row(
         "Signature",
-        if info.repo.is_some() {
+        if info.repo.is_some() && info.aur.is_none() {
             if info.signed { "present" } else { "absent" }.to_string()
         } else {
             String::new()
