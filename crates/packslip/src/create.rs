@@ -66,6 +66,7 @@ pub fn infer_platform(name: &str) -> Platform {
         Some("freebsd")
     } else if lower.contains("windows")
         || lower.contains("win64")
+        || lower.contains("win32")
         || lower.ends_with(".exe")
         || lower.ends_with(".msi")
     {
@@ -78,6 +79,7 @@ pub fn infer_platform(name: &str) -> Platform {
         Some("linux")
     } else if lower.contains("darwin")
         || lower.contains("macos")
+        || lower.contains("osx")
         || lower.contains("apple")
         || lower.ends_with(".dmg")
         || lower.ends_with(".pkg")
@@ -98,7 +100,7 @@ pub fn infer_platform(name: &str) -> Platform {
         Some("armv7")
     } else if lower.contains("riscv64") {
         Some("riscv64")
-    } else if lower.contains("i686") || lower.contains("x86") {
+    } else if lower.contains("i386") || lower.contains("i686") || lower.contains("x86") {
         Some("i686")
     } else {
         None
@@ -247,6 +249,14 @@ mod tests {
         assert_eq!(
             infer_platform("tool-windows-x64.exe"),
             (Some("windows"), Some("x86_64"), None, Some("exe"))
+        );
+        assert_eq!(
+            infer_platform("tool-osx-amd64.tar.gz"),
+            (Some("darwin"), Some("x86_64"), None, Some("tar.gz"))
+        );
+        assert_eq!(
+            infer_platform("tool-win32-i386.zip"),
+            (Some("windows"), Some("i686"), None, Some("zip"))
         );
         assert_eq!(infer_platform("SHASUMS256.txt"), (None, None, None, None));
         assert_eq!(
