@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Run every e2e/test_* script against the built binaries. The Rust
+# integration tests carry most coverage through fakes; these scripts are
+# for what needs real tools and are meant to run in an
+# archlinux:base-devel container.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+export PATH="$PWD/target/debug:$PATH"
+failed=0
+for test in e2e/test_*; do
+	[ -f "$test" ] || continue
+	echo "==> $test"
+	if bash "$test"; then
+		echo "    ok"
+	else
+		echo "    FAILED"
+		failed=1
+	fi
+done
+exit "$failed"

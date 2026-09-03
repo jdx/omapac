@@ -787,16 +787,18 @@ minimum release age in the Omarchy update step once the tool channel covers it.
 
 ```
 Cargo.toml                 workspace
-crates/alpm-db/            parsers and vercmp, or wrappers over Arch's alpm-* crates
+crates/alpm-db/            pacman.conf, local and sync databases, vercmp, with fixtures
+crates/cli-support/        argv handling and the version command shared by the binaries
 crates/omapac-policy/      findings engine and rule catalog
-crates/packslip/           vendor standard: schema, verifier, generator, packslip binary
-crates/omapac/             client binary
-crates/omapac-repo/        server binary
+crates/packslip/           vendor standard: model, minisign, DSSE, verifier, generator, packslip binary
+crates/omapac/             client binary and library; integration tests with fake pacman, sudo, makepkg, AUR
+crates/omapac-repo/        server binary; integration tests with a fake gpg, Rekor, and vendor
 plugins/mise-tool-channel/ mise backend plugin that consumes a vetted tool channel
-docs/spec/                 index, release.json, verdict, advisory, and packslip formats
+harness/                   the snapshot test suite contract and a sample
+docs/spec/                 packslip, feeds, provenance, vendor pipeline, sync gate, release train, snapshot store, tool channel
 docs/adoption/             omarchy, opr, and mise guides
-e2e/                       bash tests run in an archlinux:base-devel container
-fixtures/                  databases, pacman.conf variants, AUR git histories, sigstore bundles, packslips
+docs/cli/                  rendered CLI reference (mise run render)
+e2e/                       bash tests against the built binaries, meant for an archlinux:base-devel container
 ```
 
 Expected dependencies: `usage-lib` and `clap`, `serde` with `toml_edit` and
@@ -842,6 +844,13 @@ stays manageable; the first group is layers 1 through 6, a working pacman fronte
 23. omapac-repo vendor channel publisher: artifact mirror and signed tool index.
 24. mise tool-channel backend plugin.
 25. Documentation: specs, adoption guides, rendered CLI docs.
+
+Status, 2026-09-03: all 25 layers are open as one stack of pull requests, each
+citing its layer. Follow-ups noted in the pull requests: feeding the index's
+`published_at` into release-age floors, verifying sigstore-scheme sidecars, AUR
+dependency recursion, an omapac-level update lock, Merkle inclusion-proof
+verification for transparency log entries, native tool-channel support in mise, and
+the Arch-container end-to-end suite.
 
 ## Verification
 
