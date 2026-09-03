@@ -398,9 +398,10 @@ impl RunWith<&App> for Rollback {
     }
 }
 
-/// Build a disposable pacman root with the host's installed database and the
-/// snapshot mirror, then refresh only that root. Planning against it matches
-/// the live rollback without changing the host's mirrorlist or sync databases.
+/// Build a disposable pacman database with the host's installed database and
+/// a generated snapshot configuration, then refresh only that database.
+/// Planning against it matches the live rollback without copying the host's
+/// keyring or changing its mirrorlist and sync databases.
 fn staged_snapshot(
     app: &App,
     snapshot_base: &str,
@@ -410,46 +411,23 @@ fn staged_snapshot(
     let staging = tempfile::tempdir().wrap_err("creating rollback planning root")?;
     let root = staging.path();
 
-    copy_tree_if_exists(
-        &app.rooted(std::path::Path::new("/etc/pacman.d")),
-        &root.join("etc/pacman.d"),
-    )?;
-    let logical_db_path = live.config.options.db_path();
-    copy_tree_if_exists(
-        &live.db_path().join("local"),
-        &root
-            .join(
-                logical_db_path
-                    .strip_prefix("/")
-                    .unwrap_or(&logical_db_path),
-            )
-            .join("local"),
-    )?;
+    let staged_db = root.join("db");
+    copy_tree_if_exists(&live.db_path().join("local"), &staged_db.join("local"))?;
 
-    let config = app
-        .paths
-        .config
-        .clone()
-        .unwrap_or_else(|| std::path::PathBuf::from(alpm_db::conf::DEFAULT_PATH));
-    let staged_config = root.join(config.strip_prefix("/").unwrap_or(&config));
-    if let Some(parent) = staged_config.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::copy(app.rooted(&config), &staged_config)
-        .wrap_err_with(|| format!("staging {}", config.display()))?;
-    let mirrorlist = root.join(channel::MIRRORLIST.trim_start_matches('/'));
-    if let Some(parent) = mirrorlist.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(&mirrorlist, channel::pin_text(snapshot_base, id))?;
+    let staged_config = root.join("pacman.conf");
+    let gpg_dir = app.rooted(&live.config.options.gpg_dir());
+    std::fs::write(
+        &staged_config,
+        staged_pacman_config(&live, &staged_db, &gpg_dir, snapshot_base, id),
+    )?;
 
     let paths = HostPaths {
-        config: Some(config),
-        sysroot: Some(root.to_path_buf()),
+        config: Some(staged_config),
+        sysroot: None,
     };
     let mut engine = app.engine()?;
     engine.config = paths.config.clone();
-    engine.sysroot = paths.sysroot.clone();
+    engine.sysroot = None;
     engine.elevation = crate::engine::sudo::Elevation::Never;
     engine.refresh(
         crate::engine::RefreshOpts { force: true },
@@ -460,6 +438,58 @@ fn staged_snapshot(
     )?;
     let host = Host::load(paths)?;
     Ok((staging, host, engine))
+}
+
+fn staged_pacman_config(
+    live: &Host,
+    db_path: &std::path::Path,
+    gpg_dir: &std::path::Path,
+    snapshot_base: &str,
+    id: &str,
+) -> String {
+    use std::fmt::Write as _;
+
+    let mut config = format!(
+        "[options]\nArchitecture = {}\nDBPath = {}\nGPGDir = {}\nSigLevel = {}\nDisableSandbox\n",
+        live.config
+            .options
+            .arch()
+            .unwrap_or_else(|| alpm_db::conf::host_arch().to_string()),
+        db_path.display(),
+        gpg_dir.display(),
+        live.config.options.sig_level,
+    );
+    for source in &live.sources {
+        let repo = &source.repo;
+        let _ = write!(config, "\n[{}]\nSigLevel = {}\n", repo.name, repo.sig_level);
+        if repo.usage != alpm_db::conf::Usage::ALL {
+            let mut usage = Vec::new();
+            if repo.usage.sync {
+                usage.push("Sync");
+            }
+            if repo.usage.search {
+                usage.push("Search");
+            }
+            if repo.usage.install {
+                usage.push("Install");
+            }
+            if repo.usage.upgrade {
+                usage.push("Upgrade");
+            }
+            let _ = writeln!(config, "Usage = {}", usage.join(" "));
+        }
+        if source.tier == crate::resolve::Tier::Arch {
+            let _ = writeln!(config, "{}", channel::pinned_server(snapshot_base, id));
+        } else {
+            for server in &repo.servers {
+                let _ = writeln!(config, "Server = {server}");
+            }
+            for server in &repo.cache_servers {
+                let _ = writeln!(config, "CacheServer = {server}");
+            }
+        }
+    }
+    config
 }
 
 fn copy_tree_if_exists(from: &std::path::Path, to: &std::path::Path) -> Result<()> {
