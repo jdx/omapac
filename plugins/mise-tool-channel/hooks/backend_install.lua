@@ -98,7 +98,14 @@ function PLUGIN:find_executable(install_path, tool)
     if file.exists(bin) then
         local entries = file.list(bin)
         if #entries == 1 then
-            return file.join_path("bin", entries[1])
+            -- file.list returns the full path. Convert it back to the path
+            -- relative to install_path expected by the symlink code above.
+            local entry = entries[1]
+            if entry:sub(1, #install_path) == install_path then
+                return entry:sub(#install_path + 1):gsub("^[/\\]+", "")
+            end
+            -- Retain compatibility with runtimes that return basenames.
+            return file.join_path("bin", entry)
         end
     end
     return nil
