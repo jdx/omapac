@@ -163,7 +163,7 @@ omapac (bin)           the client
  ├─ update/            the omarchy-update package pipeline
  ├─ tui/               ratatui pickers
  └─ engine/            Engine trait; PacmanCli now, Native later
-omapac-repo (bin)      the server side OPR runs: index, signer gate, sync gate, verdicts, snapshots
+omapac-repo (bin)      the server side OPR runs: index, signer gate, sync gate, verdicts, snapshots, tool channel
 omapac-policy (lib)    findings engine and rule catalog, shared by client and server
 packslip (lib + bin)   the vendor-binary standard: schema, verifier, generator
 alpm-db (lib)          pacman.conf, local db, sync db, .PKGINFO and .BUILDINFO, vercmp
@@ -425,6 +425,11 @@ period.
 **snapshot.** The release-train side: cut snapshots, write and sign the release
 manifest, move channel pointers, and record test results and holds.
 
+**tools.** The vetted tool channel for mise: verify a vendor release, apply the
+minimum release age and the verdict reviewers, mirror the artifact with its sidecars,
+and append it to the signed tool index. Described under "Vetted tool channel for
+mise".
+
 ### Third-party scanning
 
 Socket cannot scan PKGBUILDs or Arch packages today and publishes no signed verdicts.
@@ -499,10 +504,62 @@ Consumers:
   entries, verifying the packslip when present and recording the evidence level in
   `mise.lock`. Omarchy users running `mise use claude` then get the same guarantees as
   an OPR package.
-- A mise backend plugin, `mise use omapac:<tool>`, that resolves a tool to an OPR
-  package and installs it through omapac, so a mise "my machine" config can declare
-  system packages with omapac's guarantees and they appear in `mise ls`. It ships from
-  this repository under `plugins/mise-omapac/`.
+- The Omarchy tool channel, described next, which vets vendor releases with the same
+  pipeline and serves them to mise.
+
+### Vetted tool channel for mise
+
+On Omarchy the agent CLIs (claude, codex, gh, opencode, and the rest) are mise tools,
+downloaded straight from vendor releases. Omarchy wants those to be vetted the way OPR
+packages are. The answer is a tool channel: a signed index of vendor tool releases
+Omarchy has vetted, plus a mirror of the vetted artifacts with their evidence. mise
+resolves tools through the channel, so `mise use claude` on Omarchy installs the newest
+vetted build rather than whatever the vendor pushed an hour ago. This is not a pacman
+bridge; tools stay per-user and versioned in mise's own layout.
+
+What vetting a tool version means, run by `omapac-repo tools`:
+
+- Fetch the vendor release and verify its packslip, or the legacy evidence (checksum
+  file plus minisign, cosign, GPG, or GitHub attestation), against the pinned vendor
+  identity. Record the evidence level and enforce no-downgrade.
+- Apply the minimum release age, so a freshly pushed compromise sits in quarantine
+  before any Omarchy machine can fetch it.
+- Run the verdict reviewers over the artifact: hash lookups, static checks, and later
+  the AI reviewer. A block verdict keeps the version out of the index.
+- Copy the artifact to the tool mirror under `tools/<tool>/<version>/` next to three
+  sidecars: the vendor's packslip, OPR's own provenance statement for the mirror copy,
+  and the verdicts. Published files are immutable, so a vendor deleting or re-uploading
+  an asset cannot affect Omarchy users.
+- Append the version to the signed tool index. The index uses the same append-only,
+  sequence-numbered, minisign-signed format as the package index, so a stale or
+  rolled-back index is detected the same way.
+
+Channels match the distro channels: `tools/edge`, `tools/rc`, and `tools/stable`. A
+tool version reaches `stable` after the same soak as packages, so a stable machine gets
+tools and packages that aged together. The release manifest lists the tool index
+sequence alongside the package snapshot, which makes a given Omarchy stable state
+reproducible for tools as well.
+
+How mise consumes it, in two stages:
+
+1. Now: a backend plugin shipped from this repository that mise installs as-is. It
+   reads the channel index, lists vetted versions, downloads from the mirror, verifies
+   the sidecars, and installs into mise's normal per-user layout. Omarchy's
+   system-level mise config aliases the agent CLIs to it, so `claude` resolves through
+   the channel without users typing a backend prefix.
+2. Later: native tool-channel support inside mise, a setting listing channel URLs that
+   is consulted before the registry for any tool the channel vets, with a paranoid rule
+   that refuses unvetted versions of vetted tools. That is a mise change outside this
+   repository and it retires the plugin.
+
+Version semantics: `latest` means the newest vetted version in the selected channel. A
+user pinning a version the channel has not vetted gets a warning by default and a
+refusal under paranoid mode or the managed floor. The channel can place a hold on a
+version, which is how a bad release is pulled after the fact.
+
+The channel format is packslip plus verdicts plus an index and carries nothing
+Omarchy-specific. A company can run the same `omapac-repo tools` pipeline to publish
+an internal vetted-tools channel and mise consumes it identically.
 
 ## Release train
 
@@ -633,7 +690,7 @@ omapac pacnew              [--merge]
 omapac present|missing <pkg>...                   exit-code predicates for menu guards
 omapac doctor                                     SigLevel floor, keyring, index freshness, jail support
 
-omapac-repo index | attest | sign | vendor | sync-aur | verdict | advisories | snapshot
+omapac-repo index | attest | sign | vendor | sync-aur | verdict | advisories | snapshot | tools
 packslip create | verify
 ```
 
@@ -654,7 +711,8 @@ vendor pipeline, and make the `omarchy` package depend on it. Turn the `omarchy-
 scripts into one-line shims. Replace the AUR step of `omarchy-update` first, then the
 repo step, then drop yay from the base install. Point the menu at omapac pickers and
 guards. Ship the distro manifest and the managed floor, and run `omapac apply` from
-`omarchy update`.
+`omarchy update`. Point the lazy agent CLIs in the system-level mise config at the
+tool channel so they resolve to vetted versions.
 
 OPR: adopt the `omapac-repo` subcommands in order: index, attest and sign, vendor,
 sync-aur, verdict reviewers, snapshot. Set the packager field. Move the mirror to
@@ -662,10 +720,11 @@ snapshots with `stable` and `rc` as pointers a human moves first, then the QEMU 
 gating `rc`, then the timed soak.
 
 mise: publish a packslip from mise's own release workflow; verify packslips in the
-`github` and `http` backends and record the evidence level in the lockfile; add the
-`omapac` backend plugin to the registry; on Omarchy, have the `pacman` and `aur`
-bootstrap managers delegate to omapac; stop forcing a zero minimum release age in the
-Omarchy update step once omapac's policy covers it.
+`github` and `http` backends and record the evidence level in the lockfile; add native
+tool-channel support (a setting listing channel URLs consulted before the registry)
+and, until then, list the tool-channel backend plugin in the registry; on Omarchy,
+have the `pacman` and `aur` bootstrap managers delegate to omapac; stop forcing a zero
+minimum release age in the Omarchy update step once the tool channel covers it.
 
 ## Repository layout
 
@@ -676,7 +735,7 @@ crates/omapac-policy/      findings engine and rule catalog
 crates/packslip/           vendor standard: schema, verifier, generator, packslip binary
 crates/omapac/             client binary
 crates/omapac-repo/        server binary
-plugins/mise-omapac/       mise backend plugin
+plugins/mise-tool-channel/ mise backend plugin that consumes a vetted tool channel
 docs/spec/                 index, release.json, verdict, advisory, and packslip formats
 docs/adoption/             omarchy, opr, and mise guides
 e2e/                       bash tests run in an archlinux:base-devel container
@@ -723,8 +782,9 @@ stays manageable; the first group is layers 1 through 6, a working pacman fronte
 20. omapac-repo snapshot and test harness.
 21. ratatui pickers.
 22. audit.
-23. mise backend plugin.
-24. Documentation: specs, adoption guides, rendered CLI docs.
+23. omapac-repo tools: vetting pipeline, artifact mirror, signed tool index.
+24. mise tool-channel backend plugin.
+25. Documentation: specs, adoption guides, rendered CLI docs.
 
 ## Verification
 
@@ -781,7 +841,7 @@ Recorded 2026-09-03. Each states the decision and the reasoning in plain terms.
 7. AI reviewer weight. A gating reviewer with false positives silently stalls updates
    and erodes trust in every other gate. Decision: start at warn, measure the
    false-positive rate on OPR's sync pull requests for a few months, then gate.
-8. Stack size. Twenty-four stacked pull requests at once are hard to review, and a
+8. Stack size. Twenty-five stacked pull requests at once are hard to review, and a
    change low in the stack forces rebasing everything above it. Decision: land layers 1
    through 6 first, then open the next group.
 9. OPR builds stay self-hosted, with no hosted CI. Provenance and trusted publishing
@@ -789,6 +849,11 @@ Recorded 2026-09-03. Each states the decision and the reasoning in plain terms.
 10. OPR is trusted by default. Client release-age gating on `arch` and `opr` defaults
     to zero; users may raise it per tier.
 11. The CLI uses usage-rs derive macros; interactive views use ratatui.
+12. Vetted vendor binaries for mise come from a tool channel (signed index plus
+    mirrored artifacts with evidence), not from a pacman bridge. mise tools stay
+    per-user and versioned; the channel decides which versions are vetted and what
+    `latest` means. A backend plugin from this repository is the bridge until mise
+    supports channels natively.
 
 ## Open questions
 
