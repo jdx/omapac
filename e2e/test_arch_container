@@ -52,7 +52,7 @@ if run "omapac present definitely-not-a-package"; then
 	echo "present should fail for a missing package" >&2
 	exit 1
 fi
-expect '^base ' "omapac list --explicit"
+expect '^base-devel ' "omapac list --explicit"
 run "omapac missing definitely-not-a-package"
 if run "omapac missing pacman definitely-not-a-package"; then
 	echo "missing should fail when any named package is installed" >&2
