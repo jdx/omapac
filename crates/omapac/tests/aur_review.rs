@@ -91,6 +91,11 @@ fn review_approve_then_catch_the_takeover() {
         "bump to 13.0.2",
         "2026-09-03T00:00:00Z",
     );
+    // Simulate a force-push or repository recreation that removed the
+    // approved commit. Policy must conservatively inspect the whole tree.
+    let lock_path = s.rig.home.join(".config/omapac/omapac.lock");
+    let lock = std::fs::read_to_string(&lock_path).unwrap();
+    std::fs::write(&lock_path, lock.replace(&first, &"0".repeat(40))).unwrap();
     let (code, out, _) = run(&s, &["aur", "review", "yay", "--unattended"]);
     assert_eq!(code, 1, "a denied review exits 1: {out}");
     assert!(
@@ -107,12 +112,12 @@ fn review_approve_then_catch_the_takeover() {
         assert!(out.contains(finding), "missing {finding}: {out}");
     }
     assert!(
-        out.contains("+source=(\"https://evil.example/yay.tar.gz\")"),
-        "diff shown: {out}"
+        out.contains("source=(\"https://evil.example/yay.tar.gz\")"),
+        "changed recipe shown: {out}"
     );
     assert!(
-        out.contains("+++ b/yay.install"),
-        "new scriptlet in the diff: {out}"
+        out.contains("==> yay.install"),
+        "current scriptlet shown when history is missing: {out}"
     );
 
     // Unattended approval is refused; --force records it anyway.
