@@ -120,8 +120,7 @@ impl RunWith<()> for IndexCmd {
             )
             .to_file();
         let path = self.dir.join(INDEX_FILE);
-        write_atomic(&path, &bytes)?;
-        write_atomic(&sig_path(&path), signature.as_bytes())?;
+        write_signed_pair(&path, &bytes, signature.as_bytes())?;
         println!(
             "wrote {} (sequence {}, {} package(s), db {})",
             path.display(),
@@ -143,6 +142,34 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let temp = path.with_extension("tmp");
     std::fs::write(&temp, bytes).wrap_err_with(|| format!("writing {}", temp.display()))?;
     std::fs::rename(&temp, path).wrap_err_with(|| format!("renaming to {}", path.display()))?;
+    Ok(())
+}
+
+/// Stage both members before publishing either one, and restore the old
+/// index if publishing the signature fails. This avoids leaving a mixed
+/// pair after an ordinary I/O error.
+fn write_signed_pair(path: &Path, bytes: &[u8], signature: &[u8]) -> Result<()> {
+    let signature_path = sig_path(path);
+    let index_temp = path.with_extension("json.pair-tmp");
+    let signature_temp = signature_path.with_extension("minisig.pair-tmp");
+    std::fs::write(&index_temp, bytes)
+        .wrap_err_with(|| format!("writing {}", index_temp.display()))?;
+    if let Err(err) = std::fs::write(&signature_temp, signature) {
+        let _ = std::fs::remove_file(&index_temp);
+        return Err(err).wrap_err_with(|| format!("writing {}", signature_temp.display()));
+    }
+    let previous = std::fs::read(path).ok();
+    std::fs::rename(&index_temp, path)
+        .wrap_err_with(|| format!("publishing {}", path.display()))?;
+    if let Err(err) = std::fs::rename(&signature_temp, &signature_path) {
+        match previous {
+            Some(previous) => write_atomic(path, &previous)?,
+            None => {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+        return Err(err).wrap_err_with(|| format!("publishing {}", signature_path.display()));
+    }
     Ok(())
 }
 
