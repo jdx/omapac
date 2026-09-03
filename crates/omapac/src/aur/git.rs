@@ -212,6 +212,18 @@ impl Checkout {
         Ok(numstat_size(&out))
     }
 
+    /// Total text lines in the tree, used as a conservative diff size when
+    /// an approved commit disappeared from rewritten history.
+    pub fn tree_size(&self, commit: &str) -> Result<usize> {
+        let mut lines = 0;
+        for path in self.changed_files(None, commit)? {
+            if let Some(text) = self.show(commit, &path)? {
+                lines += text.lines().count();
+            }
+        }
+        Ok(lines)
+    }
+
     /// The `.SRCINFO` at a commit, parsed.
     pub fn srcinfo(&self, commit: &str) -> Result<super::srcinfo::SrcInfo> {
         let text = self

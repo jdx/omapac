@@ -127,27 +127,32 @@ fn gather(
             install_files: entry.install_files.clone(),
         });
     let diff = match &approved {
-        Some(approved) if approved.commit != target && checkout.has_commit(&approved.commit) => {
-            let approved_time = checkout.log(&approved.commit, 1)?.first().map(|c| c.time);
-            Some(policy::Diff {
-                lines_changed: checkout.diff_size(&approved.commit, target)?,
-                changed_files: checkout.changed_files(Some(&approved.commit), target)?,
-                quiet_secs_before: approved_time.map(|t| target_time - t),
-            })
+        Some(approved) if approved.commit != target => {
+            if checkout.has_commit(&approved.commit) {
+                let approved_time = checkout.log(&approved.commit, 1)?.first().map(|c| c.time);
+                Some(policy::Diff {
+                    lines_changed: checkout.diff_size(&approved.commit, target)?,
+                    changed_files: checkout.changed_files(Some(&approved.commit), target)?,
+                    quiet_secs_before: approved_time.map(|t| target_time - t),
+                })
+            } else {
+                // Rewritten history is itself a reason to treat the entire
+                // current recipe as changed, never as an absent diff.
+                Some(policy::Diff {
+                    lines_changed: checkout.tree_size(target)?,
+                    changed_files: checkout.changed_files(None, target)?,
+                    quiet_secs_before: None,
+                })
+            }
         }
         _ => None,
     };
-    let install_scripts = srcinfo
-        .install_files()
-        .into_iter()
-        .filter_map(|file| {
-            checkout
-                .show(target, file)
-                .ok()
-                .flatten()
-                .map(|text| (file.to_string(), text))
-        })
-        .collect();
+    let mut install_scripts = Vec::new();
+    for file in srcinfo.install_files() {
+        if let Some(text) = checkout.show(target, file)? {
+            install_scripts.push((file.to_string(), text));
+        }
+    }
     let known: Vec<String> = request
         .host
         .sources
