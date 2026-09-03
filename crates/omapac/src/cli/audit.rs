@@ -1,3 +1,5 @@
+use std::io::Write as _;
+
 use eyre::Result;
 use serde::Serialize;
 use usage_rs::RunWith;
@@ -89,6 +91,7 @@ impl RunWith<&App> for Audit {
             }
         }
         if self.fail && !report.vulnerabilities.is_empty() {
+            std::io::stdout().flush()?;
             std::process::exit(1);
         }
         Ok(())
