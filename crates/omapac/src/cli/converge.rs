@@ -177,21 +177,18 @@ impl Diff {
         }
         let installs = self.installs();
         if !installs.is_empty() {
-            let tx = Transaction::install(installs)
+            let mut tx = Transaction::install(installs)
                 .ignoring(
-                    manifest
-                        .settings
-                        .update_ignore
-                        .iter()
-                        .cloned()
-                        .chain(
-                            self.steps
-                                .iter()
-                                .filter(|step| step.hold)
-                                .map(|step| step.name.clone()),
-                        ),
+                    manifest.settings.update_ignore.iter().cloned().chain(
+                        self.steps
+                            .iter()
+                            .filter(|step| step.hold)
+                            .map(|step| step.name.clone()),
+                    ),
                 )
                 .overwriting(manifest.settings.update_overwrite.iter().cloned());
+            tx.ignore_group
+                .extend(manifest.settings.update_ignore_group.iter().cloned());
             run(host, engine, tx, "install", yes, dry_run)?;
         }
         let removes = self.removes();

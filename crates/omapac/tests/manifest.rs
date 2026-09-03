@@ -12,7 +12,7 @@ fn declare(rig: &Rig) {
     // Distro layer: pacman and yay present, libreoffice-fresh present.
     rig.write_root(
         "/etc/omapac/conf.d/10-omarchy.toml",
-        "[packages]\npacman = {}\nyay = {}\nlibreoffice-fresh = {}\n[update]\noverwrite = [\"/usr/share/omarchy/*\"]\n",
+        "[packages]\npacman = {}\nyay = {}\nlibreoffice-fresh = {}\n[update]\noverwrite = [\"/usr/share/omarchy/*\"]\nignore_group = [\"legacy\"]\n",
     );
     // User layer: drop libreoffice, add curl from core, an AUR one.
     std::fs::create_dir_all(rig.user_manifest().parent().unwrap()).unwrap();
@@ -89,8 +89,8 @@ fn apply_refuses_unavailable_then_installs_and_removes() {
     let log = rig.log();
     assert!(log[0].contains("-S --print"), "{log:?}");
     assert!(
-        log[0].contains("--overwrite /usr/share/omarchy/* -- core/curl"),
-        "the distro layer's overwrite rule applies: {log:?}"
+        log[0].contains("--ignoregroup legacy --overwrite /usr/share/omarchy/* -- core/curl"),
+        "the distro layer's ignore-group and overwrite rules apply: {log:?}"
     );
     assert!(log.last().unwrap().ends_with("-- core/curl"), "{log:?}");
 }
@@ -103,12 +103,18 @@ fn apply_and_add_refuse_a_lone_unavailable_package() {
 
     let (code, _, err) = rig.run(&["apply", "-y"], "", 0);
     assert_ne!(code, 0);
-    assert!(err.contains("declared but in no repository: not-anywhere"), "{err}");
+    assert!(
+        err.contains("declared but in no repository: not-anywhere"),
+        "{err}"
+    );
 
     let rig = Rig::new();
     let (code, _, err) = rig.run(&["add", "-y", "not-anywhere"], "", 0);
     assert_ne!(code, 0);
-    assert!(err.contains("declared but in no repository: not-anywhere"), "{err}");
+    assert!(
+        err.contains("declared but in no repository: not-anywhere"),
+        "{err}"
+    );
 }
 
 #[test]
