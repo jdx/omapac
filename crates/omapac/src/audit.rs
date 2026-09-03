@@ -73,7 +73,10 @@ impl Source {
             std::env::var("OMAPAC_SECURITY_TRACKER_URL").unwrap_or_else(|_| TRACKER_URL.into());
         Source {
             url,
-            cache: crate::aur::cache_dir().join("audit/all.json"),
+            cache: crate::aur::cache_dir()
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .join("audit/all.json"),
         }
     }
 
@@ -82,18 +85,20 @@ impl Source {
     /// whether they came from the cache.
     pub fn load(&self, offline: bool) -> Result<(Vec<Group>, bool)> {
         if !offline {
-            match fetch(&self.url) {
-                Ok(bytes) => {
-                    let groups: Vec<Group> =
-                        serde_json::from_slice(&bytes).wrap_err("parsing the security tracker")?;
-                    if let Some(parent) = self.cache.parent() {
-                        std::fs::create_dir_all(parent)?;
-                    }
-                    let temp = self.cache.with_extension("tmp");
-                    std::fs::write(&temp, &bytes)?;
-                    std::fs::rename(&temp, &self.cache)?;
-                    return Ok((groups, false));
+            let live = (|| -> Result<Vec<Group>> {
+                let bytes = fetch(&self.url)?;
+                let groups: Vec<Group> =
+                    serde_json::from_slice(&bytes).wrap_err("parsing the security tracker")?;
+                if let Some(parent) = self.cache.parent() {
+                    std::fs::create_dir_all(parent)?;
                 }
+                let temp = self.cache.with_extension("tmp");
+                std::fs::write(&temp, &bytes)?;
+                std::fs::rename(&temp, &self.cache)?;
+                Ok(groups)
+            })();
+            match live {
+                Ok(groups) => return Ok((groups, false)),
                 Err(err) => {
                     if !self.cache.is_file() {
                         return Err(err);
