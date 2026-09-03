@@ -38,6 +38,8 @@ features:
   - [release train](spec/release-train.md): the client side of tested snapshots.
   - [snapshot store](spec/snapshot-store.md): the server side of tested snapshots.
   - [tool channel](spec/tool-channel.md): vetted vendor tools for mise.
+- [Run an isolated registry](/operations/registry): deploy the publisher,
+  immutable snapshot store, signing keys, and Caddy endpoint.
 - [Adoption guides](/adoption/omarchy), the steps other projects take:
   - [Omarchy](adoption/omarchy.md)
   - [The Omarchy Package Repository](adoption/opr.md)

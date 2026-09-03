@@ -78,6 +78,41 @@ impl Train {
 }
 
 #[test]
+fn cut_records_each_repository_index_sequence() {
+    let t = Train::new();
+    for (file, repo, sequence) in [
+        ("core-index.json", "core", 12),
+        ("pacvamp-index.json", "pacvamp", 4),
+    ] {
+        std::fs::write(
+            t.rig.path().join(file),
+            format!(
+                r#"{{"version":1,"repo":"{repo}","sequence":{sequence},"generated_at":"2026-09-01T06:00:00Z","db":{{"file":"{repo}.db","sha256":"00"}},"packages":{{}},"build_keys":[]}}"#
+            ),
+        )
+        .unwrap();
+    }
+    let id = "2026-09-01T06";
+    let (code, _, err) = t.run(
+        "2026-09-01T06:10:00Z",
+        &[
+            "cut",
+            "--from",
+            "mirror",
+            "--id",
+            id,
+            "--repo-index",
+            "core-index.json",
+            "--repo-index",
+            "pacvamp-index.json",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(t.release(id).repository_index_sequences["core"], 12);
+    assert_eq!(t.release(id).repository_index_sequences["pacvamp"], 4);
+}
+
+#[test]
 fn state_changes_refuse_a_tampered_release_manifest() {
     let t = Train::new();
     let id = "2026-09-01T06";

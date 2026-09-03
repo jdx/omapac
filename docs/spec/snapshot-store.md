@@ -31,10 +31,10 @@ so a snapshot costs the churn since the last one, not a full copy.
 ## Commands
 
 - `snapshot cut --store S --from <mirror> --key K [--id <id>]
-  [--opr-index <pacvamp-index.json>]` copies the repositories from a
+  [--repo-index <pacvamp-index.json>]...` copies the repositories from a
   synced Arch mirror into a new snapshot, records the database digests
-  and the OPR index sequence, writes and signs `release.json` with no
-  test result, and points `edge` at it.
+  and each supplied repository index sequence, writes and signs
+  `release.json` with no test result, and points `edge` at it.
 - `snapshot test --store S --id <id> [--suite <command>]` runs the
   suite with `PACVAMP_SNAPSHOT_ID` and `PACVAMP_SNAPSHOT_DIR` set. Exit 0
   is a pass. Lines the suite prints as `tested: <pkgbase>` become

@@ -8,5 +8,5 @@ Copy a synced mirror into a new snapshot and point edge at it
 ## Flags
 - **`--from <FROM>`** — The synced mirror: &lt;from>/&lt;repo>/os/&lt;arch>/&lt;repo>.db
 - **`--id <ID>`** — The snapshot id; defaults to the current hour in UTC
-- **`--opr-index <OPR_INDEX>`** — The OPR index this snapshot goes with, for its sequence
+- **`--repo-index <REPO_INDEX>`** — A signed repository index included in this snapshot; repeatable
 - **`-h --help`** — Print help

@@ -1,0 +1,27 @@
+[Unit]
+Description=Publish the Pacvamp registry canary package
+After=local-fs.target
+ConditionPathExists=/etc/pacvamp-registry/index.key
+ConditionPathExists=/etc/pacvamp-registry/build.key
+
+[Service]
+Type=oneshot
+User=pacvamp-registry
+Group=pacvamp-registry
+Environment=HOME=/var/lib/pacvamp-registry
+EnvironmentFile=/etc/pacvamp-registry/registry.env
+ExecStart=/usr/local/lib/pacvamp-registry/publish-canary
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+ReadWritePaths=/srv/pacvamp /var/lib/pacvamp-registry
+RestrictSUIDSGID=true
+UMask=0022
