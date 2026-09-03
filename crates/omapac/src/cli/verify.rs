@@ -87,7 +87,12 @@ pub struct Transparency {
 
 /// Fetch and verify `<file>.provenance.json` with the index's build keys:
 /// a DSSE envelope whose statement names the package digest.
-fn check_provenance(base: &str, filename: &str, sha256: &str, build_keys: &[String]) -> Provenance {
+fn check_provenance(
+    source: &trust::FeedSource,
+    filename: &str,
+    sha256: &str,
+    build_keys: &[String],
+) -> Provenance {
     let failed = |error: String| Provenance {
         verified: false,
         build_key: None,
@@ -97,7 +102,7 @@ fn check_provenance(base: &str, filename: &str, sha256: &str, build_keys: &[Stri
         error: Some(error),
     };
     let bytes = match super::tools::download(
-        &format!("{base}/{filename}.provenance.json"),
+        &source.url(&format!("{filename}.provenance.json")),
         64 * 1024 * 1024,
     ) {
         Ok(bytes) => bytes,
@@ -142,22 +147,24 @@ fn check_provenance(base: &str, filename: &str, sha256: &str, build_keys: &[Stri
 
 /// Fetch `<file>.rekor.json` and check its body is a dsse entry whose
 /// payload hash is the provenance envelope's payload.
-fn check_transparency(base: &str, filename: &str) -> Transparency {
+fn check_transparency(source: &trust::FeedSource, filename: &str) -> Transparency {
     let failed = |error: String| Transparency {
         ok: false,
         log: None,
         log_index: None,
         error: Some(error),
     };
-    let entry: serde_json::Value =
-        match super::tools::download(&format!("{base}/{filename}.rekor.json"), 64 * 1024 * 1024)
-            .and_then(|bytes| Ok(serde_json::from_slice(&bytes)?))
-        {
-            Ok(entry) => entry,
-            Err(err) => return failed(format!("{err:#}")),
-        };
+    let entry: serde_json::Value = match super::tools::download(
+        &source.url(&format!("{filename}.rekor.json")),
+        64 * 1024 * 1024,
+    )
+    .and_then(|bytes| Ok(serde_json::from_slice(&bytes)?))
+    {
+        Ok(entry) => entry,
+        Err(err) => return failed(format!("{err:#}")),
+    };
     let envelope_bytes = match super::tools::download(
-        &format!("{base}/{filename}.provenance.json"),
+        &source.url(&format!("{filename}.provenance.json")),
         64 * 1024 * 1024,
     ) {
         Ok(bytes) => bytes,
@@ -346,25 +353,27 @@ impl RunWith<&App> for Verify {
             .is_file()
             .then(|| trust::sha256_file(&db_path).map(|d| d == index.db.sha256))
             .transpose()?;
-        let base = app.feed_source(&host, &repo).map(|f| f.base);
-        let provenance = base
+        let source = app.feed_source(&host, &repo);
+        let provenance = source
             .as_ref()
+            .filter(|_| !self.offline)
             .filter(|_| {
                 entry
                     .sidecars
                     .iter()
                     .any(|s| s == &format!("{filename}.provenance.json"))
             })
-            .map(|base| check_provenance(base, &filename, &entry.sha256, &index.build_keys));
-        let transparency = base
+            .map(|source| check_provenance(source, &filename, &entry.sha256, &index.build_keys));
+        let transparency = source
             .as_ref()
+            .filter(|_| !self.offline)
             .filter(|_| {
                 entry
                     .sidecars
                     .iter()
                     .any(|s| s == &format!("{filename}.rekor.json"))
             })
-            .map(|base| check_transparency(base, &filename));
+            .map(|source| check_transparency(source, &filename));
         let report = Report {
             name,
             repo,
