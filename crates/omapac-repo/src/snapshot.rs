@@ -225,13 +225,6 @@ impl Store {
     }
 }
 
-fn now() -> Result<jiff::Timestamp> {
-    match std::env::var("OMAPAC_REPO_NOW") {
-        Ok(fixed) => jiff::Timestamp::from_str(&fixed).wrap_err("OMAPAC_REPO_NOW"),
-        Err(_) => Ok(jiff::Timestamp::now()),
-    }
-}
-
 fn snapshot_id(at: jiff::Timestamp) -> String {
     at.to_zoned(jiff::tz::TimeZone::UTC)
         .strftime("%Y-%m-%dT%H")
@@ -257,7 +250,7 @@ impl RunWith<()> for Snapshot {
             };
             crate::feed::secret_key(path)
         };
-        let now = now()?;
+        let now = crate::vendor::now()?;
         match self.command {
             SnapshotCommands::Cut(cut) => {
                 let key = key()?;
@@ -265,12 +258,12 @@ impl RunWith<()> for Snapshot {
                 let release = cut_snapshot(&store, &cut, &id, now, &key)?;
                 store.point("edge", &id)?;
                 println!(
-                    "cut snapshot {id} ({} repositor{}), edge -> {id}",
+                    "cut snapshot {id} ({} database{}), edge -> {id}",
                     release.db_digests.len(),
                     if release.db_digests.len() == 1 {
-                        "y"
+                        ""
                     } else {
-                        "ies"
+                        "s"
                     }
                 );
                 Ok(())
@@ -626,7 +619,7 @@ fn cut_snapshot(
             let db = dest.join(format!("{repo}.db"));
             if db.is_file() {
                 let (sha, _) = packslip::digest_file(&db)?;
-                db_digests.insert(repo.clone(), sha);
+                db_digests.insert(format!("{repo}/os/{arch}/{repo}.db"), sha);
             }
         }
     }
@@ -744,7 +737,7 @@ pub fn check_snapshot(
 ) -> Result<CheckOutcome> {
     let dir = store.snapshot_dir(&release.id);
     let mut outcome = CheckOutcome::default();
-    let mut seen_repos = std::collections::BTreeSet::new();
+    let mut seen_digests = std::collections::BTreeSet::new();
     let mut repos: Vec<PathBuf> = std::fs::read_dir(&dir)?
         .filter_map(Result::ok)
         .map(|e| e.path())
@@ -757,10 +750,13 @@ pub fn check_snapshot(
             .and_then(|n| n.to_str())
             .unwrap_or_default()
             .to_string();
-        seen_repos.insert(repo.clone());
+        seen_digests.insert(repo.clone());
         for arch_entry in std::fs::read_dir(repo_dir.join("os"))?.filter_map(Result::ok) {
+            let arch = arch_entry.file_name().to_string_lossy().into_owned();
             let pool = arch_entry.path();
             let db_path = pool.join(format!("{repo}.db"));
+            let db_key = format!("{repo}/os/{arch}/{repo}.db");
+            seen_digests.insert(db_key.clone());
             if !db_path.is_file() {
                 outcome
                     .problems
@@ -768,11 +764,14 @@ pub fn check_snapshot(
                 continue;
             }
             let (sha, _) = packslip::digest_file(&db_path)?;
-            if let Some(expected) = release.db_digests.get(&repo)
+            if let Some(expected) = release
+                .db_digests
+                .get(&db_key)
+                .or_else(|| release.db_digests.get(&repo))
                 && expected != &sha
             {
                 outcome.problems.push(format!(
-                    "{repo}: database digest {sha} is not the recorded {expected}"
+                    "{db_key}: database digest {sha} is not the recorded {expected}"
                 ));
             }
             let db = match SyncDb::read(&db_path, &repo) {
@@ -813,11 +812,11 @@ pub fn check_snapshot(
             }
         }
     }
-    for repo in release.db_digests.keys() {
-        if !seen_repos.contains(repo) {
+    for key in release.db_digests.keys() {
+        if !seen_digests.contains(key) {
             outcome
                 .problems
-                .push(format!("{repo}: repository directory is missing"));
+                .push(format!("{key}: recorded database is missing"));
         }
     }
     if outcome.missing > 0 && !allow_missing {

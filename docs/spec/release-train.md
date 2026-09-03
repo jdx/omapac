@@ -42,7 +42,7 @@ carries its own copy at `<snapshot_base>/<id>/release.json`.
   "promoted": { "rc": "2026-09-03T08:00:00Z", "stable": "2026-09-06T08:00:00Z" },
   "expedited": false,
   "held": false,
-  "db_digests": { "core": "...", "extra": "...", "multilib": "..." }
+  "db_digests": { "core/os/x86_64/core.db": "...", "extra/os/x86_64/extra.db": "..." }
 }
 ```
 
