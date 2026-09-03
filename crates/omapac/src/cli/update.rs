@@ -51,6 +51,8 @@ pub struct Update {
 
 #[derive(Debug, Serialize)]
 pub struct UpdatePlan {
+    /// The channel snapshot the repositories are at, when known.
+    pub snapshot: Option<String>,
     pub repo: Option<Plan>,
     pub holds: Vec<Hold>,
     pub aur: Vec<AurCandidate>,
@@ -173,6 +175,15 @@ impl RunWith<&App> for Update {
         // Re-read after the refresh.
         let host = app.host()?;
         let now = crate::ledger::now();
+        // The channel's release manifest, fetched now so the tested label
+        // and the recorded snapshot are current; absent is fine.
+        let release = match app.release(&host, false) {
+            Ok(release) => release,
+            Err(err) => {
+                eprintln!("note: release manifest unavailable: {err:#}");
+                None
+            }
+        };
 
         // Repository upgrades with holds.
         let mut holds = Vec::new();
@@ -246,6 +257,7 @@ impl RunWith<&App> for Update {
             .collect();
 
         let plan = UpdatePlan {
+            snapshot: release.as_ref().map(|r| r.id.clone()),
             repo: repo_plan.as_ref().map(|(_, p)| Plan {
                 changes: Vec::new(),
                 download_size: p.download_size,
@@ -266,6 +278,14 @@ impl RunWith<&App> for Update {
         }
 
         // One plan.
+        if let Some(release) = &release {
+            println!(
+                "snapshot: {} ({}; {} tested pkgbase(s))",
+                release.id,
+                super::channel::describe(release),
+                release.tested_pkgbases.len()
+            );
+        }
         if let Some((_, p)) = &repo_plan {
             print!("{}", transaction::render("upgrade", p));
         }
