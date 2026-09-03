@@ -332,17 +332,32 @@ impl App {
         if settings.trust_advisories == Mode::Off {
             return Ok(None);
         }
+        let unavailable = |detail: String| {
+            if settings.trust_advisories == Mode::Required {
+                bail!("trust.advisories is required: {detail}");
+            }
+            eprintln!("warning: advisory feeds unavailable: {detail}");
+            Ok(None)
+        };
         let Some(source) = host
             .sources
             .iter()
             .find(|s| matches!(s.tier, crate::resolve::Tier::Opr))
         else {
-            return Ok(None);
+            return unavailable("no OPR repository is configured".into());
         };
         let Some(feed) = self.feed_source(host, &source.name) else {
-            bail!("[{}] has no server to fetch feeds from", source.name);
+            return unavailable(format!(
+                "[{}] has no server to fetch feeds from",
+                source.name
+            ));
         };
-        let keyring = crate::trust::Keyring::load(self.paths.sysroot.as_deref())?;
+        let keyring = match crate::trust::Keyring::load(self.paths.sysroot.as_deref()) {
+            Ok(keyring) => keyring,
+            Err(err) => {
+                return unavailable(format!("loading trust keys: {err:#}"));
+            }
+        };
         let cache = crate::trust::Cache::for_repo(&source.name);
         let advisories = crate::trust::fetch(&feed, "advisories.json", &keyring, &cache, false)
             .map(|fetched: crate::trust::Fetched<crate::trust::Advisories>| fetched.value);
