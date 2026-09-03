@@ -66,7 +66,17 @@ fn setup() -> Setup {
 }
 
 fn run(s: &Setup, args: &[&str], print: &str) -> (i32, String, String) {
-    let output = Command::new(env!("CARGO_BIN_EXE_omapac"))
+    run_with_status(s, args, print, None)
+}
+
+fn run_with_status(
+    s: &Setup,
+    args: &[&str],
+    print: &str,
+    status: Option<i32>,
+) -> (i32, String, String) {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_omapac"));
+    command
         .env("PATH", format!("{}:/usr/bin:/bin", s.rig.bin.display()))
         .env("HOME", &s.rig.home)
         .env_remove("XDG_CONFIG_HOME")
@@ -75,9 +85,11 @@ fn run(s: &Setup, args: &[&str], print: &str) -> (i32, String, String) {
         .env("FAKE_PACMAN_PRINT", print)
         .arg("--sysroot")
         .arg(&s.rig.root)
-        .args(args)
-        .output()
-        .unwrap();
+        .args(args);
+    if let Some(status) = status {
+        command.env("FAKE_PACMAN_STATUS", status.to_string());
+    }
+    let output = command.output().unwrap();
     (
         output.status.code().unwrap_or(-1),
         String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -291,6 +303,23 @@ fn rollback_restores_the_pin_when_confirmation_fails() {
             .exists()
     );
     assert!(!s.rig.root.join("var/lib/omapac/state.json").exists());
+}
+
+#[test]
+fn rollback_retains_the_original_error_when_recovery_fails() {
+    let s = setup();
+    let (code, _, err) = run_with_status(
+        &s,
+        &["rollback", "--snapshot", "2026-09-01T06", "-y"],
+        "",
+        Some(3),
+    );
+    assert_ne!(code, 0);
+    assert!(
+        err.contains("mirrorlist restored, but rollback recovery failed to refresh databases"),
+        "{err}"
+    );
+    assert!(err.contains("exited with status 3"), "{err}");
 }
 
 #[test]
