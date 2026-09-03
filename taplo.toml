@@ -1,0 +1,5 @@
+# usage-rs's derive macros locate the `usage_rs` alias by scanning the
+# workspace manifest line by line, and a dependency entry wrapped across
+# lines hides the entries after it. Keep dependency tables on one line.
+[formatting]
+column_width = 120

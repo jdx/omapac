@@ -96,6 +96,15 @@ impl App {
     pub fn host(&self) -> Result<Host> {
         Host::load(self.paths.clone())
     }
+
+    /// The AUR RPC client. `OMAPAC_AUR_RPC_BASE` points it elsewhere, for
+    /// mirrors and tests.
+    pub fn aur_rpc(&self) -> crate::aur::rpc::Client {
+        match std::env::var("OMAPAC_AUR_RPC_BASE") {
+            Ok(base) if !base.is_empty() => crate::aur::rpc::Client::with_base(&base),
+            _ => crate::aur::rpc::Client::new(),
+        }
+    }
 }
 
 impl AsRef<BinInfo> for App {
