@@ -73,7 +73,11 @@ impl RunWith<&App> for Install {
             self.dry_run,
         )?;
         if performed {
-            let targets: Vec<String> = tx_targets(&tx);
+            let targets: Vec<String> = if self.as_deps {
+                Vec::new()
+            } else {
+                tx_targets(&tx)
+            };
             app.record(&transaction::ledger_patch(
                 &plan, &targets, "install", false,
             ))?;
