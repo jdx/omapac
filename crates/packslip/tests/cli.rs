@@ -156,6 +156,32 @@ fn keygen_create_verify() {
 }
 
 #[test]
+fn source_revision_requires_a_repository() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let (code, _, err) = packslip(d, &["keygen", "-o", "release.key"]);
+    assert_eq!(code, 0, "{err}");
+    std::fs::write(d.join("tool.tar.xz"), b"tool").unwrap();
+    let (code, _, err) = packslip(
+        d,
+        &[
+            "create",
+            "--project",
+            "pkg:github/example/tool",
+            "--version",
+            "1",
+            "--key",
+            "release.key",
+            "--commit",
+            "abc123",
+            "tool.tar.xz",
+        ],
+    );
+    assert_ne!(code, 0);
+    assert!(err.contains("require --source-repo"), "{err}");
+}
+
+#[test]
 fn schema_is_json() {
     let dir = tempfile::tempdir().unwrap();
     let (code, out, _) = packslip(dir.path(), &["schema"]);

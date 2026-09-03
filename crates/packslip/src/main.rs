@@ -168,6 +168,9 @@ impl RunWith<BinInfo> for Create {
     type Output = Result<()>;
 
     fn run_with(self, _: BinInfo) -> Self::Output {
+        if self.source_repo.is_none() && (self.commit.is_some() || self.tag.is_some()) {
+            eyre::bail!("--commit and --tag require --source-repo");
+        }
         let key_text = std::fs::read_to_string(&self.key)
             .wrap_err_with(|| format!("reading {}", self.key.display()))?;
         let key = SecretKey::parse(&key_text)?;
@@ -224,11 +227,11 @@ struct ArtifactSpec {
     libc: Option<String>,
 }
 
-/// A path may contain ':' only when followed by an os/arch suffix, which
-/// is recognised by the '/' in it.
+/// Recognize only a well-formed `os/arch[/libc]` suffix. In particular,
+/// colons inside timestamped directory names remain part of the path.
 fn parse_spec(spec: &str) -> ArtifactSpec {
     match spec.rsplit_once(':') {
-        Some((path, platform)) if platform.contains('/') => {
+        Some((path, platform)) if valid_platform(platform) => {
             let mut parts = platform.split('/');
             ArtifactSpec {
                 path: PathBuf::from(path),
@@ -244,6 +247,17 @@ fn parse_spec(spec: &str) -> ArtifactSpec {
             libc: None,
         },
     }
+}
+
+fn valid_platform(platform: &str) -> bool {
+    let parts: Vec<_> = platform.split('/').collect();
+    (parts.len() == 2 || parts.len() == 3)
+        && parts.iter().all(|part| {
+            part.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
+                && part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        })
 }
 
 /// Verify a packslip against a pinned public key
@@ -323,5 +337,26 @@ fn main() -> Result<()> {
     match cli.command {
         Some(command) => command.run_with(BIN),
         None => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn artifact_platform_suffix_does_not_consume_timestamped_paths() {
+        let timestamped = parse_spec("dist/2026-09-03T11:17:00Z/tool.tar.xz");
+        assert_eq!(
+            timestamped.path,
+            PathBuf::from("dist/2026-09-03T11:17:00Z/tool.tar.xz")
+        );
+        assert!(timestamped.os.is_none());
+
+        let overridden = parse_spec("tool.tar.xz:freebsd/riscv64/musl");
+        assert_eq!(overridden.path, PathBuf::from("tool.tar.xz"));
+        assert_eq!(overridden.os.as_deref(), Some("freebsd"));
+        assert_eq!(overridden.arch.as_deref(), Some("riscv64"));
+        assert_eq!(overridden.libc.as_deref(), Some("musl"));
     }
 }
