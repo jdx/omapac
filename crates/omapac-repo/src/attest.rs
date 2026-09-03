@@ -170,6 +170,8 @@ impl RunWith<()> for Attest {
             println!("wrote {}", out.display());
             if let Some(log) = &self.rekor {
                 let entry = crate::rekor::upload(log, &envelope, &key.public_key())?;
+                crate::rekor::verify_inclusion(&entry, None)
+                    .wrap_err("the log's answer does not verify")?;
                 let path = crate::rekor::sidecar_path(package);
                 std::fs::write(&path, serde_json::to_vec_pretty(&entry)?)
                     .wrap_err_with(|| format!("writing {}", path.display()))?;
