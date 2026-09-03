@@ -146,6 +146,17 @@ Facts as of 2026-09-03.
 9. Evidence is portable. Every verdict, provenance statement, and vendor manifest is a
    signed in-toto style document any consumer can verify, so mise, OPR, and omapac
    share formats rather than integrations.
+10. Scope decides the installer; vendor-built decides the evidence. A user-scoped tool
+    goes through mise, a system-scoped package goes through omapac, and packslip
+    applies to any vendor-built artifact whichever path consumes it. Vendor-built
+    things are mostly user-scoped tools (agent CLIs, gh, language runtimes), so they
+    reach users through mise and the tool channel with no PKGBUILD at all. A
+    vendor-built thing is system-scoped, and therefore an OPR package, when it is
+    needed before any user exists (mise, omapac), when it needs root-only integration
+    (setuid helpers, udev, systemd units, PAM or kernel modules, polkit, system D-Bus),
+    or when the launcher expects it system-wide (desktop files, icons, MIME handlers
+    under `/usr/share`). Source-built software, which is Arch's repos, Omarchy's own
+    apps, drivers, and the AUR, always goes through omapac.
 
 Non-goals for v1: flatpak and snap, a GUI store, pacman's full flag surface,
 multi-distro support, and the AI reviewer itself.
@@ -389,13 +400,17 @@ the bundle subject, the Rekor inclusion proof is present, and the index entry is
 consistent. A build-host compromise therefore cannot produce a repo-signed package
 without also compromising the signer.
 
-**vendor.** Reads a package's upstream declaration, fetches the vendor's packslip,
-verifies it against the pinned vendor identity, enforces the provenance floor
-(no-downgrade) and the minimum release age, and emits the PKGBUILD checksum lines plus
-a sidecar carrying the vendor's manifest. Clients then verify the whole chain offline:
-OPR bundle, to vendor artifact digest, to vendor packslip, to vendor identity. For
-vendors without a packslip it falls back to legacy evidence (checksum file plus
-minisign, cosign, GPG, or GitHub attestation) and records a lower evidence level.
+**vendor.** One vetting core with two publishers. The core reads an upstream
+declaration, fetches the vendor's release, verifies its packslip against the pinned
+vendor identity (or the legacy evidence: checksum file plus minisign, cosign, GPG, or
+GitHub attestation, recorded at a lower evidence level), enforces the provenance floor
+(no-downgrade) and the minimum release age, and runs the verdict reviewers over the
+artifact. The channel publisher, the default, mirrors the artifact with its sidecars
+and appends it to the signed tool index for mise; see "Vetted tool channel for mise".
+The package publisher, for the system-scoped exceptions in principle 10, emits the
+PKGBUILD checksum lines plus a sidecar carrying the vendor's manifest so the built
+package chains back to the vendor. Clients then verify the whole chain offline: OPR
+bundle, to vendor artifact digest, to vendor packslip, to vendor identity.
 
 **sync-aur.** Runs the shared policy engine on every commit pulled from the AUR and
 posts findings on the pull request. Auto-merge happens only when every maintainer is
@@ -425,10 +440,6 @@ period.
 **snapshot.** The release-train side: cut snapshots, write and sign the release
 manifest, move channel pointers, and record test results and holds.
 
-**tools.** The vetted tool channel for mise: verify a vendor release, apply the
-minimum release age and the verdict reviewers, mirror the artifact with its sidecars,
-and append it to the signed tool index. Described under "Vetted tool channel for
-mise".
 
 ### Third-party scanning
 
@@ -515,9 +526,12 @@ packages are. The answer is a tool channel: a signed index of vendor tool releas
 Omarchy has vetted, plus a mirror of the vetted artifacts with their evidence. mise
 resolves tools through the channel, so `mise use claude` on Omarchy installs the newest
 vetted build rather than whatever the vendor pushed an hour ago. This is not a pacman
-bridge; tools stay per-user and versioned in mise's own layout.
+bridge; tools stay per-user and versioned in mise's own layout. Principle 10 says
+which vendor-built things take this path: everything user-scoped, which on Omarchy is
+the agent CLIs, gh, and the developer-tool long tail.
 
-What vetting a tool version means, run by `omapac-repo tools`:
+What vetting a tool version means, run by the channel publisher of
+`omapac-repo vendor`:
 
 - Fetch the vendor release and verify its packslip, or the legacy evidence (checksum
   file plus minisign, cosign, GPG, or GitHub attestation), against the pinned vendor
@@ -558,7 +572,7 @@ refusal under paranoid mode or the managed floor. The channel can place a hold o
 version, which is how a bad release is pulled after the fact.
 
 The channel format is packslip plus verdicts plus an index and carries nothing
-Omarchy-specific. A company can run the same `omapac-repo tools` pipeline to publish
+Omarchy-specific. A company can run the same `omapac-repo vendor` pipeline to publish
 an internal vetted-tools channel and mise consumes it identically.
 
 ## Release train
@@ -690,7 +704,7 @@ omapac pacnew              [--merge]
 omapac present|missing <pkg>...                   exit-code predicates for menu guards
 omapac doctor                                     SigLevel floor, keyring, index freshness, jail support
 
-omapac-repo index | attest | sign | vendor | sync-aur | verdict | advisories | snapshot | tools
+omapac-repo index | attest | sign | vendor [--publish channel|package] | sync-aur | verdict | advisories | snapshot
 packslip create | verify
 ```
 
@@ -777,12 +791,12 @@ stays manageable; the first group is layers 1 through 6, a working pacman fronte
 15. Trust: index, release manifest, verdicts, advisories, sidecars.
 16. Channels and snapshots: channel, pin, rollback, tested labels.
 17. omapac-repo index and attest.
-18. omapac-repo sign gate and vendor pipeline.
+18. omapac-repo sign gate and the vendor vetting core with the package publisher.
 19. omapac-repo sync-aur gate, verdict, advisories.
 20. omapac-repo snapshot and test harness.
 21. ratatui pickers.
 22. audit.
-23. omapac-repo tools: vetting pipeline, artifact mirror, signed tool index.
+23. omapac-repo vendor channel publisher: artifact mirror and signed tool index.
 24. mise tool-channel backend plugin.
 25. Documentation: specs, adoption guides, rendered CLI docs.
 
@@ -854,6 +868,11 @@ Recorded 2026-09-03. Each states the decision and the reasoning in plain terms.
     per-user and versioned; the channel decides which versions are vetted and what
     `latest` means. A backend plugin from this repository is the bridge until mise
     supports channels natively.
+13. Scope decides the installer (principle 10). Vendor-built user-scoped tools go
+    through mise and the tool channel; system-scoped software, vendor-built or not,
+    goes through omapac. The OPR vendor pipeline and the tool channel share one
+    vetting core with two publishers, so OPR only keeps PKGBUILDs for the
+    system-scoped exceptions such as mise, omapac, browsers, and desktop apps.
 
 ## Open questions
 
