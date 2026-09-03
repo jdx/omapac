@@ -125,8 +125,6 @@ pub fn build(reviewed: &Reviewed, opts: &BuildOpts) -> Result<Vec<PathBuf>> {
     let verify_args = ["--verifysource", "--noconfirm", "--force"];
     let status = run_makepkg(opts, &verify_args, true, true, &verifydir)
         .wrap_err("running makepkg --verifysource")?;
-    std::fs::remove_dir_all(&verifydir)
-        .wrap_err_with(|| format!("removing {}", verifydir.display()))?;
     if !status.success() {
         bail!(
             "makepkg --verifysource failed for {} with status {}",
@@ -134,6 +132,8 @@ pub fn build(reviewed: &Reviewed, opts: &BuildOpts) -> Result<Vec<PathBuf>> {
             status.code().unwrap_or(-1)
         );
     }
+    std::fs::remove_dir_all(&verifydir)
+        .wrap_err_with(|| format!("removing {}", verifydir.display()))?;
 
     // Phase 2 extracts, prepares, builds, and packages inside the jail.
     // --holdver prevents makepkg from updating VCS sources a second time;
