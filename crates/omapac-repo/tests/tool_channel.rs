@@ -203,7 +203,14 @@ fn publish_promote_hold_and_immutability() {
         "1.0.0"
     );
 
-    // Publishing the same version again is refused; versions are immutable.
+    // A scheduled default publish is an idempotent no-op while the latest
+    // eligible release is already present.
+    let (code, out, err) = tc(&rig, &["publish", "--config", "tool/tool.toml"]);
+    assert_eq!(code, 0, "{err}\n{out}");
+    assert!(out.contains("already up to date"), "{out}");
+    assert_eq!(index(&rig).sequence, 1);
+
+    // Explicitly publishing the same version is refused; versions are immutable.
     let (code, _, err) = tc(
         &rig,
         &[
