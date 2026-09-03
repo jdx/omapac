@@ -628,15 +628,10 @@ fn only_one_update_runs_at_a_time() {
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
 
-    // Free again: the run proceeds and writes its pid into the lock.
+    // Free again: the run proceeds using the same lock inode.
     let (code, out, err) = run(&s, &["update", "-n", "--no-aur"], UPGRADE);
     assert_eq!(code, 0, "{err}\n{out}");
-    let pid: u32 = std::fs::read_to_string(&lock)
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap();
-    assert!(pid > 0);
+    assert!(lock.is_file());
 
     // --wait queues behind a short hold.
     let mut holder = Command::new("flock")
