@@ -173,36 +173,59 @@ impl RunWith<&App> for Add {
 
     fn run_with(self, app: &App) -> Self::Output {
         let paths = app.manifest_paths();
-        let mut names = Vec::new();
-        for spec in &self.packages {
-            let (repo, name) = match spec.split_once('/') {
-                Some((repo, name)) if !self.aur => (Some(repo.to_string()), name.to_string()),
-                Some(_) => bail!("{spec}: repo/name does not apply with --aur"),
-                None => (None, spec.clone()),
+        let previous = match std::fs::read(&paths.user) {
+            Ok(bytes) => Some(bytes),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+            Err(err) => return Err(err.into()),
+        };
+        let result = (|| {
+            let mut names = Vec::new();
+            for spec in &self.packages {
+                let (repo, name) = match spec.split_once('/') {
+                    Some((repo, name)) if !self.aur => (Some(repo.to_string()), name.to_string()),
+                    Some(_) => bail!("{spec}: repo/name does not apply with --aur"),
+                    None => (None, spec.clone()),
+                };
+                let package = PackageToml {
+                    source: if self.aur { Source::Aur } else { Source::Repo },
+                    repo,
+                    state: if self.absent {
+                        State::Absent
+                    } else {
+                        State::Present
+                    },
+                    hold: self.hold,
+                };
+                edit::set_package(&paths.user, &name, &package)?;
+                println!("declared {name} in {}", paths.user.display());
+                names.push(name);
+            }
+            let host = app.host()?;
+            let manifest = app.manifest()?;
+            let diff = Diff::compute(&host, &manifest)?.restricted_to(&names);
+            if !diff.has_changes() {
+                print!("{}", diff.render());
+                return Ok(());
+            }
+            let engine = app.engine()?;
+            diff.apply(&host, &manifest, &engine, self.yes, self.dry_run)
+        })();
+        if let Err(err) = result {
+            let restore = match previous {
+                Some(bytes) => std::fs::write(&paths.user, bytes),
+                None => std::fs::remove_file(&paths.user),
             };
-            let package = PackageToml {
-                source: if self.aur { Source::Aur } else { Source::Repo },
-                repo,
-                state: if self.absent {
-                    State::Absent
-                } else {
-                    State::Present
-                },
-                hold: self.hold,
-            };
-            edit::set_package(&paths.user, &name, &package)?;
-            println!("declared {name} in {}", paths.user.display());
-            names.push(name);
+            if let Err(restore_err) = restore
+                && restore_err.kind() != std::io::ErrorKind::NotFound
+            {
+                return Err(eyre::eyre!(
+                    "{err:#}; restoring {}: {restore_err}",
+                    paths.user.display()
+                ));
+            }
+            return Err(err);
         }
-        let host = app.host()?;
-        let manifest = app.manifest()?;
-        let diff = Diff::compute(&host, &manifest)?.restricted_to(&names);
-        if !diff.has_changes() {
-            print!("{}", diff.render());
-            return Ok(());
-        }
-        let engine = app.engine()?;
-        diff.apply(&host, &manifest, &engine, self.yes, self.dry_run)
+        Ok(())
     }
 }
 

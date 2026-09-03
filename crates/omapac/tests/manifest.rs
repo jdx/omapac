@@ -163,6 +163,21 @@ fn add_writes_the_user_manifest_and_converges_only_those() {
 }
 
 #[test]
+fn failed_add_restores_the_manifest() {
+    let rig = Rig::new();
+    std::fs::create_dir_all(rig.user_manifest().parent().unwrap()).unwrap();
+    let original = "# keep me\n[packages]\npacman = {}\n";
+    std::fs::write(rig.user_manifest(), original).unwrap();
+
+    let (code, _, _) = rig.run(&["add", "-y", "curl"], HELIX_PLAN, 7);
+    assert_ne!(code, 0);
+    assert_eq!(
+        std::fs::read_to_string(rig.user_manifest()).unwrap(),
+        original
+    );
+}
+
+#[test]
 fn drop_keeps_what_a_lower_layer_declares() {
     let rig = Rig::new();
     rig.write_root(
