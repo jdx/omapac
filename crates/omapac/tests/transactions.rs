@@ -184,6 +184,23 @@ fn unattended_install_refuses_warnings() {
         "{err}"
     );
     assert_eq!(rig.log().len(), 1, "only the plan ran");
+
+    let conf = std::fs::read_to_string(rig.root.join("etc/pacman.conf"))
+        .unwrap()
+        .replace(
+            "[core]\nServer = https://m/$repo/os/$arch",
+            "[core]\nServer = https://m/$repo/os/$arch\nSigLevel = Never",
+        );
+    std::fs::write(rig.root.join("etc/pacman.conf"), conf).unwrap();
+    let calls = rig.log().len();
+    let plan = "pacman\\t7.1.0-2\\tcore\\thttps://x/pacman.pkg\\t1\\n";
+    let (code, out, _) = rig.run(&["install", "-y", "pacman"], plan, 0);
+    assert_ne!(code, 0);
+    assert!(
+        out.contains("[core] does not check package signatures"),
+        "{out}"
+    );
+    assert_eq!(rig.log().len(), calls + 1, "only the second plan ran");
 }
 
 #[test]
