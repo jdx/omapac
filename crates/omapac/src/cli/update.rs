@@ -227,13 +227,6 @@ impl RunWith<&App> for Update {
         } else {
             None
         };
-        if repo_empty && let Some(release) = &converged_release {
-            app.record(&crate::ledger::Patch {
-                snapshot: Some(release.id.clone()),
-                ..Default::default()
-            })?;
-        }
-
         if let Some((_, plan)) = &repo_plan {
             transaction::validate_plan(plan, "upgrade", self.yes)?;
         }
@@ -246,6 +239,12 @@ impl RunWith<&App> for Update {
             eyre::bail!("cancelled");
         }
         if !has_work {
+            if repo_empty && let Some(release) = &converged_release {
+                app.record(&crate::ledger::Patch {
+                    snapshot: Some(release.id.clone()),
+                    ..Default::default()
+                })?;
+            }
             return Ok(());
         }
 
@@ -343,6 +342,12 @@ impl RunWith<&App> for Update {
                     skipped.join(", ")
                 );
                 eprintln!("{msg}");
+            }
+            if repo_empty && let Some(release) = &converged_release {
+                app.record(&crate::ledger::Patch {
+                    snapshot: Some(release.id.clone()),
+                    ..Default::default()
+                })?;
             }
             Ok(())
         })();

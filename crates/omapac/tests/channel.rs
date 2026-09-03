@@ -134,6 +134,15 @@ fn update_records_the_release_when_no_packages_change() {
 }
 
 #[test]
+fn cancelling_remaining_work_does_not_record_convergence() {
+    let s = setup();
+    let (code, _, err) = run(&s, &["update", "--no-aur", "--prune-orphans"], "");
+    assert_ne!(code, 0);
+    assert!(err.contains("no terminal to ask on; pass -y"), "{err}");
+    assert!(!s.rig.root.join("var/lib/omapac/state.json").exists());
+}
+
+#[test]
 fn pin_writes_the_mirrorlist_and_unpin_restores_it() {
     let s = setup();
     let mirrorlist = s.rig.root.join("etc/pacman.d/mirrorlist");
