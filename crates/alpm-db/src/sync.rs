@@ -155,8 +155,9 @@ impl SyncDb {
             if dir.is_empty() || !matches!(kind, "desc" | "depends" | "files") {
                 continue;
             }
-            let mut text = String::new();
-            item.read_to_string(&mut text).map_err(|_| Error::NotText {
+            let mut bytes = Vec::new();
+            item.read_to_end(&mut bytes)?;
+            let text = String::from_utf8(bytes).map_err(|_| Error::NotText {
                 entry: path.display().to_string(),
             })?;
             if !entries.contains_key(dir) {
@@ -243,6 +244,12 @@ mod tests {
         assert_eq!(omarchy.repo, "omarchy");
         assert!(omarchy.depends.iter().any(|d| d.name == "omarchy-keyring"));
         assert!(db.package("mise-bin").is_some());
+    }
+
+    #[test]
+    fn corrupt_compressed_stream_is_an_io_error() {
+        let err = SyncDb::from_bytes(&[0x1f, 0x8b, 0, 0], "broken").unwrap_err();
+        assert!(matches!(err, Error::Io(_)), "{err}");
     }
 
     #[test]
