@@ -119,11 +119,11 @@ impl Options {
         self.root_dir.clone().unwrap_or_else(|| PathBuf::from("/"))
     }
 
-    /// `DBPath`, or `/var/lib/pacman`.
+    /// `DBPath`, or `var/lib/pacman` below `RootDir`.
     pub fn db_path(&self) -> PathBuf {
         self.db_path
             .clone()
-            .unwrap_or_else(|| PathBuf::from("/var/lib/pacman"))
+            .unwrap_or_else(|| self.root_dir().join("var/lib/pacman"))
     }
 
     /// `CacheDir` entries, or `/var/cache/pacman/pkg`.
@@ -142,11 +142,11 @@ impl Options {
             .unwrap_or_else(|| PathBuf::from("/etc/pacman.d/gnupg"))
     }
 
-    /// `LogFile`, or `/var/log/pacman.log`.
+    /// `LogFile`, or `var/log/pacman.log` below `RootDir`.
     pub fn log_file(&self) -> PathBuf {
         self.log_file
             .clone()
-            .unwrap_or_else(|| PathBuf::from("/var/log/pacman.log"))
+            .unwrap_or_else(|| self.root_dir().join("var/log/pacman.log"))
     }
 
     /// The first `Architecture`, with `auto` resolved to the host's, which
@@ -1176,6 +1176,17 @@ mod tests {
         assert_eq!(options.gpg_dir(), Path::new("/etc/pacman.d/gnupg"));
         assert_eq!(options.log_file(), Path::new("/var/log/pacman.log"));
         assert_eq!(options.arch(), None);
+    }
+
+    #[test]
+    fn root_dir_scopes_default_database_and_log_paths() {
+        let options = Options {
+            root_dir: Some(PathBuf::from("/chroot")),
+            ..Options::default()
+        };
+
+        assert_eq!(options.db_path(), Path::new("/chroot/var/lib/pacman"));
+        assert_eq!(options.log_file(), Path::new("/chroot/var/log/pacman.log"));
     }
 
     #[test]
