@@ -133,7 +133,7 @@ impl App {
             remote: &remote,
             cache_dir: &cache_dir,
             settings: &manifest.settings,
-            locked: lock.aur.get(name),
+            locked: &lock.aur,
             commit,
             pinned,
             interactive,
@@ -264,7 +264,10 @@ impl RunWith<&App> for Approve {
                 bail!("not approved");
             }
         }
-        lock.aur.insert(self.package.clone(), reviewed.lock_entry());
+        // One approval covers all split packages produced by the pkgbase.
+        lock.aur.remove(&self.package);
+        lock.aur
+            .insert(reviewed.pkgbase.clone(), reviewed.lock_entry());
         let path = app.lockfile_path();
         lock.save(&path)?;
         println!(

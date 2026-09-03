@@ -1,6 +1,8 @@
 //! Gathering evidence for the policy engine: the RPC, a git checkout, the
 //! `.SRCINFO`, the lockfile, and the host, turned into plain facts.
 
+use std::collections::BTreeMap;
+
 use eyre::{Context as _, Result, bail};
 use omapac_policy::{self as policy, Evidence, Policy, Report};
 
@@ -30,7 +32,8 @@ pub struct Request<'a> {
     pub remote: &'a Remote,
     pub cache_dir: &'a std::path::Path,
     pub settings: &'a Settings,
-    pub locked: Option<&'a AurEntry>,
+    /// Approved entries, keyed by AUR pkgbase.
+    pub locked: &'a BTreeMap<String, AurEntry>,
     /// A commit to review instead of the remote head.
     pub commit: Option<&'a str>,
     /// Whether selecting that commit is itself drift to report.
@@ -111,12 +114,18 @@ fn gather(
     let now = crate::ledger::now();
     let log = checkout.log(target, 2)?;
     let target_time = log.first().map(|c| c.time).unwrap_or(now);
-    let approved = request.locked.map(|entry| policy::Approved {
-        commit: entry.commit.clone(),
-        maintainer: entry.maintainer.clone(),
-        source_hosts: entry.source_hosts.clone(),
-        install_files: entry.install_files.clone(),
-    });
+    // Lock entries are shared by every split package produced by this pkgbase.
+    // Fall back to the old pkgname key so existing lockfiles migrate on approval.
+    let approved = request
+        .locked
+        .get(&package.package_base)
+        .or_else(|| request.locked.get(name))
+        .map(|entry| policy::Approved {
+            commit: entry.commit.clone(),
+            maintainer: entry.maintainer.clone(),
+            source_hosts: entry.source_hosts.clone(),
+            install_files: entry.install_files.clone(),
+        });
     let diff = match &approved {
         Some(approved) if approved.commit != target && checkout.has_commit(&approved.commit) => {
             let approved_time = checkout.log(&approved.commit, 1)?.first().map(|c| c.time);
@@ -256,15 +265,46 @@ impl Reviewed {
     }
 }
 
-/// A digest over the findings' ids and messages.
+/// A digest over stable finding identities.
 pub fn findings_digest(report: &Report) -> String {
     use sha2::Digest as _;
     let mut hasher = sha2::Sha256::new();
-    for judged in &report.findings {
-        hasher.update(judged.finding.id.as_str().as_bytes());
-        hasher.update(b"\n");
-        hasher.update(judged.finding.message.as_bytes());
+    let mut ids: Vec<_> = report
+        .findings
+        .iter()
+        .map(|judged| judged.finding.id.as_str())
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    for id in ids {
+        hasher.update(id.as_bytes());
         hasher.update(b"\n");
     }
     format!("sha256:{:x}", hasher.finalize())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use omapac_policy::{Decision, Finding, FindingId, Judged, Mode, Severity};
+
+    fn report(message: &str) -> Report {
+        Report {
+            pkgbase: "demo".into(),
+            commit: "a".repeat(40),
+            mode: Mode::Interactive,
+            findings: vec![Judged {
+                finding: Finding::new(FindingId::RecentCommit, Severity::Warn, message.into()),
+                decision: Decision::Warn,
+            }],
+        }
+    }
+
+    #[test]
+    fn findings_digest_ignores_presentation_text() {
+        assert_eq!(
+            findings_digest(&report("old wording")),
+            findings_digest(&report("new wording"))
+        );
+    }
 }

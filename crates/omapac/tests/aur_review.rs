@@ -196,3 +196,35 @@ fn unknown_packages_and_wrong_names() {
         "{err}"
     );
 }
+
+#[test]
+fn split_package_approval_is_keyed_by_pkgbase() {
+    let rig = Rig::new();
+    let aur = FakeAur::new(rig.dir.path());
+    let srcinfo = "pkgbase = demo\n\tpkgver = 1\n\tpkgrel = 1\n\n\
+                   pkgname = demo-cli\n\n\
+                   pkgname = demo-libs\n";
+    aur.create(
+        "demo",
+        &[
+            (
+                "PKGBUILD",
+                "pkgbase=demo\npkgname=(demo-cli demo-libs)\npkgver=1\npkgrel=1\n",
+            ),
+            (".SRCINFO", srcinfo),
+        ],
+        "2026-01-01T00:00:00Z",
+    );
+    let mut info: serde_json::Value = serde_json::from_str(INFO).unwrap();
+    let package = &mut info["results"][0];
+    package["Name"] = "demo-cli".into();
+    package["PackageBase"] = "demo".into();
+    let rpc = common::http::serve(vec![("/rpc/v5/info", info.to_string())]);
+    let setup = Setup { rig, aur, rpc };
+
+    let (code, _, err) = run(&setup, &["aur", "approve", "-y", "demo-cli"]);
+    assert_eq!(code, 0, "{err}");
+    let lock = std::fs::read_to_string(setup.rig.home.join(".config/omapac/omapac.lock")).unwrap();
+    assert!(lock.contains("[aur.demo]"), "{lock}");
+    assert!(!lock.contains("[aur.demo-cli]"), "{lock}");
+}
