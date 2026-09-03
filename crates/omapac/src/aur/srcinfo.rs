@@ -234,15 +234,15 @@ impl SrcInfo {
     /// them, which is how makepkg treats split packages.
     fn merged(&self, pkgname: &str, key: &str, arch: &str) -> Vec<Dependency> {
         let package = self.packages.iter().find(|p| p.name == pkgname);
-        let values = match package {
-            Some(p) if p.fields.iter().any(|(k, _)| k == key) => p.all_for_arch(key, arch),
-            Some(p) if p.fields.iter().any(|(k, _)| k == &format!("{key}_{arch}")) => {
-                let mut values = self.base.all(key);
-                values.extend(p.all(&format!("{key}_{arch}")));
-                values
-            }
-            _ => self.base.all_for_arch(key, arch),
+        let arch_key = format!("{key}_{arch}");
+        let mut values = match package {
+            Some(p) if p.fields.iter().any(|(k, _)| k == key) => p.all(key),
+            _ => self.base.all(key),
         };
+        values.extend(match package {
+            Some(p) if p.fields.iter().any(|(k, _)| k == &arch_key) => p.all(&arch_key),
+            _ => self.base.all(&arch_key),
+        });
         values.into_iter().map(Dependency::parse).collect()
     }
 }
@@ -362,6 +362,13 @@ mod tests {
         assert_eq!(info.version(), "3:1.0-2");
         assert_eq!(info.pkgnames(), ["split-a", "split-b", "split-empty"]);
         assert_eq!(info.depends("split-a", "x86_64")[0].name, "only-a");
+        assert_eq!(
+            info.depends("split-a", "x86_64")
+                .into_iter()
+                .map(|dependency| dependency.name)
+                .collect::<Vec<_>>(),
+            ["only-a"]
+        );
         assert_eq!(info.depends("split-b", "x86_64")[0].name, "common");
         assert!(info.depends("split-empty", "x86_64").is_empty());
         assert!(info.provides("split-empty", "x86_64").is_empty());
@@ -411,6 +418,25 @@ mod tests {
             .map(|dependency| dependency.name)
             .collect();
         assert_eq!(arm, ["common"]);
+    }
+
+    #[test]
+    fn package_unsuffixed_fields_keep_base_arch_fields() {
+        let text = "pkgbase = split\n\tpkgver = 1\n\tpkgrel = 1\n\tdepends = base\n\tdepends_x86_64 = base-x86\n\tprovides_x86_64 = virtual-x86\n\npkgname = split\n\tdepends = package\n\tprovides = virtual\n";
+        let info = SrcInfo::parse(text).unwrap();
+
+        let depends: Vec<_> = info
+            .depends("split", "x86_64")
+            .into_iter()
+            .map(|dependency| dependency.name)
+            .collect();
+        assert_eq!(depends, ["package", "base-x86"]);
+        let provides: Vec<_> = info
+            .provides("split", "x86_64")
+            .into_iter()
+            .map(|dependency| dependency.name)
+            .collect();
+        assert_eq!(provides, ["virtual", "virtual-x86"]);
     }
 
     #[test]
