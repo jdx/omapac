@@ -78,7 +78,15 @@ impl RunWith<&App> for Info {
             let found = if self.aur { None } else { info(&host, name)? };
             let found = match found {
                 Some(found) if found.tier == Tier::Foreign && !self.no_aur => {
-                    info_aur(&host, &app.aur_rpc(), name)?.or(Some(found))
+                    match info_aur(&host, &app.aur_rpc(), name) {
+                        Ok(aur) => aur.or(Some(found)),
+                        Err(err) => {
+                            eprintln!(
+                                "warning: AUR metadata unavailable for installed package {name}: {err:#}"
+                            );
+                            Some(found)
+                        }
+                    }
                 }
                 Some(found) => Some(found),
                 None if self.no_aur => None,
