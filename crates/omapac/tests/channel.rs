@@ -425,14 +425,16 @@ fn info_and_update_carry_the_release_train_labels() {
     let (_, out, _) = run(&s, &["info", "yay"], "");
     assert!(!out.contains("Release Train"), "{out}");
 
-    // update fetches the manifest itself and heads the plan with it.
-    let (code, out, err) = run(&s, &["update", "-n", "--no-aur"], "");
+    // update fetches the manifest itself and heads the plan with it, even
+    // when pacman's database refresh was disabled.
+    let fresh = setup();
+    let (code, out, err) = run(&fresh, &["update", "-n", "--no-aur", "--no-refresh"], "");
     assert_eq!(code, 0, "{err}\n{out}");
     assert!(
         out.contains("snapshot: 2026-09-03T06 (tests pass, stable since 2026-09-06T08:00:00Z; 2 tested pkgbase(s))"),
         "{out}"
     );
-    let (_, out, _) = run(&s, &["update", "-n", "--no-aur", "--json"], "");
+    let (_, out, _) = run(&fresh, &["update", "-n", "--no-aur", "--json"], "");
     let plan: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(plan["snapshot"], "2026-09-03T06");
 }
