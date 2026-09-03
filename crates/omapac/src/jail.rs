@@ -33,6 +33,10 @@ const SCRUBBED: &[&str] = &[
     "SSH_AUTH_SOCK",
     "GPG_AGENT_INFO",
     "DBUS_SESSION_BUS_ADDRESS",
+    "DISPLAY",
+    "XAUTHORITY",
+    "WAYLAND_DISPLAY",
+    "XDG_RUNTIME_DIR",
     "GITHUB_TOKEN",
     "GH_TOKEN",
     "NPM_TOKEN",
@@ -109,12 +113,11 @@ fn restrict_filesystem(writable: &[PathBuf], network: bool) -> Result<()> {
     let created = ruleset
         .create()
         .map_err(|e| eyre::eyre!("landlock: this kernel cannot enforce the build jail: {e}"))?;
-    // Device nodes are always writable: builds write to /dev/null and read
-    // /dev/urandom, and Landlock treats those as file writes.
-    let dev = PathBuf::from("/dev");
+    // Grant only the ordinary character devices, never the whole /dev tree.
+    let devices = ["/dev/null", "/dev/zero", "/dev/random", "/dev/urandom"].map(PathBuf::from);
     let existing: Vec<&Path> = writable
         .iter()
-        .chain(std::iter::once(&dev))
+        .chain(devices.iter())
         .map(PathBuf::as_path)
         .filter(|p| p.exists())
         .collect();
@@ -179,6 +182,10 @@ mod tests {
             "npm_token",
             "AWS_SECRET_ACCESS_KEY",
             "SSH_AUTH_SOCK",
+            "DISPLAY",
+            "XAUTHORITY",
+            "WAYLAND_DISPLAY",
+            "XDG_RUNTIME_DIR",
             "MISE_GITHUB_TOKEN",
             "MY_API_KEY",
             "OPENAI_ORG",
