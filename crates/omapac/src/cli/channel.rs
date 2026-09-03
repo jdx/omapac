@@ -86,7 +86,12 @@ impl App {
     }
 
     /// A snapshot's own release manifest from the snapshot store.
-    pub fn snapshot_release(&self, snapshot_base: &str, id: &str) -> Result<Release> {
+    pub fn snapshot_release(
+        &self,
+        snapshot_base: &str,
+        id: &str,
+        offline: bool,
+    ) -> Result<Release> {
         let keyring = crate::trust::Keyring::load(self.paths.sysroot.as_deref())?;
         let cache = crate::trust::Cache::for_repo(&format!("snapshots/{id}"));
         let feed = crate::trust::FeedSource {
@@ -94,7 +99,7 @@ impl App {
             base: format!("{}/{id}", snapshot_base.trim_end_matches('/')),
         };
         let fetched: crate::trust::Fetched<Release> =
-            crate::trust::fetch(&feed, "release.json", &keyring, &cache, false)?;
+            crate::trust::fetch(&feed, "release.json", &keyring, &cache, offline)?;
         if fetched.value.id != id {
             bail!("snapshot {id}'s manifest says it is {}", fetched.value.id);
         }
@@ -107,14 +112,14 @@ impl App {
 
     /// Pin the mirrorlist to `id`, checking the snapshot exists and was
     /// promoted unless forced, and record it in the ledger.
-    pub fn pin(&self, id: &str, force: bool) -> Result<Release> {
+    pub fn pin(&self, id: &str, force: bool, offline: bool) -> Result<Release> {
         let manifest = self.manifest()?;
         let Some(base) = manifest.settings.channel_snapshot_base.clone() else {
             bail!(
                 "no snapshot store configured; set [channel] snapshot_base in the manifest (the distro layer normally ships it)"
             );
         };
-        let release = self.snapshot_release(&base, id)?;
+        let release = self.snapshot_release(&base, id, offline)?;
         if !release.was_promoted() && !force {
             bail!(
                 "snapshot {id} never reached rc or stable{}; pass --force to pin it anyway",
@@ -147,7 +152,7 @@ impl RunWith<&App> for Channel {
     fn run_with(self, app: &App) -> Self::Output {
         match self.command {
             Some(ChannelCommands::Pin(pin)) => {
-                let release = app.pin(&pin.id, pin.force)?;
+                let release = app.pin(&pin.id, pin.force, self.offline)?;
                 println!(
                     "pinned the Arch mirror to snapshot {} ({}); run `omapac update` or `omapac rollback --snapshot {}` to move to it",
                     release.id,
@@ -267,7 +272,7 @@ impl RunWith<&App> for Rollback {
         let Some(base) = manifest.settings.channel_snapshot_base.clone() else {
             bail!("no snapshot store configured; set [channel] snapshot_base in the manifest");
         };
-        let release = app.snapshot_release(&base, &self.snapshot)?;
+        let release = app.snapshot_release(&base, &self.snapshot, false)?;
         if !release.was_promoted() && !self.force {
             bail!(
                 "snapshot {} never reached rc or stable; pass --force",
@@ -280,14 +285,41 @@ impl RunWith<&App> for Rollback {
                 release.id,
                 describe(&release)
             );
-            println!("would refresh databases and plan a downgrade transaction");
+            let host = app.host()?;
+            let engine = app.engine()?;
+            let mut tx = Transaction::new(Operation::Upgrade {
+                allow_downgrade: true,
+            })
+            .ignoring(manifest.settings.update_ignore.iter().cloned())
+            .overwriting(manifest.settings.update_overwrite.iter().cloned());
+            tx.ignore_group
+                .extend(manifest.settings.update_ignore_group.iter().cloned());
+            let resolved = engine.plan(&tx)?;
+            let command = engine
+                .apply_invocation(
+                    &tx,
+                    ApplyOpts {
+                        dry_run: true,
+                        no_confirm: true,
+                    },
+                )
+                .display();
+            let plan = super::transaction::plan(&host, &resolved, command);
+            super::transaction::confirm_and_apply(
+                &engine,
+                &resolved,
+                &plan,
+                "roll back",
+                self.yes,
+                true,
+            )?;
             return Ok(());
         }
         let mirrorlist = app.mirrorlist_path();
         let original_mirrorlist = std::fs::read_to_string(&mirrorlist)
             .wrap_err_with(|| format!("reading {}", mirrorlist.display()))?;
         let previous_snapshot = app.ledger()?.snapshot.unwrap_or_default();
-        let release = app.pin(&self.snapshot, self.force)?;
+        let release = app.pin(&self.snapshot, self.force, false)?;
         println!("pinned to snapshot {} ({})", release.id, describe(&release));
         let engine = app.engine()?;
         let mut applied = false;
