@@ -60,7 +60,10 @@ done
 [tasks."render:check"]
 description = "Fail when docs/cli is out of date"
 depends = ["render"]
-run = "git diff --exit-code -- docs/cli"
+run = """
+git diff --exit-code -- docs/cli
+test -z "$(git ls-files --others --exclude-standard -- docs/cli)"
+"""
 
 [tasks.ci]
 description = "What CI runs"
