@@ -29,6 +29,7 @@ required-features = ["test-pacman"]
 alpm-db.workspace = true
 color-eyre.workspace = true
 eyre.workspace = true
+indexmap.workspace = true
 jiff.workspace = true
 nix.workspace = true
 omapac-cli-support.workspace = true
@@ -37,6 +38,8 @@ packslip.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+toml.workspace = true
+toml_edit.workspace = true
 usage_rs.workspace = true
 which.workspace = true
 

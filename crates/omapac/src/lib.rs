@@ -9,5 +9,6 @@
 pub mod cli;
 pub mod engine;
 pub mod host;
+pub mod manifest;
 pub mod resolve;
 pub mod ui;

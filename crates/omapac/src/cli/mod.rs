@@ -7,6 +7,8 @@ use usage_rs::RunWith;
 
 use crate::host::{Host, HostPaths};
 
+mod converge;
+mod declare;
 mod doctor;
 mod info;
 mod install;
@@ -64,14 +66,19 @@ pub struct Cli {
 #[derive(usage_rs::Subcommands)]
 #[usage(run_with)]
 enum Commands {
+    Add(declare::Add),
+    Apply(declare::Apply),
     Doctor(doctor::Doctor),
+    Drop(declare::Drop),
     Info(info::Info),
     Install(install::Install),
     List(list::List),
     Missing(present::Missing),
+    Plan(declare::Plan),
     Present(present::Present),
     Remove(remove::Remove),
     Search(search::Search),
+    Status(declare::Status),
     Version(Version),
 }
 
