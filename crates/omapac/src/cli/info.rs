@@ -132,7 +132,8 @@ fn installed_info(p: &LocalPackage) -> Installed {
 }
 
 pub fn info(host: &Host, name: &str) -> Result<Option<PackageInfo>> {
-    let installed = host.installed_package(name)?.map(installed_info);
+    let installed_package = host.installed_package(name)?;
+    let installed = installed_package.map(installed_info);
     if let Some((source, package)) = host.find_sync(name)? {
         let p: &SyncPackage = package;
         return Ok(Some(PackageInfo {
@@ -159,7 +160,7 @@ pub fn info(host: &Host, name: &str) -> Result<Option<PackageInfo>> {
             aur: None,
         }));
     }
-    let Some(p) = host.installed_package(name)? else {
+    let Some(p) = installed_package else {
         return Ok(None);
     };
     Ok(Some(PackageInfo {
