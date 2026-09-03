@@ -34,6 +34,8 @@ pub struct Release {
     pub expedited: bool,
     #[serde(default)]
     pub held: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hold_reason: Option<String>,
     /// Digests of the Arch database files at this snapshot, by repository.
     #[serde(default)]
     pub db_digests: std::collections::BTreeMap<String, String>,

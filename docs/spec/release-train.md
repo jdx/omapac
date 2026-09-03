@@ -52,7 +52,7 @@ carries its own copy at `<snapshot_base>/<id>/release.json`.
 - `promoted` records when the snapshot reached `rc` and `stable`.
   Rollback without `--force` requires one of them.
 - `expedited` marks a security snapshot that ran the short suite;
-  `held` marks one a maintainer pulled.
+  `held` marks one a maintainer pulled, with `hold_reason`.
 - `db_digests` let a client check the databases it downloaded belong to
   this snapshot.
 
