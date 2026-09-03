@@ -169,6 +169,12 @@ impl AncestorOutputs {
             .iter()
             .any(|(name, version, provides)| dep.satisfied_by(name, version, provides))
     }
+
+    fn sibling_satisfies(&self, dep: &alpm_db::dep::Dependency) -> bool {
+        self.packages.iter().any(|(name, version, provides)| {
+            name != &self.pkgname && dep.satisfied_by(name, version, provides)
+        })
+    }
 }
 
 impl App {
@@ -303,12 +309,12 @@ impl App {
             let preserve_explicit = host
                 .installed_package(&dep.name)?
                 .is_some_and(|package| package.reason == alpm_db::local::InstallReason::Explicit);
-            if let Some(ancestor) = ancestors
+            if let Some(ancestor_index) = ancestors
                 .iter()
-                .find(|ancestor| ancestor.satisfies(dep))
-                .cloned()
+                .position(|ancestor| ancestor.satisfies(dep))
             {
-                if ancestor.packages.len() > 1 {
+                let ancestor = ancestors[ancestor_index].clone();
+                if ancestor.sibling_satisfies(dep) {
                     let prepared = self.prepare_aur(
                         &ancestor.pkgname,
                         Some(&ancestor.commit),
@@ -325,8 +331,10 @@ impl App {
                         &prepared.reviewed,
                         &prepared.arch,
                     )?;
-                    let descendant = AncestorOutputs::from_prepared(parent);
-                    missing.other.retain(|dep| !descendant.satisfies(dep));
+                    let descendants = &ancestors[ancestor_index + 1..];
+                    missing
+                        .other
+                        .retain(|dep| !descendants.iter().any(|item| item.satisfies(dep)));
                     self.install_aur_repo_dependencies(&bootstrap_host, &missing.repo, yes)?;
                     if !missing.other.is_empty() {
                         self.build_aur_dependencies(
@@ -371,7 +379,7 @@ impl App {
                             dep.spec()
                         );
                     }
-                    self.install_selected_built(&prepared, &selected, true, "install")?;
+                    self.install_selected_built(&prepared, &selected, None, "install")?;
                     built.extend(selected_packages);
                     continue;
                 }
@@ -481,11 +489,31 @@ impl App {
         by: &str,
     ) -> Result<()> {
         let packages = crate::aur::build::built_packages(files)?;
+        let version = prepared.reviewed.srcinfo.version();
+        let mut selected_names = vec![prepared.reviewed.pkgname.clone()];
+        let mut next = 0;
+        while next < selected_names.len() {
+            let name = selected_names[next].clone();
+            next += 1;
+            for dep in prepared.reviewed.srcinfo.depends(&name, &prepared.arch) {
+                for package in &packages {
+                    let provides = prepared
+                        .reviewed
+                        .srcinfo
+                        .provides(&package.name, &prepared.arch);
+                    if !selected_names.contains(&package.name)
+                        && dep.satisfied_by(&package.name, &version, &provides)
+                    {
+                        selected_names.push(package.name.clone());
+                    }
+                }
+            }
+        }
         let selected: Vec<_> = files
             .iter()
             .cloned()
             .zip(packages)
-            .filter(|(_, package)| package.name == prepared.reviewed.pkgname)
+            .filter(|(_, package)| selected_names.contains(&package.name))
             .collect();
         if selected.is_empty() {
             bail!(
@@ -494,7 +522,12 @@ impl App {
             );
         }
         let files: Vec<_> = selected.into_iter().map(|(file, _)| file).collect();
-        self.install_selected_built(prepared, &files, as_deps, by)
+        self.install_selected_built(
+            prepared,
+            &files,
+            (!as_deps).then_some(prepared.reviewed.pkgname.as_str()),
+            by,
+        )
     }
 
     /// Install an already selected subset of a split build. Bootstrap code
@@ -503,25 +536,53 @@ impl App {
         &self,
         prepared: &Prepared,
         files: &[std::path::PathBuf],
-        as_deps: bool,
+        explicit_name: Option<&str>,
         by: &str,
     ) -> Result<()> {
+        let packages = crate::aur::build::built_packages(files)?;
+        let host = self.host()?;
+        let mut dependency_files = Vec::new();
+        let mut explicit_files = Vec::new();
+        let mut selected = Vec::new();
+        for (file, package) in files.iter().cloned().zip(packages) {
+            let explicit = explicit_name == Some(package.name.as_str())
+                || host
+                    .installed_package(&package.name)?
+                    .is_some_and(|installed| {
+                        installed.reason == alpm_db::local::InstallReason::Explicit
+                    });
+            if explicit {
+                explicit_files.push(file);
+            } else {
+                dependency_files.push(file);
+            }
+            selected.push((package, explicit));
+        }
         let engine = self.engine()?;
-        let install = crate::engine::FileInstall {
-            files: files.to_vec(),
-            as_deps,
-            overwrite: Vec::new(),
-        };
-        crate::engine::Engine::install_files(
-            &engine,
-            &install,
-            crate::engine::ApplyOpts {
-                dry_run: false,
-                no_confirm: true,
-            },
-        )?;
+        for (files, as_deps) in [(dependency_files, true), (explicit_files, false)] {
+            if !files.is_empty() {
+                crate::engine::Engine::install_files(
+                    &engine,
+                    &crate::engine::FileInstall {
+                        files,
+                        as_deps,
+                        overwrite: Vec::new(),
+                    },
+                    crate::engine::ApplyOpts {
+                        dry_run: false,
+                        no_confirm: true,
+                    },
+                )?;
+            }
+        }
+        let installed_names = selected
+            .iter()
+            .map(|(package, _)| package.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let all_dependencies = selected.iter().all(|(_, explicit)| !explicit);
         let mut patch = crate::ledger::Patch::default();
-        for package in crate::aur::build::built_packages(files)? {
+        for (package, explicit) in selected {
             patch.upsert.insert(
                 package.name,
                 crate::ledger::Entry {
@@ -529,7 +590,7 @@ impl App {
                     tier: crate::resolve::Tier::Aur,
                     repo: None,
                     aur_commit: Some(prepared.reviewed.target.clone()),
-                    explicit: !as_deps,
+                    explicit,
                     by: by.to_string(),
                     at: crate::ledger::now(),
                 },
@@ -538,10 +599,14 @@ impl App {
         self.record(&patch)?;
         println!(
             "installed {} {} from AUR commit {}{}",
-            prepared.reviewed.pkgname,
+            installed_names,
             prepared.reviewed.srcinfo.version(),
             &prepared.reviewed.target[..12],
-            if as_deps { " as a dependency" } else { "" }
+            if all_dependencies {
+                " as a dependency"
+            } else {
+                ""
+            }
         );
         Ok(())
     }
