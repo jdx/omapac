@@ -212,6 +212,31 @@ fn generates_from_the_newest_eligible_release() {
 }
 
 #[test]
+fn a_later_write_failure_still_leaves_the_protective_lock() {
+    let rig = Rig::new();
+    let art = rig.path().join("artifacts");
+    std::fs::create_dir_all(&art).unwrap();
+    let mut vendor = Vendor::new(9);
+    vendor.release(&art, "1.5.0", "2026-08-20T00:00:00Z");
+    let (base, key) = serve_pointing_at_self(vendor);
+    write_package(&rig, &base, &key, "");
+    std::fs::create_dir(rig.path().join("tool-bin/tool-bin.vendor.json")).unwrap();
+
+    let (code, _, err) = rig.run_env(
+        &["vendor", "--pkgdir", "tool-bin", "--write"],
+        &[("OMAPAC_REPO_NOW", NOW)],
+    );
+    assert_ne!(code, 0);
+    assert!(err.contains("tool-bin.vendor.json"), "{err}");
+    let lock = std::fs::read_to_string(rig.path().join("tool-bin/vendor.lock")).unwrap();
+    assert!(lock.contains("version = \"1.5.0\""), "{lock}");
+    assert_eq!(
+        std::fs::read_to_string(rig.path().join("tool-bin/PKGBUILD")).unwrap(),
+        PKGBUILD
+    );
+}
+
+#[test]
 fn refuses_the_wrong_key_floor_and_project() {
     let rig = Rig::new();
     let art = rig.path().join("artifacts");
