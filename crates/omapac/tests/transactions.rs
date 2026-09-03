@@ -179,9 +179,10 @@ fn unattended_install_refuses_warnings() {
     assert_ne!(code, 0);
     assert!(out.contains("[custom:chaotic-aur]"), "{out}");
     assert!(out.contains("does not check package signatures"), "{out}");
+    assert!(out.contains("does not check database signatures"), "{out}");
     assert!(out.contains("outside Arch and Omarchy review"), "{out}");
     assert!(
-        err.contains("refusing to install unattended with 2 warning(s)"),
+        err.contains("refusing to install unattended with 3 warning(s)"),
         "{err}"
     );
     assert_eq!(rig.log().len(), 1, "only the plan ran");
