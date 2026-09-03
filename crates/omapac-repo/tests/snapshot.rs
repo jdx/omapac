@@ -78,6 +78,40 @@ impl Train {
 }
 
 #[test]
+fn state_changes_refuse_a_tampered_release_manifest() {
+    let t = Train::new();
+    let id = "2026-09-01T06";
+    assert_eq!(
+        t.run(
+            "2026-09-01T06:10:00Z",
+            &["cut", "--from", "mirror", "--id", id]
+        )
+        .0,
+        0
+    );
+    let path = t
+        .rig
+        .path()
+        .join("store/snapshots")
+        .join(id)
+        .join("release.json");
+    let mut release: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    release["held"] = true.into();
+    std::fs::write(&path, serde_json::to_vec_pretty(&release).unwrap()).unwrap();
+
+    let (code, _, err) = t.run(
+        "2026-09-01T07:00:00Z",
+        &["hold", "--id", id, "--reason", "tampered"],
+    );
+    assert_ne!(code, 0);
+    assert!(
+        err.contains("verifying") && err.contains("release.json"),
+        "{err}"
+    );
+}
+
+#[test]
 fn failed_retest_never_advances_past_a_manual_rc_rollback() {
     let t = Train::new();
     for id in ["2026-09-01T06", "2026-09-02T06", "2026-09-03T06"] {

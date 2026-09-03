@@ -177,6 +177,13 @@ impl Store {
         serde_json::from_slice(&bytes).wrap_err_with(|| format!("parsing {}", path.display()))
     }
 
+    /// Load a release only when its existing signature matches `key`.
+    pub fn signed_release(&self, id: &str, key: &SecretKey) -> Result<Release> {
+        let path = self.snapshot_dir(id).join("release.json");
+        crate::feed::load_signed(&path, &key.public_key())?
+            .ok_or_else(|| eyre::eyre!("no snapshot {id}"))
+    }
+
     pub fn write_release(&self, release: &Release, key: &SecretKey) -> Result<()> {
         crate::feed::write_signed(
             &self.snapshot_dir(&release.id).join("release.json"),
@@ -270,8 +277,8 @@ impl RunWith<()> for Snapshot {
             }
             SnapshotCommands::Test(test) => {
                 let key = key()?;
-                let mut release = store.release(&test.id)?;
-                let (result, tested) = run_suite(&store, &test)?;
+                let mut release = store.signed_release(&test.id, &key)?;
+                let (result, tested) = run_suite(&store, &test, &release)?;
                 release.tests = Some(Tests {
                     suite: test.suite.clone().unwrap_or_else(|| "builtin".into()),
                     commit: test.commit.clone(),
@@ -301,7 +308,7 @@ impl RunWith<()> for Snapshot {
                         release.promoted.rc = None;
                         // A failed re-test may only retreat to an earlier rc;
                         // it must not advance across a deliberate rollback.
-                        match fallback(&store, "rc", &test.id)? {
+                        match fallback(&store, "rc", &test.id, &key)? {
                             Some(id) => store.point("rc", &id)?,
                             None => store.clear("rc")?,
                         }
@@ -342,7 +349,7 @@ impl RunWith<()> for Snapshot {
                         let Some(rc) = store.target("rc") else {
                             bail!("rc points nowhere");
                         };
-                        let release = store.release(&rc)?;
+                        let release = store.signed_release(&rc, &key)?;
                         if release.tests.as_ref().map(|t| t.result) != Some(TestResult::Pass) {
                             bail!("rc {rc} has not passed the suite");
                         }
@@ -377,7 +384,7 @@ impl RunWith<()> for Snapshot {
                         rc
                     }
                 };
-                let mut release = store.release(&id)?;
+                let mut release = store.signed_release(&id, &key)?;
                 if release.held {
                     bail!("snapshot {id} is held");
                 }
@@ -396,13 +403,13 @@ impl RunWith<()> for Snapshot {
             }
             SnapshotCommands::Hold(hold) => {
                 let key = key()?;
-                let mut release = store.release(&hold.id)?;
+                let mut release = store.signed_release(&hold.id, &key)?;
                 release.held = true;
                 release.hold_reason = Some(hold.reason.clone());
                 store.write_release(&release, &key)?;
                 println!("held {}: {}", hold.id, hold.reason);
                 for channel in store.channels_pointing_at(&hold.id) {
-                    match fallback(&store, &channel, &hold.id)? {
+                    match fallback(&store, &channel, &hold.id, &key)? {
                         Some(previous) => {
                             store.point(&channel, &previous)?;
                             println!("{channel} -> {previous}");
@@ -417,7 +424,7 @@ impl RunWith<()> for Snapshot {
             }
             SnapshotCommands::Unhold(unhold) => {
                 let key = key()?;
-                let mut release = store.release(&unhold.id)?;
+                let mut release = store.signed_release(&unhold.id, &key)?;
                 release.held = false;
                 release.hold_reason = None;
                 store.write_release(&release, &key)?;
@@ -529,12 +536,12 @@ fn format_secs(secs: i64) -> String {
 
 /// The newest snapshot before `held` that was promoted to `channel` (any
 /// snapshot for edge), is not held, and still has a passing suite result.
-fn fallback(store: &Store, channel: &str, held: &str) -> Result<Option<String>> {
+fn fallback(store: &Store, channel: &str, held: &str, key: &SecretKey) -> Result<Option<String>> {
     for id in store.ids()?.into_iter().rev() {
         if id.as_str() >= held {
             continue;
         }
-        let release = store.release(&id)?;
+        let release = store.signed_release(&id, key)?;
         if release.held {
             continue;
         }
@@ -651,11 +658,23 @@ fn cut_snapshot(
     Ok(release)
 }
 
-fn run_suite(store: &Store, test: &Test) -> Result<(TestResult, Vec<String>)> {
-    let release = store.release(&test.id)?;
+struct PartialSnapshot {
+    path: PathBuf,
+    committed: bool,
+}
+
+impl Drop for PartialSnapshot {
+    fn drop(&mut self) {
+        if !self.committed {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+}
+
+fn run_suite(store: &Store, test: &Test, release: &Release) -> Result<(TestResult, Vec<String>)> {
     match &test.suite {
         None => {
-            let outcome = check_snapshot(store, &release, test.allow_missing)?;
+            let outcome = check_snapshot(store, release, test.allow_missing)?;
             for problem in &outcome.problems {
                 eprintln!("problem: {problem}");
             }
