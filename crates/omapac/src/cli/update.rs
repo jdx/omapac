@@ -238,6 +238,13 @@ impl RunWith<&App> for Update {
                         }
                     }
                     app.record(&transaction::ledger_patch(p, &explicit, "update", false))?;
+                    if let Ok(Some(release)) = app.release(&host, true) {
+                        let patch = crate::ledger::Patch {
+                            snapshot: Some(release.id.clone()),
+                            ..Default::default()
+                        };
+                        let _ = app.record(&patch);
+                    }
                 }
             }
 

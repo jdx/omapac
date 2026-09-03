@@ -8,6 +8,7 @@ use usage_rs::RunWith;
 use crate::host::{Host, HostPaths};
 
 mod aur_cmd;
+mod channel;
 mod converge;
 mod declare;
 mod doctor;
@@ -75,6 +76,7 @@ enum Commands {
     Add(declare::Add),
     Apply(declare::Apply),
     Aur(aur_cmd::Aur),
+    Channel(channel::Channel),
     Doctor(doctor::Doctor),
     Drop(declare::Drop),
     Info(info::Info),
@@ -83,12 +85,15 @@ enum Commands {
     JailExec(jail_cmd::JailExec),
     #[usage(name = "__ledger", hide)]
     LedgerMerge(ledger_cmd::LedgerMerge),
+    #[usage(name = "__write", hide)]
+    WriteExec(channel::WriteExec),
     List(list::List),
     Missing(present::Missing),
     Pacnew(pacnew::Pacnew),
     Plan(declare::Plan),
     Present(present::Present),
     Remove(remove::Remove),
+    Rollback(channel::Rollback),
     Search(search::Search),
     Status(declare::Status),
     Update(update::Update),

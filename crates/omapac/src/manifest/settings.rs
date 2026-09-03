@@ -217,6 +217,14 @@ pub struct ScannerToml {
     pub socket_token: Option<String>,
 }
 
+/// The `[channel]` table.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct ChannelToml {
+    /// Where immutable Arch snapshots live, for `channel pin`.
+    pub snapshot_base: Option<String>,
+}
+
 /// The `[update]` table.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
@@ -259,6 +267,7 @@ pub struct Settings {
     pub update_ignore_group: Vec<String>,
     pub update_pre_hooks: Vec<String>,
     pub update_post_hooks: Vec<String>,
+    pub channel_snapshot_base: Option<String>,
 }
 
 impl Default for Settings {
@@ -299,6 +308,7 @@ impl Default for Settings {
             update_ignore_group: Vec::new(),
             update_pre_hooks: Vec::new(),
             update_post_hooks: Vec::new(),
+            channel_snapshot_base: None,
         }
     }
 }
@@ -313,7 +323,10 @@ fn append_unique(into: &mut Vec<String>, from: &[String]) {
 
 impl Settings {
     /// Apply an ordinary layer: scalars override, lists append.
-    pub fn merge(&mut self, policy: &PolicyToml, update: &UpdateToml) {
+    pub fn merge(&mut self, policy: &PolicyToml, update: &UpdateToml, channel: &ChannelToml) {
+        if channel.snapshot_base.is_some() {
+            self.channel_snapshot_base = channel.snapshot_base.clone();
+        }
         macro_rules! set {
             ($field:ident, $value:expr) => {
                 if let Some(value) = $value {
@@ -480,10 +493,12 @@ mod tests {
                 overwrite: vec!["/x/*".into()],
                 ..Default::default()
             },
+            &ChannelToml::default(),
         );
         settings.merge(
             &policy("aur.min_commit_age = \"24h\"\naur.allow_network_build = [\"b\", \"a\"]"),
             &UpdateToml::default(),
+            &ChannelToml::default(),
         );
         assert_eq!(settings.mode, Mode::Deny);
         assert_eq!(settings.aur_min_commit_age, Age::hours(24));
@@ -501,6 +516,7 @@ mod tests {
                  repo.min_release_age.opr = \"7d\"\nrepo.min_release_age_excludes = [\"linux\"]",
             ),
             &UpdateToml::default(),
+            &ChannelToml::default(),
         );
         settings.apply_managed(&policy(
             "aur.min_commit_age = \"48h\"\naur.jail = true\ntrust.index = \"verify\"\n\

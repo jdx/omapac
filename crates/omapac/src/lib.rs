@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 pub mod aur;
+pub mod channel;
 pub mod cli;
 pub mod engine;
 pub mod host;
