@@ -60,7 +60,13 @@ impl App {
     /// release-age floor. Best effort: without trust keys nothing is
     /// fetched, and a repository whose index cannot be read falls back to
     /// build dates with a note.
-    pub fn published_times(&self, host: &Host, settings: &Settings, offline: bool) -> Published {
+    pub fn published_times(
+        &self,
+        host: &Host,
+        settings: &Settings,
+        offline: bool,
+        record_sequence: bool,
+    ) -> Published {
         use std::str::FromStr as _;
         let mut published = Published::new();
         let Ok(keyring) = crate::trust::Keyring::load(self.paths.sysroot.as_deref()) else {
@@ -78,7 +84,12 @@ impl App {
             if floor == crate::manifest::settings::Age::ZERO {
                 continue;
             }
-            match self.index(host, &source.name, offline) {
+            let fetched = if record_sequence {
+                self.index(host, &source.name, offline)
+            } else {
+                self.index_readonly(host, &source.name, offline)
+            };
+            match fetched {
                 Ok(index) => {
                     let times = index
                         .value
@@ -139,8 +150,8 @@ impl RunWith<&App> for Update {
                 });
             }
         }
-        // Feeds are fetched even for a dry run: reading them changes nothing.
-        let published = app.published_times(&host, settings, false);
+        // Dry runs verify feeds and rollback state without advancing it.
+        let published = app.published_times(&host, settings, false, !dry_run);
         holds.extend(age_holds(&host, settings, now, &published)?);
         let repo_plan = if self.aur_only {
             None

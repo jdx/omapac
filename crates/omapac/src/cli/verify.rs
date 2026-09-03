@@ -67,6 +67,26 @@ impl App {
     /// Fetch and verify a repository's index, enforcing rollback protection
     /// against the ledger and recording the new sequence.
     pub fn index(&self, host: &Host, repo: &str, offline: bool) -> Result<trust::Fetched<Index>> {
+        self.index_with_recording(host, repo, offline, true)
+    }
+
+    /// Fetch and verify an index without mutating rollback state.
+    pub fn index_readonly(
+        &self,
+        host: &Host,
+        repo: &str,
+        offline: bool,
+    ) -> Result<trust::Fetched<Index>> {
+        self.index_with_recording(host, repo, offline, false)
+    }
+
+    fn index_with_recording(
+        &self,
+        host: &Host,
+        repo: &str,
+        offline: bool,
+        record_sequence: bool,
+    ) -> Result<trust::Fetched<Index>> {
         let Some(source) = self.feed_source(host, repo) else {
             bail!("[{repo}] has no server to fetch feeds from");
         };
@@ -95,7 +115,9 @@ impl App {
         if fetched.value.repo != repo {
             bail!("[{repo}] index says it is for [{}]", fetched.value.repo);
         }
-        if ledger.index_sequences.get(repo).copied() != Some(fetched.value.sequence) {
+        if record_sequence
+            && ledger.index_sequences.get(repo).copied() != Some(fetched.value.sequence)
+        {
             let mut patch = crate::ledger::Patch::default();
             patch
                 .index_sequences
