@@ -94,3 +94,22 @@ fn audit_with_nothing_open() {
     assert_eq!(code, 0);
     assert!(out.contains("no open security issues"), "{out}");
 }
+
+#[test]
+fn audit_uses_live_data_when_the_cache_cannot_be_written() {
+    let rig = Rig::new();
+    let cache_parent = rig.dir.path().join("cache/omapac");
+    std::fs::create_dir_all(&cache_parent).unwrap();
+    std::fs::write(cache_parent.join("audit"), "not a directory").unwrap();
+    let base = common::http::serve(vec![("/all.json", TRACKER.to_string())]);
+
+    let (code, out, err) = run(&rig, &format!("{base}/all.json"), &["audit"]);
+
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("pacman"), "{out}");
+    assert!(
+        err.contains("could not cache the live security tracker"),
+        "{err}"
+    );
+    assert!(!err.contains("using the cached tracker"), "{err}");
+}
