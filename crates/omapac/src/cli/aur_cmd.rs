@@ -1,6 +1,6 @@
 use std::fmt::Write as _;
 
-use eyre::{Result, bail};
+use eyre::{Context as _, Result, bail};
 use omapac_policy::Decision;
 use usage_rs::RunWith;
 
@@ -306,8 +306,8 @@ impl App {
             pinned,
             interactive,
             arch: &arch,
-            advisories: feeds.as_ref().map(|f| &f.0),
-            verdicts: feeds.as_ref().map(|f| &f.1),
+            advisories: feeds.as_ref().and_then(|f| f.0.as_ref()),
+            verdicts: feeds.as_ref().and_then(|f| f.1.as_ref()),
         };
         let reviewed = review(name, &request)?;
         Ok((reviewed, lock))
@@ -322,7 +322,12 @@ impl App {
         &self,
         host: &crate::host::Host,
         settings: &crate::manifest::Settings,
-    ) -> Result<Option<(crate::trust::Advisories, crate::trust::Verdicts)>> {
+    ) -> Result<
+        Option<(
+            Option<crate::trust::Advisories>,
+            Option<crate::trust::Verdicts>,
+        )>,
+    > {
         use crate::manifest::settings::Advisories as Mode;
         if settings.trust_advisories == Mode::Off {
             return Ok(None);
@@ -334,28 +339,32 @@ impl App {
         else {
             return Ok(None);
         };
-        let fetch = || -> Result<(crate::trust::Advisories, crate::trust::Verdicts)> {
-            let Some(feed) = self.feed_source(host, &source.name) else {
-                bail!("[{}] has no server to fetch feeds from", source.name);
-            };
-            let keyring = crate::trust::Keyring::load(self.paths.sysroot.as_deref())?;
-            let cache = crate::trust::Cache::for_repo(&source.name);
-            let advisories: crate::trust::Fetched<crate::trust::Advisories> =
-                crate::trust::fetch(&feed, "advisories.json", &keyring, &cache, false)?;
-            let verdicts: crate::trust::Fetched<crate::trust::Verdicts> =
-                crate::trust::fetch(&feed, "verdicts.json", &keyring, &cache, false)?;
-            Ok((advisories.value, verdicts.value))
+        let Some(feed) = self.feed_source(host, &source.name) else {
+            bail!("[{}] has no server to fetch feeds from", source.name);
         };
-        match fetch() {
-            Ok(feeds) => Ok(Some(feeds)),
-            Err(err) if settings.trust_advisories == Mode::Required => {
-                Err(err.wrap_err("trust.advisories is required"))
-            }
-            Err(err) => {
-                eprintln!("warning: advisory feeds unavailable: {err:#}");
-                Ok(None)
-            }
+        let keyring = crate::trust::Keyring::load(self.paths.sysroot.as_deref())?;
+        let cache = crate::trust::Cache::for_repo(&source.name);
+        let advisories = crate::trust::fetch(&feed, "advisories.json", &keyring, &cache, false)
+            .map(|fetched: crate::trust::Fetched<crate::trust::Advisories>| fetched.value);
+        let verdicts = crate::trust::fetch(&feed, "verdicts.json", &keyring, &cache, false)
+            .map(|fetched: crate::trust::Fetched<crate::trust::Verdicts>| fetched.value);
+        if settings.trust_advisories == Mode::Required {
+            return Ok(Some((
+                Some(advisories.wrap_err("trust.advisories is required")?),
+                Some(verdicts.wrap_err("trust.advisories is required")?),
+            )));
         }
+        let advisories = advisories
+            .map_err(|err| {
+                eprintln!("warning: advisory feeds unavailable (advisories): {err:#}");
+            })
+            .ok();
+        let verdicts = verdicts
+            .map_err(|err| {
+                eprintln!("warning: advisory feeds unavailable (verdicts): {err:#}");
+            })
+            .ok();
+        Ok(Some((advisories, verdicts)))
     }
 }
 
