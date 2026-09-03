@@ -99,7 +99,10 @@ fn plugin_lists_and_installs_through_omapac() {
 
     // Install: the artifact in the test store is a bare file, so it lands
     // as bin/<tool>.
-    let (code, out, err) = mise.run(&["install", "tool-channel:tool@1.0.0"], &channel_env);
+    let (code, out, err) = mise.run(
+        &["install", "tool-channel:tool[platform=linux-x64]@1.0.0"],
+        &channel_env,
+    );
     assert_eq!(code, 0, "{out}\n{err}");
     let installed = mise
         .home
@@ -115,7 +118,10 @@ fn plugin_lists_and_installs_through_omapac() {
 
     // An explicit executable overrides bin/tool already present in the archive.
     let (code, out, err) = mise.run(
-        &["install", "tool-channel:tool[exe=alternate]@1.2.0"],
+        &[
+            "install",
+            "tool-channel:tool[exe=alternate,platform=linux-x64]@1.2.0",
+        ],
         &edge,
     );
     assert_eq!(code, 0, "{out}\n{err}");
@@ -125,7 +131,10 @@ fn plugin_lists_and_installs_through_omapac() {
     assert_eq!(std::fs::read_to_string(&linked).unwrap(), "alternate 1.2.0");
 
     // A held version is refused by omapac, so mise reports the failure.
-    let (code, out, err) = mise.run(&["install", "tool-channel:tool@1.1.0"], &channel_env);
+    let (code, out, err) = mise.run(
+        &["install", "tool-channel:tool[platform=linux-x64]@1.1.0"],
+        &channel_env,
+    );
     assert_ne!(code, 0, "{out}");
     assert!(err.contains("is held by the channel: regression"), "{err}");
 }
