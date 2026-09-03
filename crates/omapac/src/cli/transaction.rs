@@ -245,17 +245,36 @@ pub fn ledger_patch(plan: &Plan, targets: &[String], by: &str, removing: bool) -
 /// after pacman had successfully changed the machine.
 pub fn ledger_patch_for_installed(
     host: &Host,
+    ledger: &crate::ledger::Ledger,
     names: &[String],
     explicit: bool,
     by: &str,
 ) -> Result<Patch> {
     let mut patch = Patch::default();
     let at = crate::ledger::now();
-    for name in names {
-        let Some(package) = host.installed_package(name)? else {
+    let installed = host.installed()?;
+    let roots: std::collections::BTreeSet<&str> = names.iter().map(String::as_str).collect();
+    let mut pending = names.to_vec();
+    let mut seen = std::collections::BTreeSet::new();
+    while let Some(name) = pending.pop() {
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        let Some(package) = installed.iter().find(|package| package.name == name) else {
             continue;
         };
-        let source = host.find_sync(name)?.map(|(source, _)| source);
+        for dependency in &package.depends {
+            if let Some(provider) = installed
+                .iter()
+                .find(|candidate| candidate.satisfies(dependency))
+            {
+                pending.push(provider.name.clone());
+            }
+        }
+        if ledger.packages.contains_key(&name) {
+            continue;
+        }
+        let source = host.find_sync(&name)?.map(|(source, _)| source);
         patch.upsert.insert(
             name.clone(),
             Entry {
@@ -263,7 +282,7 @@ pub fn ledger_patch_for_installed(
                 tier: source.map_or(Tier::Foreign, |source| source.tier.clone()),
                 repo: source.map(|source| source.name.clone()),
                 aur_commit: None,
-                explicit,
+                explicit: roots.contains(name.as_str()) && explicit,
                 by: by.to_string(),
                 at,
             },

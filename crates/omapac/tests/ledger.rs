@@ -85,6 +85,7 @@ fn repeated_commands_repair_a_missing_ledger_write() {
     let state: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
     assert_eq!(state["packages"]["pacman"]["version"], "7.1.0-2");
+    assert_eq!(state["packages"]["glibc"]["explicit"], false);
 
     let mut drifted = state;
     drifted["packages"]["pacman"]["version"] = "7.0.0-1".into();
@@ -121,6 +122,7 @@ fn repeated_commands_repair_a_missing_ledger_write() {
     let mut preserved = state;
     preserved["packages"]["pacman"]["by"] = "install".into();
     preserved["packages"]["pacman"]["at"] = 123.into();
+    preserved["packages"]["pacman"]["explicit"] = false.into();
     std::fs::write(&ledger, serde_json::to_vec(&preserved).unwrap()).unwrap();
     let (code, _, err) = rig.run(&["apply", "-y"], "", 0);
     assert_eq!(code, 0, "{err}");
@@ -128,6 +130,7 @@ fn repeated_commands_repair_a_missing_ledger_write() {
         serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
     assert_eq!(state["packages"]["pacman"]["by"], "install");
     assert_eq!(state["packages"]["pacman"]["at"], 123);
+    assert_eq!(state["packages"]["pacman"]["explicit"], true);
 
     std::fs::remove_file(&ledger).unwrap();
     let (code, _, err) = rig.run(&["add", "-y", "pacman"], "", 0);
@@ -160,6 +163,19 @@ fn repeated_commands_repair_a_missing_ledger_write() {
     let state: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
     assert!(state["packages"]["curl"].is_null(), "{state}");
+
+    std::fs::remove_file(rig.user_manifest()).unwrap();
+    std::fs::remove_file(&ledger).unwrap();
+    std::fs::create_dir_all(&ledger).unwrap();
+    let (code, out, _) = rig.run(&["add", "-y", "curl"], CURL_PLAN, 0);
+    assert_ne!(code, 0);
+    assert!(out.contains("declared curl"), "{out}");
+    assert!(
+        std::fs::read_to_string(rig.user_manifest())
+            .unwrap()
+            .contains("curl = {}"),
+        "a completed package transaction keeps its declaration"
+    );
 }
 
 #[test]

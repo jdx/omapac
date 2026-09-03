@@ -86,6 +86,7 @@ impl RunWith<&App> for Apply {
             return Ok(());
         }
         let engine = app.engine()?;
+        let mut committed = false;
         diff.apply(
             app,
             &host,
@@ -96,6 +97,7 @@ impl RunWith<&App> for Apply {
                 yes: self.yes,
                 dry_run: self.dry_run,
             },
+            &mut committed,
         )
     }
 }
@@ -192,6 +194,7 @@ impl RunWith<&App> for Add {
             Err(err) => return Err(err.into()),
         };
         let mut declared = Vec::new();
+        let mut committed = false;
         let result = (|| {
             let mut names = Vec::new();
             for spec in &self.packages {
@@ -235,9 +238,16 @@ impl RunWith<&App> for Add {
                     yes: self.yes,
                     dry_run: self.dry_run,
                 },
+                &mut committed,
             )
         })();
         if let Err(err) = result {
+            if committed {
+                for name in declared {
+                    println!("declared {name} in {}", paths.user.display());
+                }
+                return Err(err);
+            }
             let restore = match previous {
                 Some(bytes) => std::fs::write(&paths.user, bytes),
                 None => std::fs::remove_file(&paths.user),
