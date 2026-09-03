@@ -18,7 +18,13 @@ fn repo_cmd(cwd: &Path, args: &[&str]) -> (i32, String, String) {
 }
 
 fn keygen(dir: &Path, name: &str) -> packslip::minisign::SecretKey {
-    let key = packslip::minisign::SecretKey::from_seed([name.len() as u8; 32]);
+    let mut seed = [0_u8; 32];
+    for (index, byte) in name.bytes().enumerate() {
+        seed[index % seed.len()] = seed[index % seed.len()]
+            .wrapping_add(byte)
+            .wrapping_add(index as u8);
+    }
+    let key = packslip::minisign::SecretKey::from_seed(seed);
     std::fs::write(dir.join(format!("{name}.key")), key.to_file()).unwrap();
     std::fs::write(dir.join(format!("{name}.pub")), key.public_key().to_file()).unwrap();
     key
@@ -33,6 +39,7 @@ fn attest_then_index_round_trip() {
     let index_key = keygen(d, "index");
     let build_key = keygen(d, "build");
     let other_key = keygen(d, "stranger");
+    assert_ne!(index_key.public_key().key_id, build_key.public_key().key_id);
     // A database and three packages: one attested by the build key, one by
     // a stranger, one not at all; plus a vendor sidecar on the third.
     std::fs::copy(
