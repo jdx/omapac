@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Fake gpg for the signer gate tests: logs its arguments, writes a fake
+# detached signature to the --output path, fails when FAKE_GPG_FAIL is set.
+set -euo pipefail
+echo "$*" >>"${FAKE_GPG_LOG:-/dev/null}"
+if [ -n "${FAKE_GPG_FAIL:-}" ]; then
+  exit 2
+fi
+out=""
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--output" ]; then
+    out="$a"
+  fi
+  prev="$a"
+done
+last="${*: -1}"
+echo "fake signature of $(basename "$last")" >"$out"

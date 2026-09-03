@@ -120,6 +120,10 @@ pub struct Attest {
     /// An identifier for this build run; defaults to a timestamp
     #[usage(long)]
     invocation: Option<String>,
+    /// Upload each envelope to this transparency log and store the entry
+    /// beside the package (`https://rekor.sigstore.dev` for the public log)
+    #[usage(long)]
+    rekor: Option<String>,
 }
 
 impl RunWith<()> for Attest {
@@ -164,6 +168,18 @@ impl RunWith<()> for Attest {
             std::fs::write(&out, serde_json::to_vec_pretty(&envelope)?)
                 .wrap_err_with(|| format!("writing {}", out.display()))?;
             println!("wrote {}", out.display());
+            if let Some(log) = &self.rekor {
+                let entry = crate::rekor::upload(log, &envelope, &key.public_key())?;
+                let path = crate::rekor::sidecar_path(package);
+                std::fs::write(&path, serde_json::to_vec_pretty(&entry)?)
+                    .wrap_err_with(|| format!("writing {}", path.display()))?;
+                println!(
+                    "logged {} at {} index {}",
+                    path.display(),
+                    entry.log_url,
+                    entry.log_index
+                );
+            }
         }
         Ok(())
     }
