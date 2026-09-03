@@ -1,7 +1,7 @@
 use std::fmt::Write as _;
 use std::time::Duration;
 
-use eyre::Result;
+use eyre::{Result, bail};
 use serde::Serialize;
 use usage_rs::RunWith;
 
@@ -128,7 +128,10 @@ impl RunWith<&App> for Update {
         } else {
             aur_candidates(&host, &app.aur_rpc())?
         };
-        aur.retain(|candidate| !held_names.contains(&candidate.name));
+        aur.retain(|candidate| {
+            !held_names.contains(&candidate.name)
+                && !settings.update_ignore.contains(&candidate.name)
+        });
 
         let orphans: Vec<String> = host.orphans()?.iter().map(|p| p.name.clone()).collect();
         let etc = app
@@ -317,8 +320,7 @@ enum AurOutcome {
 /// skips it and a clean report approves it; otherwise the user decides.
 fn update_aur_package(app: &App, name: &str, yes: bool) -> Result<AurOutcome> {
     let (reviewed, mut lock) = app.review_aur(name, None, !yes && crate::ui::interactive())?;
-    if yes
-        && !reviewed.evidence.recipe.install_files.is_empty()
+    if !reviewed.evidence.recipe.install_files.is_empty()
         && app.manifest()?.settings.aur_install_scripts
             == crate::manifest::settings::InstallScripts::Deny
     {
@@ -371,24 +373,70 @@ fn update_aur_package(app: &App, name: &str, yes: bool) -> Result<AurOutcome> {
     let prepared = app.prepare_aur(name, Some(&reviewed.target), true, yes)?;
     let files = app.build_aur(&prepared, yes)?;
     let built = crate::aur::build::built_packages(&files)?;
+    if !built.iter().any(|package| package.name == name) {
+        bail!("{name}: makepkg did not produce the requested package");
+    }
     let host = app.host()?;
+    let mut selected_names = vec![name.to_string()];
+    for package in &built {
+        if host.installed_package(&package.name)?.is_some()
+            && !selected_names.contains(&package.name)
+        {
+            selected_names.push(package.name.clone());
+        }
+    }
+    let mut next = 0;
+    while next < selected_names.len() {
+        let selected = selected_names[next].clone();
+        next += 1;
+        for dep in prepared.reviewed.srcinfo.depends(&selected, &prepared.arch) {
+            for package in &built {
+                let provides = prepared
+                    .reviewed
+                    .srcinfo
+                    .provides(&package.name, &prepared.arch);
+                if !selected_names.contains(&package.name)
+                    && dep.satisfied_by(&package.name, &package.version, &provides)
+                {
+                    selected_names.push(package.name.clone());
+                }
+            }
+        }
+    }
+    let mut selected_packages = Vec::new();
+    let mut dependency_files = Vec::new();
+    let mut explicit_files = Vec::new();
+    for (file, package) in files.into_iter().zip(built) {
+        if selected_names.contains(&package.name) {
+            let explicit = host
+                .installed_package(&package.name)?
+                .is_some_and(|installed| installed.reason == alpm_db::InstallReason::Explicit);
+            if explicit {
+                explicit_files.push(file.clone());
+            } else {
+                dependency_files.push(file.clone());
+            }
+            selected_packages.push((package, explicit));
+        }
+    }
     let engine = app.engine()?;
-    engine.install_files(
-        &crate::engine::FileInstall {
-            files,
-            as_deps: false,
-            overwrite: Vec::new(),
-        },
-        ApplyOpts {
-            dry_run: false,
-            no_confirm: true,
-        },
-    )?;
+    for (files, as_deps) in [(dependency_files, true), (explicit_files, false)] {
+        if !files.is_empty() {
+            engine.install_files(
+                &crate::engine::FileInstall {
+                    files,
+                    as_deps,
+                    overwrite: Vec::new(),
+                },
+                ApplyOpts {
+                    dry_run: false,
+                    no_confirm: true,
+                },
+            )?;
+        }
+    }
     let mut patch = crate::ledger::Patch::default();
-    for package in built {
-        let explicit = host
-            .installed_package(&package.name)?
-            .is_none_or(|installed| installed.reason == alpm_db::InstallReason::Explicit);
+    for (package, explicit) in selected_packages {
         patch.upsert.insert(
             package.name,
             crate::ledger::Entry {
