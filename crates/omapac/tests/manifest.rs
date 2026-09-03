@@ -32,8 +32,9 @@ fn plan_shows_the_diff_with_provenance() {
     insta::assert_snapshot!(rig.redact(&out));
     assert!(rig.log().is_empty(), "plan never runs pacman");
 
-    let (code, _, _) = rig.run(&["plan", "--detailed-exitcode"], "", 0);
+    let (code, detailed, _) = rig.run(&["plan", "--detailed-exitcode"], "", 0);
     assert_eq!(code, 2);
+    assert_eq!(detailed, out);
 
     let (_, out, _) = rig.run(&["plan", "--json"], "", 0);
     let diff: serde_json::Value = serde_json::from_str(&out).unwrap();
