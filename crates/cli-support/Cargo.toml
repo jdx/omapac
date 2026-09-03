@@ -1,0 +1,15 @@
+[package]
+name = "omapac-cli-support"
+description = "Shared argument parsing, help, and error rendering for the omapac binaries"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+[dependencies]
+eyre.workspace = true
+serde_json.workspace = true
+usage_rs.workspace = true

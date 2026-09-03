@@ -1,0 +1,32 @@
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT"
+repository = "https://github.com/jdx/omapac"
+homepage = "https://github.com/jdx/omapac"
+authors = ["Jeff Dickey <@jdx>"]
+
+[workspace.dependencies]
+alpm-db = { path = "crates/alpm-db" }
+omapac-cli-support = { path = "crates/cli-support" }
+omapac-policy = { path = "crates/omapac-policy" }
+packslip = { path = "crates/packslip" }
+
+color-eyre = "0.6"
+eyre = "0.6"
+indexmap = { version = "2", features = ["serde"] }
+insta = { version = "1", features = ["filters", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+thiserror = "2"
+usage_rs = { package = "usage-rs", version = "6", features = ["completions"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
