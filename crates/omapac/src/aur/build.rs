@@ -202,6 +202,9 @@ fn spawn_makepkg(
         opts.pkgdest.clone(),
         builddir.to_path_buf(),
         opts.logdest.clone(),
+        PathBuf::from("/tmp"),
+        PathBuf::from("/var/tmp"),
+        PathBuf::from("/dev/shm"),
     ];
     if source_writable {
         writable.push(opts.srcdest.clone());
