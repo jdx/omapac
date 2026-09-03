@@ -1,0 +1,24 @@
+# Cargo
+/target
+**/*.rs.bk
+
+# insta
+**/snapshots/*.snap.new
+
+# mise
+/mise.local.toml
+.mise/
+
+# editors and OS
+.DS_Store
+.vscode/
+.idea/
+
+# logs and profiling
+*.log
+*.profraw
+*.lcov
+flamegraph.svg
+
+# local agent settings
+.claude/settings.local.json
