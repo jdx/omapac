@@ -772,7 +772,9 @@ pub fn check_snapshot(
                         .push(format!("{repo}/{}: size mismatch", package.filename));
                     continue;
                 }
-                outcome.verified.push(package.name.clone());
+                outcome
+                    .verified
+                    .push(package.base.clone().unwrap_or_else(|| package.name.clone()));
             }
         }
     }
