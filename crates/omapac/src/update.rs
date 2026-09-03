@@ -247,7 +247,10 @@ impl UpdateLock {
             }
         }
         if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") {
-            return PathBuf::from(runtime).join("omapac/update.lock");
+            let runtime = PathBuf::from(runtime);
+            if let Some(path) = user_lock_path(&runtime) {
+                return path;
+            }
         }
         crate::aur::cache_dir().join("update.lock")
     }
@@ -310,6 +313,15 @@ impl UpdateLock {
     }
 }
 
+fn user_lock_path(root: &Path) -> Option<PathBuf> {
+    if root.as_os_str().is_empty() || !root.is_absolute() {
+        return None;
+    }
+    let dir = root.join("omapac");
+    std::fs::create_dir_all(&dir).ok()?;
+    (dir.is_dir() && is_writable(&dir)).then(|| dir.join("update.lock"))
+}
+
 fn is_writable(dir: &Path) -> bool {
     use std::os::unix::fs::MetadataExt as _;
     let Ok(meta) = dir.metadata() else {
@@ -368,6 +380,22 @@ mod tests {
             .to_string();
         assert!(err.contains("timed out"), "{err}");
         assert!(!err.contains("pass --wait"), "{err}");
+    }
+
+    #[test]
+    fn runtime_lock_path_must_be_absolute_and_usable() {
+        assert!(user_lock_path(Path::new("")).is_none());
+        assert!(user_lock_path(Path::new("relative/runtime")).is_none());
+
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            user_lock_path(dir.path()),
+            Some(dir.path().join("omapac/update.lock"))
+        );
+
+        let stale = dir.path().join("stale");
+        std::fs::write(&stale, "not a directory").unwrap();
+        assert!(user_lock_path(&stale).is_none());
     }
 
     #[test]
