@@ -214,7 +214,7 @@ pub fn confirm_and_apply(
     validate_plan(plan, verb, yes)?;
     if !yes {
         println!("run: {}", plan.command);
-        if !ui::confirm("Proceed?", true)? {
+        if !ui::confirm("Proceed?", false)? {
             bail!("cancelled");
         }
     }
