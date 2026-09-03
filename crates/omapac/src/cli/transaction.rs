@@ -3,6 +3,7 @@
 //! transaction, and the confirm-then-apply step.
 
 use std::fmt::Write as _;
+use std::io::Write as _;
 
 use alpm_db::Check;
 use eyre::{Result, bail};
@@ -149,6 +150,7 @@ pub fn confirm_and_apply(
     dry_run: bool,
 ) -> Result<()> {
     print!("{}", render(verb, plan));
+    std::io::stdout().flush()?;
     if plan.changes.is_empty() {
         return Ok(());
     }
