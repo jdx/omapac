@@ -103,6 +103,24 @@ impl Diff {
         self.steps.iter().any(|s| s.action != Action::Noop)
     }
 
+    /// Repair ledger state for declarations the machine already satisfies.
+    pub fn record_noops(&self, app: &super::App, host: &Host, by: &str) -> Result<()> {
+        let present: Vec<String> = self
+            .steps
+            .iter()
+            .filter(|step| step.action == Action::Noop && step.state == State::Present)
+            .map(|step| step.name.clone())
+            .collect();
+        let mut patch = transaction::ledger_patch_for_installed(host, &present, true, by)?;
+        patch.remove.extend(
+            self.steps
+                .iter()
+                .filter(|step| step.action == Action::Noop && step.state == State::Absent)
+                .map(|step| step.name.clone()),
+        );
+        app.record(&patch)
+    }
+
     fn installs(&self) -> Vec<Target> {
         self.steps
             .iter()
@@ -225,6 +243,9 @@ impl Diff {
                 "warning: skipped AUR package(s) {}: the review flow is not in this build",
                 aur.join(", ")
             );
+        }
+        if !dry_run {
+            self.record_noops(app, host, by)?;
         }
         Ok(())
     }

@@ -240,6 +240,38 @@ pub fn ledger_patch(plan: &Plan, targets: &[String], by: &str, removing: bool) -
     patch
 }
 
+/// Reconstruct ledger entries from packages that are already in the local
+/// database. This lets a repeated command repair a ledger write that failed
+/// after pacman had successfully changed the machine.
+pub fn ledger_patch_for_installed(
+    host: &Host,
+    names: &[String],
+    explicit: bool,
+    by: &str,
+) -> Result<Patch> {
+    let mut patch = Patch::default();
+    let at = crate::ledger::now();
+    for name in names {
+        let Some(package) = host.installed_package(name)? else {
+            continue;
+        };
+        let source = host.find_sync(name)?.map(|(source, _)| source);
+        patch.upsert.insert(
+            name.clone(),
+            Entry {
+                version: package.version.clone(),
+                tier: source.map_or(Tier::Foreign, |source| source.tier.clone()),
+                repo: source.map(|source| source.name.clone()),
+                aur_commit: None,
+                explicit,
+                by: by.to_string(),
+                at,
+            },
+        );
+    }
+    Ok(patch)
+}
+
 /// Whether the eventual pacman command may suppress prompts. Interactive
 /// HoldPkg removals must leave pacman's override question available.
 pub fn apply_no_confirm(plan: &Plan, yes: bool) -> bool {
