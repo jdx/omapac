@@ -287,14 +287,18 @@ impl RunWith<()> for Snapshot {
                 });
                 release.tested_pkgbases = tested;
                 let mut moved = false;
-                if result == TestResult::Pass && !release.held {
-                    let current = store.target("rc");
-                    if current.as_deref().is_none_or(|c| c <= test.id.as_str()) {
-                        release.promoted.rc.get_or_insert_with(|| now.to_string());
-                        store.write_release(&release, &key)?;
-                        if current.as_deref() != Some(test.id.as_str()) {
-                            store.point("rc", &test.id)?;
-                            moved = true;
+                if result == TestResult::Pass {
+                    if !release.held {
+                        let current = store.target("rc");
+                        if current.as_deref().is_none_or(|c| c <= test.id.as_str()) {
+                            release.promoted.rc.get_or_insert_with(|| now.to_string());
+                            store.write_release(&release, &key)?;
+                            if current.as_deref() != Some(test.id.as_str()) {
+                                store.point("rc", &test.id)?;
+                                moved = true;
+                            }
+                        } else {
+                            store.write_release(&release, &key)?;
                         }
                     } else {
                         store.write_release(&release, &key)?;
