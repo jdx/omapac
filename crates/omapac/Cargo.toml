@@ -37,6 +37,7 @@ nix.workspace = true
 omapac-cli-support.workspace = true
 omapac-policy.workspace = true
 packslip.workspace = true
+ratatui.workspace = true
 seccompiler.workspace = true
 serde.workspace = true
 serde_json.workspace = true

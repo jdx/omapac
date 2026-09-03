@@ -89,6 +89,9 @@ pub struct Review {
     /// Print as JSON
     #[usage(short = 'J', long)]
     json: bool,
+    /// Show the review and diff in a scrollable pager
+    #[usage(long)]
+    pager: bool,
 }
 
 /// Approve an AUR package's commit for building
@@ -464,12 +467,28 @@ impl RunWith<&App> for Review {
             }
             return Ok(());
         }
-        print!("{}", render(&reviewed));
-        if !self.no_diff {
-            let text = reviewed.review_text()?;
-            if !text.is_empty() {
-                println!();
-                print!("{text}");
+        if self.pager {
+            crate::tui::require_terminal("aur review --pager")?;
+            let mut text = render(&reviewed);
+            if !self.no_diff {
+                let diff = reviewed.review_text()?;
+                if !diff.is_empty() {
+                    text.push('\n');
+                    text.push_str(&diff);
+                }
+            }
+            crate::tui::page(
+                &format!("Review {} at {}", reviewed.pkgname, &reviewed.target[..12]),
+                &text,
+            )?;
+        } else {
+            print!("{}", render(&reviewed));
+            if !self.no_diff {
+                let text = reviewed.review_text()?;
+                if !text.is_empty() {
+                    println!();
+                    print!("{text}");
+                }
             }
         }
         if denied {

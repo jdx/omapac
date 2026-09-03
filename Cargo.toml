@@ -21,6 +21,7 @@ omapac-cli-support = { path = "crates/cli-support" }
 omapac = { path = "crates/omapac" }
 omapac-policy = { path = "crates/omapac-policy" }
 packslip = { path = "crates/packslip" }
+ratatui = "0.30"
 
 color-eyre = "0.6"
 eyre = "0.6"
