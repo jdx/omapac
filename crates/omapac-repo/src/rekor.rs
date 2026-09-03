@@ -87,23 +87,58 @@ pub fn upload(log_url: &str, envelope: &Envelope, key: &PublicKey) -> Result<Ent
     if !(response.status().is_success() || status == 409) {
         bail!("uploading to {url}: HTTP {status}");
     }
-    let text = response
-        .body_mut()
-        .read_to_string()
-        .wrap_err("reading the log's response")?;
+    let text = if status == 409 {
+        let location = response
+            .headers()
+            .get("location")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string)
+            .ok_or_else(|| eyre::eyre!("the log reported an existing entry without a Location"))?;
+        let location = if location.starts_with("http://") || location.starts_with("https://") {
+            location
+        } else if location.starts_with('/') {
+            format!("{}{}", log_url.trim_end_matches('/'), location)
+        } else {
+            format!("{}/{}", log_url.trim_end_matches('/'), location)
+        };
+        ureq::get(&location)
+            .header("Accept", "application/json")
+            .call()
+            .wrap_err_with(|| format!("fetching existing log entry from {location}"))?
+            .body_mut()
+            .read_to_string()
+            .wrap_err("reading the existing log entry")?
+    } else {
+        response
+            .body_mut()
+            .read_to_string()
+            .wrap_err("reading the log's response")?
+    };
     let response: serde_json::Value =
         serde_json::from_str(&text).wrap_err("parsing the log's response")?;
     let Some((uuid, entry)) = response.as_object().and_then(|m| m.iter().next()) else {
         bail!("the log returned no entry");
     };
-    let field = |name: &str| entry.get(name).cloned().unwrap_or(serde_json::Value::Null);
+    let required_u64 = |name: &str| {
+        entry
+            .get(name)
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| eyre::eyre!("the log entry has no numeric {name}"))
+    };
+    let required_str = |name: &str| {
+        entry
+            .get(name)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| eyre::eyre!("the log entry has no string {name}"))
+    };
     Ok(Entry {
         log_url: log_url.trim_end_matches('/').to_string(),
         uuid: uuid.clone(),
-        log_index: field("logIndex").as_u64().unwrap_or_default(),
-        log_id: field("logID").as_str().unwrap_or_default().to_string(),
-        integrated_time: field("integratedTime").as_u64().unwrap_or_default(),
-        body: field("body").as_str().unwrap_or_default().to_string(),
+        log_index: required_u64("logIndex")?,
+        log_id: required_str("logID")?,
+        integrated_time: required_u64("integratedTime")?,
+        body: required_str("body")?,
         inclusion_proof: entry
             .get("verification")
             .and_then(|v| v.get("inclusionProof"))
@@ -234,7 +269,22 @@ mod tests {
             reader.read_exact(&mut body).unwrap();
             write!(
                 stream,
-                "HTTP/1.1 409 Conflict\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",
+                "HTTP/1.1 409 Conflict\r\nLocation: /api/v1/log/entries/existing\r\nContent-Type: application/json\r\nContent-Length: 18\r\nConnection: close\r\n\r\n{{\"code\":\"409\"}}"
+            )
+            .unwrap();
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            loop {
+                line.clear();
+                reader.read_line(&mut line).unwrap();
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",
                 response.len()
             )
             .unwrap();
