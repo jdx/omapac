@@ -82,6 +82,7 @@ impl Rig {
     pub fn run(&self, args: &[&str], print: &str, status: i32) -> (i32, String, String) {
         let output = Command::new(env!("CARGO_BIN_EXE_omapac"))
             .env("PATH", format!("{}:/usr/bin:/bin", self.bin.display()))
+            .env("OMAPAC_TEST_PACMAN", self.bin.join("pacman"))
             .env("HOME", &self.home)
             .env_remove("XDG_CONFIG_HOME")
             .env_remove("OMAPAC_MANAGED_CONFIG_PATH")

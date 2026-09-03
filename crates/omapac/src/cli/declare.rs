@@ -108,7 +108,11 @@ impl RunWith<&App> for Status {
         if self.json {
             return print_json(&diff);
         }
-        print!("{}", diff.render());
+        if self.missing && diff.steps.is_empty() {
+            println!("nothing missing");
+        } else {
+            print!("{}", diff.render());
+        }
         if !manifest.layers.is_empty() {
             println!(
                 "layers: {}",
@@ -223,7 +227,13 @@ impl RunWith<&App> for Drop {
 
     fn run_with(self, app: &App) -> Self::Output {
         let paths = app.manifest_paths();
-        for name in &self.packages {
+        let packages: Vec<crate::engine::Target> = self
+            .packages
+            .iter()
+            .map(|spec| spec.parse().expect("target parsing is infallible"))
+            .collect();
+        for target in &packages {
+            let name = &target.name;
             if edit::remove_package(&paths.user, name)? {
                 println!("removed {name} from {}", paths.user.display());
             } else {
@@ -233,7 +243,8 @@ impl RunWith<&App> for Drop {
         let host = app.host()?;
         let manifest = app.manifest()?;
         let mut removals = Vec::new();
-        for name in &self.packages {
+        for target in &packages {
+            let name = &target.name;
             // Still declared present by a lower layer: keep it.
             if manifest
                 .declared(name)
