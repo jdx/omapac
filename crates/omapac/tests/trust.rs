@@ -317,7 +317,8 @@ fn verify_checks_the_provenance_sidecar_and_the_log_entry() {
     let (code, out, err) = run(&s, "http://127.0.0.1:9/", &["verify", "--offline", "yay"]);
     assert_eq!(code, 0, "{err}\n{out}");
     assert!(
-        out.contains("provenance: published, not checked offline"),
+        out.contains("provenance: published, not checked offline")
+            && out.contains("transparency: published, not checked offline"),
         "{out}"
     );
 
