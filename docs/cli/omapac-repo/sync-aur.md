@@ -18,6 +18,7 @@ For each package, syncs the AUR checkout, reviews the remote head with the unatt
 
   **Default:** `x86_64`
 - **`--verdicts <VERDICTS>`** — Append a static verdict per reviewed commit to this feed
+- **`--advisories <ADVISORIES>`** — Advisory kill list to enforce while gating commits
 - **`-k --key <KEY>`** — The feed signing key (with --verdicts)
 - **`-w --write`** — Record auto-merged commits in the state
 - **`-J --json`** — Print the results as JSON
