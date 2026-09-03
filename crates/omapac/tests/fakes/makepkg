@@ -5,12 +5,12 @@
 #   FAKE_MAKEPKG_FAIL when set, the build fails with this status
 set -euo pipefail
 printf 'makepkg %s\n' "$*" >>"${FAKE_PACMAN_LOG:?}"
-mapfile -t pkgnames < <(sed -n 's/^pkgname = //p' .SRCINFO)
-if [ "${#pkgnames[@]}" -eq 0 ]; then
-  pkgnames=("$(sed -n 's/^pkgname=//p' PKGBUILD | tr -d "'")")
-fi
 pkgver=$(sed -n 's/^pkgver=//p' PKGBUILD)
 pkgrel=$(sed -n 's/^pkgrel=//p' PKGBUILD)
+mapfile -t pkgnames < <(sed -n 's/^pkgname = //p' .SRCINFO)
+if [ "${#pkgnames[@]}" -eq 0 ]; then
+  mapfile -t pkgnames < <(sed -n 's/^pkgname=//p' PKGBUILD)
+fi
 case " $* " in
   *" --packagelist "*)
     for pkgname in "${pkgnames[@]}"; do

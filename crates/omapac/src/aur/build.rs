@@ -104,6 +104,24 @@ pub fn missing_deps(host: &Host, reviewed: &Reviewed, arch: &str) -> Result<Miss
 
 /// Build `reviewed` at its target commit. Returns the package files.
 pub fn build(reviewed: &Reviewed, opts: &BuildOpts) -> Result<Vec<PathBuf>> {
+    build_with_options(reviewed, opts, false)
+}
+
+/// Bootstrap a reviewed split pkgbase whose sibling closes a dependency
+/// cycle. `--nodeps` skips makepkg's preflight only; the normal build is run
+/// again after the dependency chain has been installed.
+pub fn build_without_dependency_checks(
+    reviewed: &Reviewed,
+    opts: &BuildOpts,
+) -> Result<Vec<PathBuf>> {
+    build_with_options(reviewed, opts, true)
+}
+
+fn build_with_options(
+    reviewed: &Reviewed,
+    opts: &BuildOpts,
+    without_dependency_checks: bool,
+) -> Result<Vec<PathBuf>> {
     let checkout = &reviewed.checkout;
     checkout.checkout(&reviewed.target)?;
     std::fs::create_dir_all(&opts.pkgdest)
@@ -138,7 +156,10 @@ pub fn build(reviewed: &Reviewed, opts: &BuildOpts) -> Result<Vec<PathBuf>> {
     // Phase 2 extracts, prepares, builds, and packages inside the jail.
     // --holdver prevents makepkg from updating VCS sources a second time;
     // phase 1 already fetched and verified the exact source state.
-    let args = ["--noconfirm", "--force", "--holdver"];
+    let mut args = vec!["--noconfirm", "--force", "--holdver"];
+    if without_dependency_checks {
+        args.push("--nodeps");
+    }
     let status = run_makepkg(opts, &args, opts.network, false, &opts.builddir)
         .wrap_err("running makepkg")?;
     if !status.success() {
