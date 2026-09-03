@@ -206,6 +206,15 @@ impl Store {
         Ok(())
     }
 
+    pub fn clear(&self, channel: &str) -> Result<()> {
+        let path = self.root.join("channels").join(channel);
+        match std::fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(err).wrap_err_with(|| format!("clearing channel {channel}")),
+        }
+    }
+
     pub fn channels_pointing_at(&self, id: &str) -> Vec<String> {
         CHANNELS
             .iter()
@@ -279,13 +288,38 @@ impl RunWith<()> for Snapshot {
                 let mut moved = false;
                 if result == TestResult::Pass && !release.held {
                     let current = store.target("rc");
-                    if current.as_deref().is_none_or(|c| c < test.id.as_str()) {
-                        release.promoted.rc = Some(now.to_string());
-                        store.point("rc", &test.id)?;
-                        moved = true;
+                    if current.as_deref().is_none_or(|c| c <= test.id.as_str()) {
+                        release.promoted.rc.get_or_insert_with(|| now.to_string());
+                        store.write_release(&release, &key)?;
+                        if current.as_deref() != Some(test.id.as_str()) {
+                            store.point("rc", &test.id)?;
+                            moved = true;
+                        }
+                    } else {
+                        store.write_release(&release, &key)?;
                     }
+                } else {
+                    if store.target("rc").as_deref() == Some(test.id.as_str()) {
+                        release.promoted.rc = None;
+                        let fallback = store
+                            .ids()?
+                            .into_iter()
+                            .rev()
+                            .filter(|id| id != &test.id)
+                            .find(|id| {
+                                store.release(id).is_ok_and(|candidate| {
+                                    !candidate.held
+                                        && candidate.tests.as_ref().map(|tests| tests.result)
+                                            == Some(TestResult::Pass)
+                                })
+                            });
+                        match fallback {
+                            Some(id) => store.point("rc", &id)?,
+                            None => store.clear("rc")?,
+                        }
+                    }
+                    store.write_release(&release, &key)?;
                 }
-                store.write_release(&release, &key)?;
                 println!(
                     "snapshot {}: tests {}, {} tested pkgbase(s){}",
                     test.id,
