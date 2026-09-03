@@ -429,8 +429,43 @@ impl RunWith<&App> for Verify {
                 }
                 None => println!("database: not on disk"),
             }
+            match &report.provenance {
+                Some(p) if p.verified => println!(
+                    "provenance: verified (build key {}, {} at {} from {})",
+                    p.build_key.as_deref().unwrap_or("?"),
+                    p.pkgbase.as_deref().unwrap_or("?"),
+                    p.commit.as_deref().unwrap_or("?"),
+                    p.source.as_deref().unwrap_or("?")
+                ),
+                Some(p) => println!(
+                    "provenance: FAILED: {}",
+                    p.error.as_deref().unwrap_or("unknown")
+                ),
+                None if self.offline
+                    && report.sidecars.iter().any(|sidecar| {
+                        sidecar == &format!("{}.provenance.json", report.filename)
+                    }) =>
+                {
+                    println!("provenance: published, not checked offline")
+                }
+                None => println!("provenance: none published"),
+            }
+            match &report.transparency {
+                Some(t) if t.ok => println!(
+                    "transparency: entry {} at {}",
+                    t.log_index.unwrap_or(0),
+                    t.log.as_deref().unwrap_or("?")
+                ),
+                Some(t) => println!(
+                    "transparency: FAILED: {}",
+                    t.error.as_deref().unwrap_or("unknown")
+                ),
+                None => {}
+            }
         }
-        let failed = report.digest_ok == Some(false)
+        let failed = report.provenance.as_ref().is_some_and(|p| !p.verified)
+            || report.transparency.as_ref().is_some_and(|t| !t.ok)
+            || report.digest_ok == Some(false)
             || report.size_ok == Some(false)
             || report.db_ok == Some(false);
         if failed {

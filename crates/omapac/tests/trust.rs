@@ -316,6 +316,10 @@ fn verify_checks_the_provenance_sidecar_and_the_log_entry() {
     // fetch evidence sidecars.
     let (code, out, err) = run(&s, "http://127.0.0.1:9/", &["verify", "--offline", "yay"]);
     assert_eq!(code, 0, "{err}\n{out}");
+    assert!(
+        out.contains("provenance: published, not checked offline"),
+        "{out}"
+    );
 
     // A stranger's envelope fails, and so does the exit status.
     let base = serve_with(&envelope(&stranger, &yay_sha));
