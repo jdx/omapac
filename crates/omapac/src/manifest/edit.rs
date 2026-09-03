@@ -2,8 +2,8 @@
 
 use std::path::Path;
 
-use eyre::{Context as _, Result};
-use toml_edit::{DocumentMut, InlineTable, Item, Table, value};
+use eyre::{Context as _, Result, bail};
+use toml_edit::{DocumentMut, InlineTable, Item, Table, Value, value};
 
 use super::{PackageToml, Source, State};
 
@@ -28,7 +28,7 @@ fn save(path: &Path, doc: &DocumentMut) -> Result<()> {
 /// Declare `name` in the manifest at `path`, replacing any existing entry.
 pub fn set_package(path: &Path, name: &str, package: &PackageToml) -> Result<()> {
     let mut doc = load(path)?;
-    if !doc.contains_table("packages") {
+    if !doc.contains_key("packages") {
         doc["packages"] = Item::Table(Table::new());
     }
     let mut entry = InlineTable::new();
@@ -44,27 +44,36 @@ pub fn set_package(path: &Path, name: &str, package: &PackageToml) -> Result<()>
     if package.hold {
         entry.insert("hold", true.into());
     }
-    let table = doc["packages"].as_table_mut().expect("packages is a table");
-    // Keep a trailing comment on a line whose value is being replaced.
-    let suffix = table
-        .get(name)
-        .and_then(Item::as_value)
-        .and_then(|v| v.decor().suffix().cloned());
-    let mut new_value = value(entry);
-    if let (Some(suffix), Some(v)) = (suffix, new_value.as_value_mut()) {
-        v.decor_mut().set_suffix(suffix);
+    if let Some(table) = doc["packages"].as_table_mut() {
+        // Keep a trailing comment on a line whose value is being replaced.
+        let suffix = table
+            .get(name)
+            .and_then(Item::as_value)
+            .and_then(|v| v.decor().suffix().cloned());
+        let mut new_value = value(entry);
+        if let (Some(suffix), Some(v)) = (suffix, new_value.as_value_mut()) {
+            v.decor_mut().set_suffix(suffix);
+        }
+        table[name] = new_value;
+    } else if let Some(table) = doc["packages"].as_inline_table_mut() {
+        table.insert(name, Value::InlineTable(entry));
+    } else {
+        bail!("packages in {} must be a table", path.display());
     }
-    table[name] = new_value;
     save(path, &doc)
 }
 
 /// Remove `name` from the manifest at `path`. Returns whether it was there.
 pub fn remove_package(path: &Path, name: &str) -> Result<bool> {
     let mut doc = load(path)?;
-    let removed = doc
-        .get_mut("packages")
-        .and_then(Item::as_table_mut)
-        .is_some_and(|table| table.remove(name).is_some());
+    let removed = match doc.get_mut("packages") {
+        Some(Item::Table(table)) => table.remove(name).is_some(),
+        Some(item) => match item.as_inline_table_mut() {
+            Some(table) => table.remove(name).is_some(),
+            None => bail!("packages in {} must be a table", path.display()),
+        },
+        None => false,
+    };
     if removed {
         save(path, &doc)?;
     }
@@ -136,5 +145,26 @@ mod tests {
             "[packages]\nhelix = {}\n"
         );
         assert!(!remove_package(&dir.path().join("nope.toml"), "x").unwrap());
+    }
+
+    #[test]
+    fn edits_inline_packages_without_replacing_siblings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("omapac.toml");
+        std::fs::write(&path, "packages = { helix = {}, tree = { hold = true } }\n").unwrap();
+        set_package(
+            &path,
+            "yay",
+            &PackageToml {
+                source: Source::Aur,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(remove_package(&path, "tree").unwrap());
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("helix = {}"), "{text}");
+        assert!(text.contains("yay = { source = \"aur\" }"), "{text}");
+        assert!(!text.contains("tree"), "{text}");
     }
 }
