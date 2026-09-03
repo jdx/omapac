@@ -20,6 +20,7 @@ fn sysroot() -> tempfile::TempDir {
         "[options]\nArchitecture = x86_64\nSigLevel = Required DatabaseOptional\n\
          [core]\nInclude = /etc/pacman.d/mirrorlist\n\
          [omarchy]\nServer = https://pkgs.omarchy.org/stable/$arch\n\
+         [weak-db]\nServer = https://example.invalid/$arch\nSigLevel = PackageRequired DatabaseNever\n\
          [arch-mact2]\nServer = https://example.invalid/$arch\nSigLevel = Never\n",
     )
     .unwrap();
@@ -175,6 +176,11 @@ fn doctor_reports_signature_floor_and_missing_databases() {
         "{out}"
     );
     assert!(out.contains("packages are not signature-checked"), "{out}");
+    assert!(
+        out.contains("[weak-db] custom:weak-db SigLevel = Required DatabaseNever")
+            && out.contains("weaker than the floor (Required DatabaseOptional)"),
+        "{out}"
+    );
     assert!(
         out.contains("[core] arch SigLevel = Required DatabaseOptional"),
         "{out}"

@@ -136,9 +136,21 @@ fn diagnose_host(host: &Host, add: &mut impl FnMut(Status, &str, String)) {
     let floor = host.config.options.sig_level;
     for source in &host.sources {
         let level = source.repo.sig_level;
-        let weak = level.package() != Check::Required
-            || level.package_trust() != Trust::TrustedOnly
-            || (level.database() == Check::Never && floor.database() != Check::Never);
+        let check_rank = |check| match check {
+            Check::Never => 0,
+            Check::Optional => 1,
+            Check::Required => 2,
+        };
+        let trust_rank = |trust| match trust {
+            Trust::TrustAll => 0,
+            Trust::TrustedOnly => 1,
+        };
+        let weak = check_rank(level.package()) < check_rank(floor.package())
+            || check_rank(level.database()) < check_rank(floor.database())
+            || (floor.package() != Check::Never
+                && trust_rank(level.package_trust()) < trust_rank(floor.package_trust()))
+            || (floor.database() != Check::Never
+                && trust_rank(level.database_trust()) < trust_rank(floor.database_trust()));
         let detail = format!(
             "[{}] {} SigLevel = {}{}",
             source.name,
@@ -150,7 +162,7 @@ fn diagnose_host(host: &Host, add: &mut impl FnMut(Status, &str, String)) {
                 ""
             }
         );
-        if level.package() == Check::Never {
+        if level.package() == Check::Never && floor.package() != Check::Never {
             add(
                 Status::Fail,
                 "signatures",
