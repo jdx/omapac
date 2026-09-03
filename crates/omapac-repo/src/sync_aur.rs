@@ -241,12 +241,13 @@ impl RunWith<()> for SyncAur {
                 bail!("--verdicts needs --key");
             };
             let key = crate::feed::secret_key(key_path)?;
-            let mut feed: Verdicts = crate::feed::load(feed_path)?.unwrap_or(Verdicts {
-                version: 1,
-                sequence: 0,
-                issued_at: now.clone(),
-                verdicts: Vec::new(),
-            });
+            let mut feed: Verdicts = crate::feed::load_signed(feed_path, &key.public_key())?
+                .unwrap_or(Verdicts {
+                    version: 1,
+                    sequence: 0,
+                    issued_at: now.clone(),
+                    verdicts: Vec::new(),
+                });
             verdicts.retain(|new| {
                 !feed.verdicts.iter().any(|old| {
                     old.subject == new.subject
@@ -398,9 +399,20 @@ pub fn decide(
             .push("new package: a human must approve the first commit".into());
         return result;
     };
-    if report.denied() {
+    let actionable_denials: Vec<_> = report
+        .denials()
+        .filter(|judged| {
+            maintainer.is_some()
+                || !matches!(
+                    judged.finding.id,
+                    omapac_policy::FindingId::Orphaned
+                        | omapac_policy::FindingId::MaintainerChanged
+                )
+        })
+        .collect();
+    if !actionable_denials.is_empty() {
         result.outcome = Outcome::Blocked;
-        for judged in report.denials() {
+        for judged in actionable_denials {
             result
                 .reasons
                 .push(format!("{}: {}", judged.finding.id, judged.finding.message));

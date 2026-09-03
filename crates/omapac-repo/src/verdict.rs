@@ -67,12 +67,13 @@ impl RunWith<()> for VerdictCmd {
             None => vec![self.single(&now)?],
         };
         let added = new.len();
-        let mut feed: Verdicts = crate::feed::load(&self.feed)?.unwrap_or(Verdicts {
-            version: 1,
-            sequence: 0,
-            issued_at: now.clone(),
-            verdicts: Vec::new(),
-        });
+        let mut feed: Verdicts = crate::feed::load_signed(&self.feed, &key.public_key())?
+            .unwrap_or(Verdicts {
+                version: 1,
+                sequence: 0,
+                issued_at: now.clone(),
+                verdicts: Vec::new(),
+            });
         feed.sequence += 1;
         feed.issued_at = now;
         feed.verdicts.extend(new);
