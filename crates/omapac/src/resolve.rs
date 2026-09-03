@@ -9,10 +9,10 @@
 
 use std::fmt;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Where a package comes from, and therefore what its evidence is.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", tag = "tier", content = "name")]
 pub enum Tier {
     /// Arch's official repositories, signed by Arch developers.

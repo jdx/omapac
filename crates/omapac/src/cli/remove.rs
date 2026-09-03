@@ -76,6 +76,17 @@ impl RunWith<&App> for Remove {
         if self.json {
             return print_json(&plan);
         }
-        transaction::confirm_and_apply(&engine, &resolved, &plan, "remove", self.yes, self.dry_run)
+        let performed = transaction::confirm_and_apply(
+            &engine,
+            &resolved,
+            &plan,
+            "remove",
+            self.yes,
+            self.dry_run,
+        )?;
+        if performed {
+            app.record(&transaction::ledger_patch(&plan, &[], "remove", true))?;
+        }
+        Ok(())
     }
 }

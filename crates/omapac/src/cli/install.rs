@@ -64,7 +64,31 @@ impl RunWith<&App> for Install {
         if self.json {
             return print_json(&plan);
         }
-        transaction::confirm_and_apply(&engine, &resolved, &plan, "install", self.yes, self.dry_run)
+        let performed = transaction::confirm_and_apply(
+            &engine,
+            &resolved,
+            &plan,
+            "install",
+            self.yes,
+            self.dry_run,
+        )?;
+        if performed {
+            let targets: Vec<String> = tx_targets(&tx);
+            app.record(&transaction::ledger_patch(
+                &plan, &targets, "install", false,
+            ))?;
+        }
+        Ok(())
+    }
+}
+
+/// The bare names a sync transaction targets.
+pub fn tx_targets(tx: &Transaction) -> Vec<String> {
+    match &tx.operation {
+        crate::engine::Operation::Install { targets, .. } => {
+            targets.iter().map(|t| t.name.clone()).collect()
+        }
+        _ => Vec::new(),
     }
 }
 
