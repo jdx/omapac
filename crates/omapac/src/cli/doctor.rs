@@ -1,12 +1,12 @@
 use std::fmt::Write as _;
 use std::time::{Duration, SystemTime};
 
-use alpm_db::{Check, Trust};
+use alpm_db::Check;
 use eyre::Result;
 use serde::Serialize;
 use usage_rs::RunWith;
 
-use super::{App, print_json};
+use super::{App, check_rank, print_json, trust_rank};
 use crate::host::Host;
 
 /// Check that this machine is set up for omapac
@@ -132,15 +132,6 @@ fn diagnose_host(host: &Host, add: &mut impl FnMut(Status, &str, String)) {
     let floor = host.config.options.sig_level;
     for source in &host.sources {
         let level = source.repo.sig_level;
-        let check_rank = |check| match check {
-            Check::Never => 0,
-            Check::Optional => 1,
-            Check::Required => 2,
-        };
-        let trust_rank = |trust| match trust {
-            Trust::TrustAll => 0,
-            Trust::TrustedOnly => 1,
-        };
         let weak = check_rank(level.package()) < check_rank(floor.package())
             || check_rank(level.database()) < check_rank(floor.database())
             || (floor.package() != Check::Never
