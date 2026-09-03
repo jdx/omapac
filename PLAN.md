@@ -609,8 +609,9 @@ canonical package map keyed by `repo/name` whose value is the selected version a
 `tested` or `snapshot` label. The signed test result records each exact package output
 and selected version it exercised. `tested` is assigned only when both that output name
 and version match; unexercised siblings from a split PKGBUILD remain `snapshot`.
-Alternatively imported results must carry a signed pkgbase-to-output-and-version map
-before labels are derived. Keys are unique and sorted bytewise before signing, so
+Imported results are held to the same rule: their signed records name each exact
+output and selected version exercised, and never expand a pkgbase result to sibling
+outputs. Keys are unique and sorted bytewise before signing, so
 clients can deterministically match a transaction package to its version and label.
 The whole manifest is signed with the index key.
 
