@@ -371,7 +371,7 @@ impl App {
                             dep.spec()
                         );
                     }
-                    self.install_built(&prepared, &selected, true, "install")?;
+                    self.install_selected_built(&prepared, &selected, true, "install")?;
                     built.extend(selected_packages);
                     continue;
                 }
@@ -493,10 +493,22 @@ impl App {
                 prepared.reviewed.pkgname
             );
         }
-        let files: Vec<_> = selected.iter().map(|(file, _)| file.clone()).collect();
+        let files: Vec<_> = selected.into_iter().map(|(file, _)| file).collect();
+        self.install_selected_built(prepared, &files, as_deps, by)
+    }
+
+    /// Install an already selected subset of a split build. Bootstrap code
+    /// uses this after choosing the sibling that breaks a dependency cycle.
+    fn install_selected_built(
+        &self,
+        prepared: &Prepared,
+        files: &[std::path::PathBuf],
+        as_deps: bool,
+        by: &str,
+    ) -> Result<()> {
         let engine = self.engine()?;
         let install = crate::engine::FileInstall {
-            files,
+            files: files.to_vec(),
             as_deps,
             overwrite: Vec::new(),
         };
@@ -509,7 +521,7 @@ impl App {
             },
         )?;
         let mut patch = crate::ledger::Patch::default();
-        for (_, package) in selected {
+        for package in crate::aur::build::built_packages(files)? {
             patch.upsert.insert(
                 package.name,
                 crate::ledger::Entry {
