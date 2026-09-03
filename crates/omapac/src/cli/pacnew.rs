@@ -47,7 +47,15 @@ impl RunWith<&App> for Pacnew {
                     .arg(file)
                     .output();
                 match output {
-                    Ok(out) => print!("{}", String::from_utf8_lossy(&out.stdout)),
+                    Ok(out) if matches!(out.status.code(), Some(0 | 1)) => {
+                        print!("{}", String::from_utf8_lossy(&out.stdout));
+                    }
+                    Ok(out) => bail!(
+                        "diffing {} against {} failed: {}",
+                        file.display(),
+                        original.display(),
+                        String::from_utf8_lossy(&out.stderr).trim()
+                    ),
                     Err(err) => bail!("running diff: {err}"),
                 }
             }

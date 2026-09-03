@@ -314,4 +314,12 @@ fn prune_orphans_and_pacnew_command() {
     assert_eq!(code, 0);
     assert!(out.contains("pacman.conf.pacnew"), "{out}");
     assert!(out.contains("-a\n+b"), "{out}");
+
+    s.rig.write_root("/etc/removed.conf.pacsave", "old\n");
+    let (code, _, err) = run(&s, &["pacnew", "--diff"], "");
+    assert_ne!(code, 0);
+    assert!(
+        err.contains("removed.conf") && err.contains("failed"),
+        "{err}"
+    );
 }
