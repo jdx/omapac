@@ -232,14 +232,19 @@ pub struct UpdateLock {
 }
 
 impl UpdateLock {
-    /// Where the lock lives: the ledger directory when this process can
-    /// create or write it (root, or a sysroot the user owns), else the
-    /// user's runtime or cache directory.
+    /// Where the lock lives: an existing readable system lock is shared
+    /// even when this process cannot write it. Otherwise use the ledger
+    /// directory when writable, then the user's runtime or cache directory.
     pub fn path(sysroot: Option<&Path>) -> PathBuf {
         let system = crate::ledger::Ledger::path(sysroot)
             .parent()
             .map(|dir| dir.join("update.lock"))
             .unwrap_or_else(|| PathBuf::from("/var/lib/omapac/update.lock"));
+        if std::fs::symlink_metadata(&system).is_ok_and(|metadata| {
+            metadata.file_type().is_file() && open_lock(&system, false, false).is_ok()
+        }) {
+            return system;
+        }
         if let Some(dir) = system.parent() {
             let _ = std::fs::create_dir_all(dir);
             if dir.is_dir() && is_writable(dir) {
@@ -261,13 +266,17 @@ impl UpdateLock {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).wrap_err_with(|| format!("creating {}", dir.display()))?;
         }
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(path)
-            .wrap_err_with(|| format!("opening {}", path.display()))?;
+        let (file, can_record_holder) = match open_lock(path, true, true) {
+            Ok(file) => (file, true),
+            Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => (
+                open_lock(path, false, false)
+                    .wrap_err_with(|| format!("opening {}", path.display()))?,
+                false,
+            ),
+            Err(err) => {
+                return Err(err).wrap_err_with(|| format!("opening {}", path.display()));
+            }
+        };
         let started = Instant::now();
         let mut file = Some(file);
         loop {
@@ -283,8 +292,12 @@ impl UpdateLock {
                     });
                 }
                 Err((returned, nix::errno::Errno::EWOULDBLOCK)) => {
-                    let holder = std::fs::read_to_string(path)
-                        .ok()
+                    // A read-only participant cannot replace stale contents
+                    // with its own pid after taking the lock. Do not present
+                    // those contents as the identity of the current holder.
+                    let holder = can_record_holder
+                        .then(|| std::fs::read_to_string(path).ok())
+                        .flatten()
                         .map(|s| s.trim().to_string())
                         .filter(|s| !s.is_empty());
                     match wait {
@@ -313,6 +326,18 @@ impl UpdateLock {
     }
 }
 
+fn open_lock(path: &Path, writable: bool, create: bool) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(writable)
+        .create(create)
+        .truncate(false)
+        .custom_flags(nix::libc::O_NOFOLLOW)
+        .open(path)
+}
+
 fn user_lock_path(root: &Path) -> Option<PathBuf> {
     if root.as_os_str().is_empty() || !root.is_absolute() {
         return None;
@@ -323,15 +348,25 @@ fn user_lock_path(root: &Path) -> Option<PathBuf> {
 }
 
 fn is_writable(dir: &Path) -> bool {
-    use std::os::unix::fs::MetadataExt as _;
-    let Ok(meta) = dir.metadata() else {
-        return false;
-    };
-    let uid = nix::unistd::geteuid().as_raw();
-    if uid == 0 {
-        return true;
+    for attempt in 0..16 {
+        let probe = dir.join(format!(
+            ".omapac-lock-probe-{}-{attempt}",
+            std::process::id()
+        ));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&probe)
+        {
+            Ok(file) => {
+                drop(file);
+                return std::fs::remove_file(probe).is_ok();
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return false,
+        }
     }
-    meta.uid() == uid && meta.mode() & 0o200 != 0
+    false
 }
 
 #[cfg(test)]
@@ -383,6 +418,34 @@ mod tests {
     }
 
     #[test]
+    fn existing_read_only_system_lock_is_shared() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join("var/lib/omapac");
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("update.lock");
+        std::fs::write(&path, "system\n").unwrap();
+        let mut file_permissions = std::fs::metadata(&path).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut file_permissions, 0o444);
+        std::fs::set_permissions(&path, file_permissions).unwrap();
+        let mut directory_permissions = std::fs::metadata(&directory).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut directory_permissions, 0o555);
+        std::fs::set_permissions(&directory, directory_permissions).unwrap();
+
+        assert_eq!(UpdateLock::path(Some(root.path())), path);
+        let _held = UpdateLock::acquire(&path, None).unwrap();
+        let err = UpdateLock::acquire(&path, Some(Duration::ZERO))
+            .err()
+            .unwrap()
+            .to_string();
+
+        let mut directory_permissions = std::fs::metadata(&directory).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut directory_permissions, 0o755);
+        std::fs::set_permissions(&directory, directory_permissions).unwrap();
+        assert!(err.contains("timed out"), "{err}");
+        assert!(!err.contains("pid system"), "{err}");
+    }
+
+    #[test]
     fn runtime_lock_path_must_be_absolute_and_usable() {
         assert!(user_lock_path(Path::new("")).is_none());
         assert!(user_lock_path(Path::new("relative/runtime")).is_none());
@@ -396,6 +459,10 @@ mod tests {
         let stale = dir.path().join("stale");
         std::fs::write(&stale, "not a directory").unwrap();
         assert!(user_lock_path(&stale).is_none());
+        assert!(
+            !is_writable(Path::new("/proc")),
+            "an actual write probe must reject a read-only virtual filesystem even as root"
+        );
     }
 
     #[test]
