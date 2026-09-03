@@ -166,12 +166,69 @@ impl Ledger {
 /// Load, merge, save. Fails with the I/O error when the path is not
 /// writable by this process.
 pub fn merge_into(path: &Path, patch: &Patch) -> Result<Ledger> {
+    let _lock =
+        LedgerLock::acquire(path).wrap_err_with(|| format!("locking {}", path.display()))?;
     let mut ledger = Ledger::load(path)?;
     ledger.merge(patch);
     ledger
         .save(path)
         .wrap_err_with(|| format!("writing {}", path.display()))?;
     Ok(ledger)
+}
+
+struct LedgerLock {
+    path: PathBuf,
+    _file: std::fs::File,
+}
+
+impl LedgerLock {
+    fn acquire(ledger: &Path) -> io::Result<LedgerLock> {
+        let mut name = ledger.as_os_str().to_owned();
+        name.push(".lock");
+        let path = PathBuf::from(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(mut file) => {
+                    writeln!(file, "{}", std::process::id())?;
+                    return Ok(LedgerLock { path, _file: file });
+                }
+                Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+                    // A process that died while holding the lock cannot clean
+                    // it up. On Linux, its /proc entry is authoritative.
+                    let stale = std::fs::read_to_string(&path)
+                        .ok()
+                        .and_then(|text| text.trim().parse::<u32>().ok())
+                        .is_some_and(|pid| !Path::new(&format!("/proc/{pid}")).exists());
+                    if stale {
+                        let _ = std::fs::remove_file(&path);
+                        continue;
+                    }
+                    if std::time::Instant::now() >= deadline {
+                        return Err(io::Error::new(
+                            io::ErrorKind::TimedOut,
+                            format!("timed out waiting for {}", path.display()),
+                        ));
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(err) => return Err(err),
+            }
+        }
+    }
+}
+
+impl Drop for LedgerLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
 }
 
 /// Record `patch`, elevating through omapac's `__ledger` command when the
@@ -303,6 +360,32 @@ mod tests {
         assert!(curl.explicit);
         assert_eq!(curl.by, "install");
         assert_eq!(curl.at, 1_756_800_000);
+    }
+
+    #[test]
+    fn concurrent_merges_do_not_drop_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = std::sync::Arc::new(dir.path().join("state.json"));
+        let start = std::sync::Arc::new(std::sync::Barrier::new(12));
+        let threads: Vec<_> = (0..12)
+            .map(|i| {
+                let path = path.clone();
+                let start = start.clone();
+                std::thread::spawn(move || {
+                    let mut patch = Patch::default();
+                    patch.upsert.insert(format!("package-{i}"), entry("1-1"));
+                    patch.index_sequence = Some(i);
+                    start.wait();
+                    merge_into(&path, &patch).unwrap();
+                })
+            })
+            .collect();
+        for thread in threads {
+            thread.join().unwrap();
+        }
+        let ledger = Ledger::load(&path).unwrap();
+        assert_eq!(ledger.packages.len(), 12);
+        assert_eq!(ledger.index_sequence, Some(11));
     }
 
     #[test]
