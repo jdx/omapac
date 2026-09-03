@@ -182,6 +182,12 @@ impl PacmanCli {
         if install.as_deps {
             args.push("--asdeps".to_string());
         }
+        if install.nodeps {
+            // pacman interprets the first occurrence as "ignore versions"
+            // and the second as "ignore dependency names too".
+            args.push("--nodeps".to_string());
+            args.push("--nodeps".to_string());
+        }
         push_overwrites(&mut args, &install.overwrite);
         args.push("--".to_string());
         args.extend(
@@ -191,6 +197,24 @@ impl PacmanCli {
                 .map(|f| f.to_string_lossy().into_owned()),
         );
         Invocation::new(&self.pacman, args)
+    }
+
+    /// Change the local database reason for already-installed packages.
+    pub fn set_install_reason(
+        &self,
+        packages: &[String],
+        as_deps: bool,
+        opts: ApplyOpts,
+    ) -> Result<Report> {
+        let mut args = self.base_args();
+        args.push("-D".to_string());
+        if opts.no_confirm {
+            args.push("--noconfirm".to_string());
+        }
+        args.push(if as_deps { "--asdeps" } else { "--asexplicit" }.to_string());
+        args.push("--".to_string());
+        args.extend(packages.iter().cloned());
+        self.perform(Invocation::new(&self.pacman, args), opts)
     }
 
     /// Run an elevated command with inherited stdio.
@@ -431,6 +455,7 @@ mod tests {
                 "/home/u/.cache/omapac/aur/foo/foo-1.0-1-x86_64.pkg.tar.zst",
             )],
             as_deps: true,
+            nodeps: true,
             overwrite: vec![],
         };
         assert_eq!(
@@ -443,7 +468,7 @@ mod tests {
                     }
                 )
                 .display(),
-            "/usr/bin/pacman --config /tmp/pacman.conf --sysroot /mnt -U --noconfirm --asdeps -- /home/u/.cache/omapac/aur/foo/foo-1.0-1-x86_64.pkg.tar.zst"
+            "/usr/bin/pacman --config /tmp/pacman.conf --sysroot /mnt -U --noconfirm --asdeps --nodeps --nodeps -- /home/u/.cache/omapac/aur/foo/foo-1.0-1-x86_64.pkg.tar.zst"
         );
     }
 

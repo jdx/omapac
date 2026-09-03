@@ -70,9 +70,52 @@ pub struct MissingDeps {
 pub fn missing_deps(host: &Host, reviewed: &Reviewed, arch: &str) -> Result<MissingDeps> {
     let mut deps: Vec<Dependency> = reviewed.srcinfo.makedepends(arch);
     deps.extend(reviewed.srcinfo.checkdepends(arch));
-    for pkgname in reviewed.srcinfo.pkgnames() {
-        deps.extend(reviewed.srcinfo.depends(pkgname, arch));
+    for name in selected_pkgnames(reviewed, arch) {
+        for dep in reviewed.srcinfo.depends(&name, arch) {
+            deps.push(dep);
+        }
     }
+    classify_missing_deps(host, reviewed, arch, deps)
+}
+
+/// The requested split output plus any sibling outputs it depends on.
+pub fn selected_pkgnames(reviewed: &Reviewed, arch: &str) -> Vec<String> {
+    let package_names = reviewed.srcinfo.pkgnames();
+    let version = reviewed.srcinfo.version();
+    let mut selected = vec![reviewed.pkgname.clone()];
+    let mut next = 0;
+    while next < selected.len() {
+        let name = selected[next].clone();
+        next += 1;
+        for dep in reviewed.srcinfo.depends(&name, arch) {
+            if let Some(sibling) = package_names.iter().find(|candidate| {
+                let provides = reviewed.srcinfo.provides(candidate, arch);
+                dep.satisfied_by(candidate, &version, &provides)
+            }) && !selected.iter().any(|name| name == *sibling)
+            {
+                selected.push((*sibling).to_string());
+            }
+        }
+    }
+    selected
+}
+
+/// Missing tools and libraries needed to build a recipe, excluding the
+/// runtime dependencies of its outputs. This is used for a `--nodeps`
+/// split-package bootstrap; runtime dependencies are installed when the
+/// pkgbase is rebuilt normally after the cycle has been broken.
+pub fn missing_build_deps(host: &Host, reviewed: &Reviewed, arch: &str) -> Result<MissingDeps> {
+    let mut deps = reviewed.srcinfo.makedepends(arch);
+    deps.extend(reviewed.srcinfo.checkdepends(arch));
+    classify_missing_deps(host, reviewed, arch, deps)
+}
+
+fn classify_missing_deps(
+    host: &Host,
+    reviewed: &Reviewed,
+    arch: &str,
+    deps: Vec<Dependency>,
+) -> Result<MissingDeps> {
     let mut missing = MissingDeps::default();
     for dep in deps {
         let version = reviewed.srcinfo.version();
@@ -157,7 +200,10 @@ fn build_with_options(
     // --holdver prevents makepkg from updating VCS sources a second time;
     // phase 1 already fetched and verified the exact source state.
     let mut args = vec!["--noconfirm", "--force", "--holdver"];
-    if without_dependency_checks {
+    // makepkg builds every output of a split pkgbase and no longer has an
+    // option to select outputs. We resolve the requested output closure
+    // ourselves, so skip its whole-pkgbase dependency preflight.
+    if without_dependency_checks || reviewed.srcinfo.pkgnames().len() > 1 {
         args.push("--nodeps");
     }
     let status = run_makepkg(opts, &args, opts.network, false, &opts.builddir)

@@ -151,7 +151,7 @@ impl Install {
                 bail!("cancelled");
             }
             let files = app.build_aur(&prepared, self.yes)?;
-            app.install_built(&prepared, &files, self.as_deps, "install")?;
+            app.install_built(&prepared, &files, self.as_deps, !self.as_deps, "install")?;
         }
         Ok(())
     }

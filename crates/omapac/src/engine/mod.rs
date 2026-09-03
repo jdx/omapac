@@ -171,6 +171,8 @@ impl ResolvedTx {
 pub struct FileInstall {
     pub files: Vec<PathBuf>,
     pub as_deps: bool,
+    /// Skip dependency checks for a temporary split-package bootstrap.
+    pub nodeps: bool,
     pub overwrite: Vec<String>,
 }
 

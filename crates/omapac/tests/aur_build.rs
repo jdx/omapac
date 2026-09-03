@@ -103,7 +103,7 @@ fn build_runs_both_phases_with_a_scrubbed_environment() {
         "{log:?}"
     );
     assert_eq!(
-        makepkg[1], "makepkg --noconfirm --force --holdver",
+        makepkg[1], "makepkg --noconfirm --force --holdver --nodeps",
         "{log:?}"
     );
     assert_eq!(makepkg[2], "makepkg --packagelist", "{log:?}");
@@ -272,10 +272,12 @@ fn install_scripts_can_be_denied_by_policy() {
 const YAY_NEEDS_LIB_PKGBUILD: &str = "# Maintainer: jguer\npkgname=yay\npkgver=13.0.1\npkgrel=1\ndepends=('zorbqlib>=1.0')\nmakedepends=('zorbqlib>=1.0')\nsource=(\"yay-13.0.1.tar.gz::https://github.com/Jguer/yay/archive/v13.0.1.tar.gz\")\nsha256sums=('b77454bce87110180a1b6664c2d260de78124c9894b71101610ba84f551eb0d0')\nbuild() {\n  make build\n}\npackage() {\n  make DESTDIR=\"$pkgdir\" install\n}\n";
 const YAY_NEEDS_LIB_SRCINFO: &str = "pkgbase = yay\n\tpkgver = 13.0.1\n\tpkgrel = 1\n\tarch = x86_64\n\tmakedepends = zorbqlib>=1.0\n\tdepends = zorbqlib>=1.0\n\tsource = yay-13.0.1.tar.gz::https://github.com/Jguer/yay/archive/v13.0.1.tar.gz\n\tsha256sums = b77454bce87110180a1b6664c2d260de78124c9894b71101610ba84f551eb0d0\n\npkgname = yay\n";
 const ZORBQLIB_PKGBUILD: &str = "# Maintainer: jguer\npkgname=zorbqlib\npkgver=1.2\npkgrel=1\nsource=(\"https://github.com/example/zorbqlib/archive/v1.2.tar.gz\")\nsha256sums=('0000000000000000000000000000000000000000000000000000000000000000')\npackage() {\n  :\n}\n";
+const MIDDLELIB_PKGBUILD: &str = "# Maintainer: jguer\npkgname=middlelib\npkgver=1.0\npkgrel=1\ndepends=('zorbqlib')\nsource=(\"https://github.com/example/middlelib/archive/v1.0.tar.gz\")\nsha256sums=('0000000000000000000000000000000000000000000000000000000000000000')\npackage() {\n  :\n}\n";
+const MIDDLELIB_SRCINFO: &str = "pkgbase = middlelib\n\tpkgver = 1.0\n\tpkgrel = 1\n\tarch = x86_64\n\tdepends = zorbqlib\n\tsource = https://github.com/example/middlelib/archive/v1.0.tar.gz\n\tsha256sums = 0000000000000000000000000000000000000000000000000000000000000000\n\npkgname = middlelib\n";
 const ZORBQLIB_SRCINFO: &str = "pkgbase = zorbqlib\n\tpkgver = 1.2\n\tpkgrel = 1\n\tarch = x86_64\n\tsource = https://github.com/example/zorbqlib/archive/v1.2.tar.gz\n\tsha256sums = 0000000000000000000000000000000000000000000000000000000000000000\n\npkgname = zorbqlib\n";
 const ZORBQLIB_NEEDS_YAY_SRCINFO: &str = "pkgbase = zorbqlib\n\tpkgver = 1.2\n\tpkgrel = 1\n\tarch = x86_64\n\tdepends = yay>13.5\n\tsource = https://github.com/example/zorbqlib/archive/v1.2.tar.gz\n\tsha256sums = 0000000000000000000000000000000000000000000000000000000000000000\n\npkgname = zorbqlib\n";
 const ZORBQLIB_NEEDS_YAY_LIB_SRCINFO: &str = "pkgbase = zorbqlib\n\tpkgver = 1.2\n\tpkgrel = 1\n\tarch = x86_64\n\tdepends = yay-api\n\tsource = https://github.com/example/zorbqlib/archive/v1.2.tar.gz\n\tsha256sums = 0000000000000000000000000000000000000000000000000000000000000000\n\npkgname = zorbqlib\n";
-const YAY_LIB_SPLIT_SRCINFO: &str = "pkgbase = yay\n\tpkgver = 13.0.1\n\tpkgrel = 1\n\tarch = x86_64\n\tmakedepends = curl\n\tsource = yay-13.0.1.tar.gz::https://github.com/Jguer/yay/archive/v13.0.1.tar.gz\n\tsha256sums = b77454bce87110180a1b6664c2d260de78124c9894b71101610ba84f551eb0d0\n\npkgname = yay\n\tdepends = zorbqlib>=1.0\n\npkgname = yay-lib\n\tprovides = yay-api\n";
+const YAY_LIB_SPLIT_SRCINFO: &str = "pkgbase = yay\n\tpkgver = 13.0.1\n\tpkgrel = 1\n\tarch = x86_64\n\tmakedepends = curl\n\tsource = yay-13.0.1.tar.gz::https://github.com/Jguer/yay/archive/v13.0.1.tar.gz\n\tsha256sums = b77454bce87110180a1b6664c2d260de78124c9894b71101610ba84f551eb0d0\n\npkgname = yay\n\tdepends = zorbqlib>=1.0\n\tdepends = yay-lib\n\npkgname = yay-lib\n\tprovides = yay-api\n";
 
 fn info_with_zorbqlib() -> String {
     let mut info: serde_json::Value = serde_json::from_str(INFO).unwrap();
@@ -296,6 +298,20 @@ fn info_with_yay_lib_and_zorbqlib() -> String {
     yay_lib["Name"] = "yay-lib".into();
     yay_lib["PackageBase"] = "yay".into();
     info["results"].as_array_mut().unwrap().push(yay_lib);
+    info["resultcount"] = serde_json::json!(info["results"].as_array().unwrap().len());
+    info.to_string()
+}
+
+fn info_with_long_split_chain() -> String {
+    let mut info: serde_json::Value =
+        serde_json::from_str(&info_with_yay_lib_and_zorbqlib()).unwrap();
+    let mut middlelib = info["results"][0].clone();
+    middlelib["Name"] = "middlelib".into();
+    middlelib["PackageBase"] = "middlelib".into();
+    middlelib["Version"] = "1.0-1".into();
+    middlelib["Depends"] = serde_json::json!(["zorbqlib"]);
+    middlelib["MakeDepends"] = serde_json::json!([]);
+    info["results"].as_array_mut().unwrap().push(middlelib);
     info["resultcount"] = serde_json::json!(info["results"].as_array().unwrap().len());
     info.to_string()
 }
@@ -422,8 +438,96 @@ fn upgrading_an_explicit_aur_dependency_keeps_it_explicit() {
 }
 
 #[test]
+fn aur_dependency_preserves_an_explicit_selected_sibling() {
+    let s = setup_with_zorbqlib(ZORBQLIB_SRCINFO);
+    let split = ZORBQLIB_SRCINFO.replace(
+        "\npkgname = zorbqlib\n",
+        "\npkgname = zorbqlib\n\tdepends = zorb-helper\n\npkgname = zorb-helper\n",
+    );
+    s.aur.commit(
+        "zorbqlib",
+        &[
+            (
+                "PKGBUILD",
+                &ZORBQLIB_PKGBUILD
+                    .replace("pkgname=zorbqlib", "pkgname=('zorbqlib' 'zorb-helper')"),
+            ),
+            (".SRCINFO", &split),
+        ],
+        "split out a helper",
+        "2026-01-02T00:00:00Z",
+    );
+    no_jail(&s);
+    s.rig.write_root(
+        "/var/lib/pacman/local/zorb-helper-0.9-1/desc",
+        "%NAME%\nzorb-helper\n\n%VERSION%\n0.9-1\n\n%REASON%\n0\n",
+    );
+    run(&s, &["aur", "approve", "-y", "yay"], "");
+    run(&s, &["aur", "approve", "-y", "zorbqlib"], "");
+    let (code, out, err) = run(&s, &["install", "--aur", "-y", "yay"], "");
+    assert_eq!(code, 0, "{err}\n{out}");
+    let installs: Vec<_> = s
+        .rig
+        .log()
+        .into_iter()
+        .filter(|line| line.starts_with("--sysroot") && line.contains("-U"))
+        .collect();
+    assert!(
+        installs.iter().any(|line| {
+            line.contains("zorbqlib-1.2-1")
+                && line.contains("zorb-helper-1.2-1")
+                && !line.contains("--asdeps")
+        }),
+        "{installs:?}"
+    );
+    assert!(
+        s.rig
+            .log()
+            .iter()
+            .any(|line| line.ends_with("-D --noconfirm --asdeps -- zorbqlib")),
+        "{:?}",
+        s.rig.log()
+    );
+    let ledger: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(s.rig.root.join("var/lib/omapac/state.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(ledger["packages"]["zorbqlib"]["explicit"], false);
+    assert_eq!(ledger["packages"]["zorb-helper"]["explicit"], true);
+}
+
+#[test]
+fn asdeps_demotes_an_explicit_aur_package() {
+    let s = setup();
+    no_jail(&s);
+    s.rig.write_root(
+        "/var/lib/pacman/local/yay-13.0.0-1/desc",
+        "%NAME%\nyay\n\n%VERSION%\n13.0.0-1\n\n%REASON%\n0\n",
+    );
+    run(&s, &["aur", "approve", "-y", "yay"], "");
+    let (code, out, err) = run(&s, &["install", "--aur", "--as-deps", "-y", "yay"], "");
+    assert_eq!(code, 0, "{err}\n{out}");
+    let install = s
+        .rig
+        .log()
+        .into_iter()
+        .find(|line| line.starts_with("--sysroot") && line.contains("-U"))
+        .expect("package install");
+    assert!(install.contains("--asdeps"), "{install}");
+    let ledger: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(s.rig.root.join("var/lib/omapac/state.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(ledger["packages"]["yay"]["explicit"], false);
+}
+
+#[test]
 fn split_siblings_do_not_create_false_aur_cycles() {
     let mut s = setup_with_zorbqlib(ZORBQLIB_NEEDS_YAY_LIB_SRCINFO);
+    let split = YAY_LIB_SPLIT_SRCINFO.replace(
+        "\npkgname = yay-lib\n\tprovides = yay-api",
+        "\npkgname = yay-lib\n\tdepends = yay\n\tprovides = yay-api",
+    );
     s.aur.commit(
         "yay",
         &[
@@ -431,7 +535,7 @@ fn split_siblings_do_not_create_false_aur_cycles() {
                 "PKGBUILD",
                 &YAY_NEEDS_LIB_PKGBUILD.replace("pkgname=yay", "pkgname=('yay' 'yay-lib')"),
             ),
-            (".SRCINFO", YAY_LIB_SPLIT_SRCINFO),
+            (".SRCINFO", &split),
         ],
         "split out the library",
         "2026-01-03T00:00:00Z",
@@ -444,6 +548,11 @@ fn split_siblings_do_not_create_false_aur_cycles() {
     let (code, out, err) = run(&s, &["install", "--aur", "-y", "yay"], plan);
     assert_eq!(code, 0, "{err}\n{out}");
     assert!(!err.contains("dependency cycle"), "{err}");
+    assert!(
+        out.contains("installed yay-lib 13.0.1-1 from AUR commit")
+            && out.contains("installed yay, yay-lib 13.0.1-1 from AUR commit"),
+        "{out}"
+    );
     let builds = s
         .rig
         .log()
@@ -465,7 +574,9 @@ fn split_siblings_do_not_create_false_aur_cycles() {
         .expect("ancestor build dependency install");
     let sibling_install = log
         .iter()
-        .position(|line| line.contains("-U --noconfirm --asdeps") && line.contains("yay-lib"))
+        .position(|line| {
+            line.contains("-U --noconfirm --asdeps --nodeps --nodeps") && line.contains("yay-lib")
+        })
         .expect("bootstrapped sibling install");
     let dependency_build = log
         .iter()
@@ -480,6 +591,108 @@ fn split_siblings_do_not_create_false_aur_cycles() {
             && sibling_install < dependency_build,
         "{log:?}"
     );
+    let final_installs: Vec<_> = log
+        .iter()
+        .filter(|line| line.starts_with("--sysroot") && line.contains("-U"))
+        .rev()
+        .take(2)
+        .collect();
+    assert!(
+        final_installs.iter().any(|line| {
+            line.contains("yay-13.0.1-1")
+                && line.contains("yay-lib-13.0.1-1")
+                && !line.contains("--asdeps")
+        }),
+        "{final_installs:?}"
+    );
+    assert!(
+        log.iter()
+            .any(|line| line.ends_with("-D --noconfirm --asdeps -- yay-lib")),
+        "{log:?}"
+    );
+    let ledger: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(s.rig.root.join("var/lib/omapac/state.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(ledger["packages"]["yay-lib"]["explicit"], false);
+    assert_eq!(ledger["packages"]["yay"]["explicit"], true);
+}
+
+#[test]
+fn requesting_the_providing_split_sibling_can_bootstrap_itself() {
+    let mut s = setup_with_zorbqlib(ZORBQLIB_NEEDS_YAY_LIB_SRCINFO);
+    let split = YAY_LIB_SPLIT_SRCINFO.replace(
+        "\npkgname = yay-lib\n\tprovides",
+        "\npkgname = yay-lib\n\tdepends = zorbqlib>=1.0\n\tprovides",
+    );
+    s.aur.commit(
+        "yay",
+        &[
+            (
+                "PKGBUILD",
+                &YAY_NEEDS_LIB_PKGBUILD.replace("pkgname=yay", "pkgname=('yay' 'yay-lib')"),
+            ),
+            (".SRCINFO", &split),
+        ],
+        "split out the requested library",
+        "2026-01-03T00:00:00Z",
+    );
+    s.rpc = common::http::serve(vec![("/rpc/v5/info", info_with_yay_lib_and_zorbqlib())]);
+    no_jail(&s);
+    for package in ["yay-lib", "zorbqlib"] {
+        run(&s, &["aur", "approve", "-y", package], "");
+    }
+
+    let plan = "curl\t8.16.0-1\tcore\thttps://m/curl.pkg\t1000\n";
+    let (code, out, err) = run(&s, &["install", "--aur", "-y", "yay-lib"], plan);
+    assert_eq!(code, 0, "{err}\n{out}");
+    assert!(!err.contains("dependency cycle"), "{err}");
+    assert!(out.contains("installed yay-lib 13.0.1-1"), "{out}");
+    assert!(
+        s.rig
+            .log()
+            .iter()
+            .any(|line| line.contains("--holdver --nodeps")),
+        "split dependency preflight should use the requested closure: {:?}",
+        s.rig.log()
+    );
+}
+
+#[test]
+fn longer_split_dependency_chains_bootstrap_without_a_false_cycle() {
+    let mut s = setup_with_zorbqlib(ZORBQLIB_NEEDS_YAY_LIB_SRCINFO);
+    let split = YAY_LIB_SPLIT_SRCINFO.replace("depends = zorbqlib>=1.0", "depends = middlelib");
+    s.aur.commit(
+        "yay",
+        &[
+            (
+                "PKGBUILD",
+                &YAY_NEEDS_LIB_PKGBUILD.replace("pkgname=yay", "pkgname=('yay' 'yay-lib')"),
+            ),
+            (".SRCINFO", &split),
+        ],
+        "split out the library behind a longer chain",
+        "2026-01-03T00:00:00Z",
+    );
+    s.aur.create(
+        "middlelib",
+        &[
+            ("PKGBUILD", MIDDLELIB_PKGBUILD),
+            (".SRCINFO", MIDDLELIB_SRCINFO),
+        ],
+        "2026-01-01T00:00:00Z",
+    );
+    s.rpc = common::http::serve(vec![("/rpc/v5/info", info_with_long_split_chain())]);
+    no_jail(&s);
+    for package in ["yay", "middlelib", "zorbqlib"] {
+        run(&s, &["aur", "approve", "-y", package], "");
+    }
+
+    let plan = "curl\\t8.16.0-1\\tcore\\thttps://m/curl.pkg\\t1000\\n";
+    let (code, out, err) = run(&s, &["install", "--aur", "-y", "yay"], plan);
+    assert_eq!(code, 0, "{err}\n{out}");
+    assert!(!err.contains("dependency cycle"), "{err}");
+    assert!(out.contains("installed yay-lib 13.0.1-1"), "{out}");
 }
 
 #[test]

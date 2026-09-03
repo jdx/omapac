@@ -571,6 +571,7 @@ fn update_aur_package(app: &App, name: &str, yes: bool) -> Result<AurOutcome> {
                 &crate::engine::FileInstall {
                     files,
                     as_deps,
+                    nodeps: false,
                     overwrite: Vec::new(),
                 },
                 ApplyOpts {
