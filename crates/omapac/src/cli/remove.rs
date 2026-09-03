@@ -40,12 +40,12 @@ impl RunWith<&App> for Remove {
 
     fn run_with(self, app: &App) -> Self::Output {
         let host = app.host()?;
-        let not_installed: Vec<&str> = self
-            .packages
-            .iter()
-            .filter(|name| host.installed_package(name).ok().flatten().is_none())
-            .map(String::as_str)
-            .collect();
+        let mut not_installed = Vec::new();
+        for name in &self.packages {
+            if host.installed_package(name)?.is_none() {
+                not_installed.push(name.as_str());
+            }
+        }
         if !not_installed.is_empty() {
             bail!("not installed: {}", not_installed.join(", "));
         }
