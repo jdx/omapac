@@ -50,6 +50,9 @@ impl Checkout {
     /// Clone `pkgbase` under `cache_dir`, or fetch if it is already there.
     /// The working tree is left at the remote's current head.
     pub fn sync(remote: &Remote, cache_dir: &Path, pkgbase: &str) -> Result<Checkout> {
+        if !valid_pkgbase(pkgbase) {
+            bail!("invalid AUR package base {pkgbase:?}");
+        }
         let dir = cache_dir.join(pkgbase);
         let checkout = Checkout {
             pkgbase: pkgbase.to_string(),
@@ -86,6 +89,9 @@ impl Checkout {
 
     /// Open an existing checkout without touching the network.
     pub fn open(cache_dir: &Path, pkgbase: &str) -> Option<Checkout> {
+        if !valid_pkgbase(pkgbase) {
+            return None;
+        }
         let dir = cache_dir.join(pkgbase);
         dir.join(".git").is_dir().then(|| Checkout {
             pkgbase: pkgbase.to_string(),
@@ -203,6 +209,15 @@ impl Checkout {
     }
 }
 
+fn valid_pkgbase(pkgbase: &str) -> bool {
+    !pkgbase.is_empty()
+        && pkgbase != "."
+        && pkgbase != ".."
+        && pkgbase.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'@' | b'.' | b'_' | b'+' | b'-')
+        })
+}
+
 fn git_command() -> Command {
     let mut command = Command::new("git");
     for name in [
@@ -251,6 +266,18 @@ mod tests {
     fn binary_numstat_is_unbounded_for_review_gates() {
         assert_eq!(numstat_size("-\t-\timage.bin\n"), usize::MAX);
         assert_eq!(numstat_size("2\t3\tPKGBUILD\n"), 5);
+    }
+
+    #[test]
+    fn checkout_names_cannot_escape_the_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("cache");
+        let remote = Remote::aur();
+        for name in ["", "..", "../outside", "nested/package", "/tmp/package"] {
+            assert!(Checkout::sync(&remote, &cache, name).is_err(), "{name:?}");
+            assert!(Checkout::open(&cache, name).is_none(), "{name:?}");
+        }
+        assert!(valid_pkgbase("foo-bin_2+git@aur"));
     }
 
     /// A bare "AUR" with one package that has two commits.
