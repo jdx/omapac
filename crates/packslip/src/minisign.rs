@@ -162,7 +162,7 @@ impl SecretKey {
     /// Parse the hex seed this crate writes.
     pub fn parse(text: &str) -> Result<SecretKey, Error> {
         let hex = text.trim();
-        if hex.len() != 64 {
+        if hex.len() != 64 || !hex.is_ascii() || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return Err(malformed("secret key", "expected 64 hex characters"));
         }
         let mut seed = [0u8; 32];
@@ -322,6 +322,9 @@ mod tests {
         assert!(PublicKey::parse("untrusted comment: x\nAAAA\n").is_err());
         assert!(Sig::parse("untrusted comment: x\nAAAA\n").is_err());
         assert!(SecretKey::parse("zz").is_err());
+        let non_ascii_on_an_odd_boundary = format!("{}éa", "a".repeat(61));
+        assert_eq!(non_ascii_on_an_odd_boundary.len(), 64);
+        assert!(SecretKey::parse(&non_ascii_on_an_odd_boundary).is_err());
         let mut bytes = b"ED".to_vec();
         bytes.extend([0u8; 72]);
         assert!(matches!(
