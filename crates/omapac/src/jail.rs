@@ -117,7 +117,11 @@ fn restrict_filesystem(writable: &[PathBuf], network: bool) -> Result<()> {
     let devices = ["/dev/null", "/dev/zero", "/dev/random", "/dev/urandom"].map(PathBuf::from);
     let existing: Vec<&Path> = writable
         .iter()
-        .chain(devices.iter())
+        .map(PathBuf::as_path)
+        .filter(|p| p.exists())
+        .collect();
+    let devices: Vec<&Path> = devices
+        .iter()
         .map(PathBuf::as_path)
         .filter(|p| p.exists())
         .collect();
@@ -125,6 +129,8 @@ fn restrict_filesystem(writable: &[PathBuf], network: bool) -> Result<()> {
         .add_rules(path_beneath_rules(&["/"], AccessFs::from_read(abi)))
         .map_err(|e| eyre::eyre!("landlock: {e}"))?
         .add_rules(path_beneath_rules(&existing, AccessFs::from_all(abi)))
+        .map_err(|e| eyre::eyre!("landlock: {e}"))?
+        .add_rules(path_beneath_rules(&devices, AccessFs::WriteFile))
         .map_err(|e| eyre::eyre!("landlock: {e}"))?
         .restrict_self()
         .map_err(|e| eyre::eyre!("landlock: {e}"))?;

@@ -106,16 +106,22 @@ pub fn build(reviewed: &Reviewed, opts: &BuildOpts) -> Result<Vec<PathBuf>> {
     checkout.checkout(&reviewed.target)?;
     std::fs::create_dir_all(&opts.pkgdest)
         .wrap_err_with(|| format!("creating {}", opts.pkgdest.display()))?;
-    let tempdir = opts.builddir.join(".tmp");
-    for dir in [&opts.srcdest, &opts.builddir, &opts.logdest, &tempdir] {
+    let verifydir = opts.builddir.with_extension("verify");
+    if verifydir.exists() {
+        std::fs::remove_dir_all(&verifydir)
+            .wrap_err_with(|| format!("clearing {}", verifydir.display()))?;
+    }
+    for dir in [&opts.srcdest, &opts.builddir, &opts.logdest, &verifydir] {
         std::fs::create_dir_all(dir).wrap_err_with(|| format!("creating {}", dir.display()))?;
     }
 
     // Phase 1 only downloads and verifies sources. Unlike --nobuild,
     // --verifysource does not run prepare() or pkgver() outside the jail.
     let verify_args = ["--verifysource", "--noconfirm", "--force"];
-    let status = run_makepkg(reviewed, opts, &verify_args, true, &tempdir)
+    let status = run_makepkg(reviewed, opts, &verify_args, true, &verifydir)
         .wrap_err("running makepkg --verifysource")?;
+    std::fs::remove_dir_all(&verifydir)
+        .wrap_err_with(|| format!("removing {}", verifydir.display()))?;
     if !status.success() {
         bail!(
             "makepkg --verifysource failed for {} with status {}",
@@ -127,9 +133,21 @@ pub fn build(reviewed: &Reviewed, opts: &BuildOpts) -> Result<Vec<PathBuf>> {
     // Phase 2 extracts, prepares, builds, and packages inside the jail.
     // --holdver prevents makepkg from updating VCS sources a second time;
     // phase 1 already fetched and verified the exact source state.
-    let args = ["--noconfirm", "--force", "--holdver"];
-    let status =
-        run_makepkg(reviewed, opts, &args, opts.network, &tempdir).wrap_err("running makepkg")?;
+    let vcs = reviewed
+        .evidence
+        .recipe
+        .sources
+        .iter()
+        .any(|source| source.is_vcs);
+    let mut args = vec!["--noconfirm", "--force"];
+    if !vcs {
+        args.push("--holdver");
+    }
+    // VCS pkgver() must observe the freshly fetched checkout. makepkg cannot
+    // update it separately from the build, so approved VCS recipes retain
+    // network for this invocation; their VCS finding makes that risk explicit.
+    let status = run_makepkg(reviewed, opts, &args, opts.network || vcs, &opts.builddir)
+        .wrap_err("running makepkg")?;
     if !status.success() {
         bail!(
             "makepkg failed for {} with status {}",
@@ -139,16 +157,7 @@ pub fn build(reviewed: &Reviewed, opts: &BuildOpts) -> Result<Vec<PathBuf>> {
     }
 
     // What was built: makepkg knows the file names.
-    let output = Command::new(&opts.makepkg)
-        .arg("--packagelist")
-        .current_dir(&checkout.dir)
-        .env_clear()
-        .envs(crate::jail::scrubbed_env())
-        .env("PKGDEST", &opts.pkgdest)
-        .env("SRCDEST", &opts.srcdest)
-        .env("BUILDDIR", &opts.builddir)
-        .env("LOGDEST", &opts.logdest)
-        .output()
+    let output = run_makepkg_output(reviewed, opts, &["--packagelist"], false, &opts.builddir)
         .wrap_err("running makepkg --packagelist")?;
     let files: Vec<PathBuf> = String::from_utf8_lossy(&output.stdout)
         .lines()
@@ -169,21 +178,21 @@ fn run_makepkg(
     opts: &BuildOpts,
     args: &[&str],
     network: bool,
-    tempdir: &Path,
+    builddir: &Path,
 ) -> Result<std::process::ExitStatus> {
     if !opts.jail {
-        return Command::new(&opts.makepkg)
+        let mut command = Command::new(&opts.makepkg);
+        command
             .args(args)
             .current_dir(&reviewed.checkout.dir)
             .env_clear()
             .envs(crate::jail::scrubbed_env())
             .env("PKGDEST", &opts.pkgdest)
             .env("SRCDEST", &opts.srcdest)
-            .env("BUILDDIR", &opts.builddir)
-            .env("LOGDEST", &opts.logdest)
-            .env("TMPDIR", tempdir)
-            .status()
-            .wrap_err("starting makepkg");
+            .env("BUILDDIR", builddir)
+            .env("LOGDEST", &opts.logdest);
+        set_private_home(&mut command, builddir)?;
+        return command.status().wrap_err("starting makepkg");
     }
 
     let spec = Spec {
@@ -192,7 +201,7 @@ fn run_makepkg(
         writable: vec![
             opts.pkgdest.clone(),
             opts.srcdest.clone(),
-            opts.builddir.clone(),
+            builddir.to_path_buf(),
             opts.logdest.clone(),
         ],
         network,
@@ -203,14 +212,79 @@ fn run_makepkg(
     let mut command = spec.command()?;
     command.env("PKGDEST", &opts.pkgdest);
     command.env("SRCDEST", &opts.srcdest);
-    command.env("BUILDDIR", &opts.builddir);
+    command.env("BUILDDIR", builddir);
     command.env("LOGDEST", &opts.logdest);
-    command.env("TMPDIR", tempdir);
+    set_private_home(&mut command, builddir)?;
     let mut child = command.spawn().wrap_err("starting the build jail")?;
     if let Some(mut stdin) = child.stdin.take() {
         serde_json::to_writer(&mut stdin, &spec).wrap_err("sending the jail spec")?;
     }
     child.wait().wrap_err("waiting for makepkg")
+}
+
+fn run_makepkg_output(
+    reviewed: &Reviewed,
+    opts: &BuildOpts,
+    args: &[&str],
+    network: bool,
+    builddir: &Path,
+) -> Result<std::process::Output> {
+    if !opts.jail {
+        let mut command = Command::new(&opts.makepkg);
+        command
+            .args(args)
+            .current_dir(&reviewed.checkout.dir)
+            .env_clear()
+            .envs(crate::jail::scrubbed_env())
+            .env("PKGDEST", &opts.pkgdest)
+            .env("SRCDEST", &opts.srcdest)
+            .env("BUILDDIR", builddir)
+            .env("LOGDEST", &opts.logdest);
+        set_private_home(&mut command, builddir)?;
+        return command.output().wrap_err("starting makepkg");
+    }
+    let spec = Spec {
+        writable: vec![
+            opts.pkgdest.clone(),
+            opts.srcdest.clone(),
+            builddir.to_path_buf(),
+            opts.logdest.clone(),
+        ],
+        network,
+        program: opts.makepkg.clone(),
+        args: args.iter().map(|arg| (*arg).to_string()).collect(),
+        cwd: reviewed.checkout.dir.clone(),
+    };
+    let mut command = spec.command()?;
+    command
+        .env("PKGDEST", &opts.pkgdest)
+        .env("SRCDEST", &opts.srcdest)
+        .env("BUILDDIR", builddir)
+        .env("LOGDEST", &opts.logdest);
+    set_private_home(&mut command, builddir)?;
+    command.stdout(std::process::Stdio::piped());
+    let mut child = command.spawn().wrap_err("starting the build jail")?;
+    if let Some(mut stdin) = child.stdin.take() {
+        serde_json::to_writer(&mut stdin, &spec).wrap_err("sending the jail spec")?;
+    }
+    child.wait_with_output().wrap_err("waiting for makepkg")
+}
+
+fn set_private_home(command: &mut Command, builddir: &Path) -> Result<()> {
+    let home = builddir.join("home");
+    let cache = home.join(".cache");
+    std::fs::create_dir_all(&cache)
+        .wrap_err_with(|| format!("creating private build home {}", home.display()))?;
+    command
+        .env("HOME", &home)
+        .env("XDG_CACHE_HOME", &cache)
+        .env("CARGO_HOME", home.join(".cargo"))
+        .env("GOCACHE", cache.join("go-build"))
+        .env("GOMODCACHE", cache.join("go-mod"))
+        .env("npm_config_cache", cache.join("npm"))
+        .env("TMPDIR", builddir.join("tmp"));
+    std::fs::create_dir_all(builddir.join("tmp"))?;
+    Ok(())
 }
 
 /// Identity recorded inside a built package archive.

@@ -46,10 +46,11 @@ fn spec(writable: &[&Path], network: bool, script: &str, cwd: &Path) -> serde_js
 fn landlock_available() -> bool {
     let dir = tempfile::tempdir().unwrap();
     let (code, out) = jail(&spec(&[dir.path()], true, "true", dir.path()));
-    if code != 0 && out.contains("landlock") {
+    if code != 0 && out.contains("this kernel cannot enforce") {
         eprintln!("skipping: {out}");
         return false;
     }
+    assert_eq!(code, 0, "jail rules are invalid: {out}");
     true
 }
 
