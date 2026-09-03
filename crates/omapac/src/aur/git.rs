@@ -62,7 +62,7 @@ impl Checkout {
             std::fs::create_dir_all(cache_dir)
                 .wrap_err_with(|| format!("creating {}", cache_dir.display()))?;
             let url = remote.url(pkgbase);
-            let output = Command::new("git")
+            let output = git_command()
                 .args(["clone", "--quiet", &url])
                 .arg(&checkout.dir)
                 .output()
@@ -94,7 +94,7 @@ impl Checkout {
     }
 
     fn git(&self, args: &[&str]) -> Result<String> {
-        let output = Command::new("git")
+        let output = git_command()
             .arg("-C")
             .arg(&self.dir)
             .args(args)
@@ -199,6 +199,24 @@ impl Checkout {
         super::srcinfo::SrcInfo::parse(&text)
             .wrap_err_with(|| format!("{} at {commit}", self.pkgbase))
     }
+}
+
+fn git_command() -> Command {
+    let mut command = Command::new("git");
+    for name in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_COMMON_DIR",
+        "GIT_NAMESPACE",
+        "GIT_CEILING_DIRECTORIES",
+        "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+    ] {
+        command.env_remove(name);
+    }
+    command
 }
 
 fn numstat_size(out: &str) -> usize {
@@ -359,5 +377,19 @@ mod tests {
             "{err}"
         );
         assert!(!cache.join("nope/.git").exists());
+    }
+
+    #[test]
+    fn git_commands_remove_repository_overrides() {
+        let command = git_command();
+        let env: std::collections::BTreeMap<_, _> = command.get_envs().collect();
+        for name in [
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+            "GIT_OBJECT_DIRECTORY",
+        ] {
+            assert_eq!(env.get(std::ffi::OsStr::new(name)), Some(&None), "{name}");
+        }
     }
 }

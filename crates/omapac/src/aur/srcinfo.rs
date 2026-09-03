@@ -22,7 +22,7 @@ impl Section {
     pub fn all(&self, key: &str) -> Vec<&str> {
         self.fields
             .iter()
-            .filter(|(k, _)| k == key)
+            .filter(|(k, value)| k == key && !value.is_empty())
             .map(|(_, v)| v.as_str())
             .collect()
     }
@@ -37,7 +37,7 @@ impl Section {
         let suffixed = format!("{key}_{arch}");
         self.fields
             .iter()
-            .filter(|(k, _)| k == key || *k == suffixed)
+            .filter(|(k, value)| (k == key || *k == suffixed) && !value.is_empty())
             .map(|(_, v)| v.as_str())
             .collect()
     }
@@ -153,6 +153,7 @@ impl SrcInfo {
                 let bare = k.strip_suffix(&suffix).unwrap_or(k);
                 bare.ends_with("sums") && (k == bare || k.ends_with(&suffix))
             })
+            .filter(|(_, value)| !value.is_empty())
             .map(|(k, v)| (k.as_str(), v.as_str()))
             .collect()
     }
@@ -356,12 +357,15 @@ mod tests {
 
     #[test]
     fn split_packages_epochs_and_errors() {
-        let text = "pkgbase = split\n\tpkgver = 1.0\n\tpkgrel = 2\n\tepoch = 3\n\tdepends = common\n\tsource = git+https://x.y/z.git\n\tsha256sums = SKIP\n\ninstall = base.install\n\npkgname = split-a\n\tdepends = only-a\n\tinstall = a.install\n\npkgname = split-b\n";
+        let text = "pkgbase = split\n\tpkgver = 1.0\n\tpkgrel = 2\n\tepoch = 3\n\tdepends = common\n\tsource = git+https://x.y/z.git\n\tsha256sums = SKIP\n\ninstall = base.install\n\npkgname = split-a\n\tdepends = only-a\n\tinstall = a.install\n\npkgname = split-b\n\npkgname = split-empty\n\tdepends =\n\tprovides =\n\tinstall =\n";
         let info = SrcInfo::parse(text).unwrap();
         assert_eq!(info.version(), "3:1.0-2");
-        assert_eq!(info.pkgnames(), ["split-a", "split-b"]);
+        assert_eq!(info.pkgnames(), ["split-a", "split-b", "split-empty"]);
         assert_eq!(info.depends("split-a", "x86_64")[0].name, "only-a");
         assert_eq!(info.depends("split-b", "x86_64")[0].name, "common");
+        assert!(info.depends("split-empty", "x86_64").is_empty());
+        assert!(info.provides("split-empty", "x86_64").is_empty());
+        assert!(!info.install_files().contains(""));
         assert!(
             !info.has_skipped_checksum("x86_64"),
             "SKIP on a VCS source is normal"
