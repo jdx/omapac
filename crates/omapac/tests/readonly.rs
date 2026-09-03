@@ -168,6 +168,12 @@ fn info_for_sync_and_installed_packages() {
     let infos: Vec<serde_json::Value> = serde_json::from_str(&out).unwrap();
     assert_eq!(infos[0]["repo"], "omarchy");
     assert_eq!(infos[0]["installed"]["reason"], "dependency");
+
+    // Installed-only packages retain their local package base.
+    std::fs::remove_file(root.path().join("var/lib/pacman/sync/omarchy.db")).unwrap();
+    let (_, out, _) = omapac(root.path(), &["info", "--json", "--no-aur", "yay"]);
+    let infos: Vec<serde_json::Value> = serde_json::from_str(&out).unwrap();
+    assert_eq!(infos[0]["pkgbase"], "yay");
 }
 
 #[test]
