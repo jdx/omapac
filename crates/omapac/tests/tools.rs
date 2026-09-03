@@ -45,7 +45,7 @@ fn build_store(tamper: bool) -> Store {
         ),
         ("1.2.0", "2026-09-01T00:00:00Z", vec!["edge"], None),
     ] {
-        let name = format!("tool-{version}-linux-x64.tar.gz");
+        let name = format!("tool-{version}-linux-x64.bin");
         let path = work.join(&name);
         let content = format!("bytes of {version}");
         std::fs::write(&path, &content).unwrap();

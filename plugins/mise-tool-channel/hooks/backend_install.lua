@@ -82,7 +82,7 @@ function PLUGIN:platform()
 end
 
 function PLUGIN:is_archive(name)
-    for _, suffix in ipairs({ ".tar.gz", ".tgz", ".tar.xz", ".tar.bz2", ".zip" }) do
+    for _, suffix in ipairs({ ".tar.gz", ".tgz", ".tar.xz", ".tar.bz2", ".tar.zst", ".tzst", ".zip" }) do
         if name:sub(-#suffix) == suffix then
             return true
         end
