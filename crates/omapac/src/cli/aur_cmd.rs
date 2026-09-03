@@ -294,6 +294,7 @@ impl App {
             .options
             .arch()
             .unwrap_or_else(|| alpm_db::conf::host_arch().to_string());
+        let feeds = self.feeds(&host, &manifest.settings)?;
         let request = Request {
             host: &host,
             rpc: &rpc,
@@ -305,9 +306,56 @@ impl App {
             pinned,
             interactive,
             arch: &arch,
+            advisories: feeds.as_ref().map(|f| &f.0),
+            verdicts: feeds.as_ref().map(|f| &f.1),
         };
         let reviewed = review(name, &request)?;
         Ok((reviewed, lock))
+    }
+}
+
+impl App {
+    /// The advisory and verdict feeds of the first `opr` repository, per
+    /// `trust.advisories`: `off` never fetches, `on` warns and continues
+    /// when they cannot be had, `required` fails.
+    pub fn feeds(
+        &self,
+        host: &crate::host::Host,
+        settings: &crate::manifest::Settings,
+    ) -> Result<Option<(crate::trust::Advisories, crate::trust::Verdicts)>> {
+        use crate::manifest::settings::Advisories as Mode;
+        if settings.trust_advisories == Mode::Off {
+            return Ok(None);
+        }
+        let Some(source) = host
+            .sources
+            .iter()
+            .find(|s| matches!(s.tier, crate::resolve::Tier::Opr))
+        else {
+            return Ok(None);
+        };
+        let fetch = || -> Result<(crate::trust::Advisories, crate::trust::Verdicts)> {
+            let Some(feed) = self.feed_source(host, &source.name) else {
+                bail!("[{}] has no server to fetch feeds from", source.name);
+            };
+            let keyring = crate::trust::Keyring::load(self.paths.sysroot.as_deref())?;
+            let cache = crate::trust::Cache::for_repo(&source.name);
+            let advisories: crate::trust::Fetched<crate::trust::Advisories> =
+                crate::trust::fetch(&feed, "advisories.json", &keyring, &cache, false)?;
+            let verdicts: crate::trust::Fetched<crate::trust::Verdicts> =
+                crate::trust::fetch(&feed, "verdicts.json", &keyring, &cache, false)?;
+            Ok((advisories.value, verdicts.value))
+        };
+        match fetch() {
+            Ok(feeds) => Ok(Some(feeds)),
+            Err(err) if settings.trust_advisories == Mode::Required => {
+                Err(err.wrap_err("trust.advisories is required"))
+            }
+            Err(err) => {
+                eprintln!("warning: advisory feeds unavailable: {err:#}");
+                Ok(None)
+            }
+        }
     }
 }
 
@@ -345,6 +393,9 @@ pub fn render(reviewed: &Reviewed) -> String {
         None => {
             let _ = writeln!(out, "approved: never (first review)");
         }
+    }
+    for note in &reviewed.notes {
+        let _ = writeln!(out, "note: {note}");
     }
     if reviewed.report.findings.is_empty() {
         let _ = writeln!(out, "findings: none");

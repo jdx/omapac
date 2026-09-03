@@ -15,5 +15,6 @@ pub mod ledger;
 pub mod lockfile;
 pub mod manifest;
 pub mod resolve;
+pub mod trust;
 pub mod ui;
 pub mod update;
