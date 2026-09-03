@@ -174,6 +174,7 @@ impl RunWith<()> for SyncAur {
                 settings: &settings,
                 locked: locked.as_ref(),
                 commit: None,
+                pinned: false,
                 interactive: false,
                 arch: &self.arch,
                 advisories: advisories.as_ref(),
@@ -316,7 +317,17 @@ pub fn gate_report(reviewed: &Reviewed, previous: Option<&Synced>, arch: &str) -
             .unwrap_or_default();
         Approved {
             commit: prev.commit.clone(),
-            maintainer: prev.maintainer.clone(),
+            // Older state files did not record a maintainer. Bootstrap that
+            // evidence from the current RPC response so an absent historical
+            // value is not mistaken for a takeover; a successful write then
+            // persists it for subsequent comparisons.
+            maintainer: prev.maintainer.clone().or_else(|| {
+                reviewed
+                    .evidence
+                    .rpc
+                    .as_ref()
+                    .and_then(|rpc| rpc.maintainer.clone())
+            }),
             source_hosts,
             install_files,
         }
@@ -417,28 +428,42 @@ pub fn pure_bump(checkout: &omapac::aur::git::Checkout, from: &str, to: &str) ->
 
 pub fn diff_is_bump(diff: &str) -> bool {
     let mut saw_change = false;
+    let mut old_array = None;
+    let mut new_array = None;
     for line in diff.lines() {
-        let Some(changed) = line.strip_prefix('+').or_else(|| line.strip_prefix('-')) else {
-            continue;
-        };
-        if changed.starts_with("++ ") || changed.starts_with("-- ") {
-            continue;
-        }
-        saw_change = true;
-        if !bump_line(changed.trim()) {
-            return false;
+        if line.starts_with("@@") {
+            old_array = None;
+            new_array = None;
+        } else if let Some(changed) = line.strip_prefix('+') {
+            if !changed.starts_with("++ ") {
+                saw_change = true;
+                if !bump_line(changed.trim(), &mut new_array) {
+                    return false;
+                }
+            }
+        } else if let Some(changed) = line.strip_prefix('-') {
+            if !changed.starts_with("-- ") {
+                saw_change = true;
+                if !bump_line(changed.trim(), &mut old_array) {
+                    return false;
+                }
+            }
+        } else if let Some(context) = line.strip_prefix(' ') {
+            update_array(context.trim(), &mut old_array);
+            update_array(context.trim(), &mut new_array);
         }
     }
     saw_change
 }
 
-fn bump_line(line: &str) -> bool {
+fn bump_line(line: &str, array: &mut Option<&'static str>) -> bool {
     if line.is_empty() || line == ")" {
+        update_array(line, array);
         return true;
     }
     let name = line.split(['=', ' ']).next().unwrap_or_default();
     let stem = name.split('_').next().unwrap_or_default();
-    if matches!(stem, "pkgver" | "pkgrel" | "source" | "noextract")
+    let assignment = matches!(stem, "pkgver" | "pkgrel" | "source" | "noextract")
         || matches!(
             stem,
             "md5sums"
@@ -449,13 +474,38 @@ fn bump_line(line: &str) -> bool {
                 | "sha512sums"
                 | "b2sums"
                 | "cksums"
-        )
+        );
+    if assignment {
+        update_array(line, array);
+        return true;
+    }
+    if matches!(array, Some("source" | "noextract"))
+        && (line.starts_with('\'') || line.starts_with('"'))
     {
+        update_array(line, array);
         return true;
     }
     // A bare checksum or SKIP inside a multi-line array.
     let bare = line.trim_matches(['\'', '"', ')', '(']);
-    bare == "SKIP" || (bare.len() >= 32 && bare.chars().all(|c| c.is_ascii_hexdigit()))
+    let allowed =
+        bare == "SKIP" || (bare.len() >= 32 && bare.chars().all(|c| c.is_ascii_hexdigit()));
+    update_array(line, array);
+    allowed
+}
+
+fn update_array(line: &str, array: &mut Option<&'static str>) {
+    let name = line.split(['=', ' ']).next().unwrap_or_default();
+    let stem = name.split('_').next().unwrap_or_default();
+    if line.contains("=(") {
+        *array = match stem {
+            "source" => Some("source"),
+            "noextract" => Some("noextract"),
+            _ => None,
+        };
+    }
+    if line.trim_end().ends_with(')') {
+        *array = None;
+    }
 }
 
 fn static_verdict(reviewed: &Reviewed, report: &Report, now: &str) -> Verdict {
@@ -498,6 +548,10 @@ mod tests {
         assert!(diff_is_bump(bump));
         let multiline = "--- a/PKGBUILD\n+++ b/PKGBUILD\n-  'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n+  'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'\n-pkgrel=1\n+pkgrel=2\n";
         assert!(diff_is_bump(multiline));
+        let multiline_source = "--- a/PKGBUILD\n+++ b/PKGBUILD\n@@ -1,4 +1,4 @@\n source=(\n-  'app-1.tar.gz::https://example.com/app-1.tar.gz'\n+  'app-2.tar.gz::https://example.com/app-2.tar.gz'\n )\n-pkgver=1\n+pkgver=2\n";
+        assert!(diff_is_bump(multiline_source));
+        let unrelated_array = "--- a/PKGBUILD\n+++ b/PKGBUILD\n@@ -1,3 +1,3 @@\n depends=(\n-  'safe'\n+  'hostile'\n )\n";
+        assert!(!diff_is_bump(unrelated_array));
         let hostile =
             "--- a/PKGBUILD\n+++ b/PKGBUILD\n-pkgver=1\n+pkgver=2\n+install=yay.install\n";
         assert!(!diff_is_bump(hostile));
