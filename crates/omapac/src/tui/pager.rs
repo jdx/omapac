@@ -12,8 +12,11 @@ pub struct Pager {
     title: String,
     lines: Vec<String>,
     scroll: usize,
+    horizontal: usize,
     /// Rows the last render had for text, for paging.
     height: usize,
+    /// Columns the last render had for text, for horizontal bounds.
+    width: usize,
 }
 
 impl Pager {
@@ -22,7 +25,9 @@ impl Pager {
             title: title.to_string(),
             lines: text.lines().map(str::to_string).collect(),
             scroll: 0,
+            horizontal: 0,
             height: 20,
+            width: 80,
         }
     }
 
@@ -34,6 +39,15 @@ impl Pager {
         self.lines.len().saturating_sub(self.height)
     }
 
+    fn max_horizontal(&self) -> usize {
+        self.lines
+            .iter()
+            .map(|line| line.chars().count())
+            .max()
+            .unwrap_or_default()
+            .saturating_sub(self.width)
+    }
+
     /// Feed a key; `true` when the user leaves.
     pub fn handle(&mut self, key: KeyEvent) -> bool {
         match key.code {
@@ -43,6 +57,12 @@ impl Pager {
                 self.scroll = (self.scroll + 1).min(self.max_scroll())
             }
             KeyCode::Up | KeyCode::Char('k') => self.scroll = self.scroll.saturating_sub(1),
+            KeyCode::Right | KeyCode::Char('l') => {
+                self.horizontal = (self.horizontal + 1).min(self.max_horizontal())
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                self.horizontal = self.horizontal.saturating_sub(1)
+            }
             KeyCode::PageDown | KeyCode::Char(' ') | KeyCode::Char('f') => {
                 self.scroll = (self.scroll + self.height).min(self.max_scroll())
             }
@@ -60,7 +80,9 @@ impl Pager {
         let [text_area, help_area] =
             Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(frame.area());
         self.height = text_area.height.saturating_sub(2) as usize;
+        self.width = text_area.width.saturating_sub(2) as usize;
         self.scroll = self.scroll.min(self.max_scroll());
+        self.horizontal = self.horizontal.min(self.max_horizontal());
         let lines: Vec<Line<'_>> = self
             .lines
             .iter()
@@ -92,11 +114,13 @@ impl Pager {
             self.lines.len()
         );
         frame.render_widget(
-            Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(title)),
+            Paragraph::new(lines)
+                .scroll((0, self.horizontal.min(u16::MAX as usize) as u16))
+                .block(Block::default().borders(Borders::ALL).title(title)),
             text_area,
         );
         frame.render_widget(
-            Paragraph::new("j/k or arrows scroll  space/b page  g/G ends  q leaves")
+            Paragraph::new("j/k vertical  h/l horizontal  space/b page  g/G ends  q leaves")
                 .style(Style::default().add_modifier(Modifier::DIM)),
             help_area,
         );
@@ -141,5 +165,19 @@ mod tests {
         assert!(first.contains("Review yay (1-9 of 50)"), "{first}");
         assert!(pager.handle(key(KeyCode::Char('q'))));
         assert!(pager.handle(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)));
+    }
+
+    #[test]
+    fn scrolls_long_lines_horizontally() {
+        let mut pager = Pager::new("Review", "0123456789abcdefghijklmnop");
+        let backend = TestBackend::new(20, 5);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| pager.render(frame)).unwrap();
+        for _ in 0..3 {
+            pager.handle(key(KeyCode::Right));
+        }
+        terminal.draw(|frame| pager.render(frame)).unwrap();
+        assert_eq!(pager.horizontal, 3);
+        assert_eq!(terminal.backend().buffer()[(1, 1)].symbol(), "3");
     }
 }
