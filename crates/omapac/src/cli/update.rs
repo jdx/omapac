@@ -8,7 +8,11 @@ use usage_rs::RunWith;
 use super::transaction::{self, Plan};
 use super::{App, print_json};
 use crate::engine::{ApplyOpts, Engine, Operation, RefreshOpts, Transaction};
-use crate::update::{AurCandidate, Hold, age_holds, aur_candidates, pacnew_files, run_hooks};
+use crate::host::Host;
+use crate::manifest::settings::Settings;
+use crate::update::{
+    AurCandidate, Hold, Published, age_holds, aur_candidates, pacnew_files, run_hooks,
+};
 
 /// Update the machine: repositories, then the AUR
 ///
@@ -51,6 +55,53 @@ pub struct UpdatePlan {
     pub pacnew: Vec<String>,
 }
 
+impl App {
+    /// Publish times from the index of every repository whose tier has a
+    /// release-age floor. Best effort: without trust keys nothing is
+    /// fetched, and a repository whose index cannot be read falls back to
+    /// build dates with a note.
+    pub fn published_times(&self, host: &Host, settings: &Settings, offline: bool) -> Published {
+        use std::str::FromStr as _;
+        let mut published = Published::new();
+        let Ok(keyring) = crate::trust::Keyring::load(self.paths.sysroot.as_deref()) else {
+            return published;
+        };
+        if keyring.is_empty() {
+            return published;
+        }
+        for source in &host.sources {
+            let floor = match &source.tier {
+                crate::resolve::Tier::Arch => settings.repo_min_release_age_arch,
+                crate::resolve::Tier::Opr => settings.repo_min_release_age_opr,
+                _ => settings.repo_min_release_age_custom,
+            };
+            if floor == crate::manifest::settings::Age::ZERO {
+                continue;
+            }
+            match self.index(host, &source.name, offline) {
+                Ok(index) => {
+                    let times = index
+                        .value
+                        .packages
+                        .iter()
+                        .filter_map(|(file, entry)| {
+                            let at = entry.published_at.as_deref()?;
+                            let stamp = jiff::Timestamp::from_str(at).ok()?;
+                            Some((file.clone(), stamp.as_second()))
+                        })
+                        .collect();
+                    published.insert(source.name.clone(), times);
+                }
+                Err(err) => eprintln!(
+                    "note: [{}] index unavailable, release ages use build dates: {err:#}",
+                    source.name
+                ),
+            }
+        }
+        published
+    }
+}
+
 impl RunWith<&App> for Update {
     type Output = Result<()>;
 
@@ -88,7 +139,9 @@ impl RunWith<&App> for Update {
                 });
             }
         }
-        holds.extend(age_holds(&host, settings, now)?);
+        // Feeds are fetched even for a dry run: reading them changes nothing.
+        let published = app.published_times(&host, settings, false);
+        holds.extend(age_holds(&host, settings, now, &published)?);
         let repo_plan = if self.aur_only {
             None
         } else {

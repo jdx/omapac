@@ -21,9 +21,20 @@ pub struct Hold {
     pub reason: String,
 }
 
+/// Publish times from repository indexes: repository name, then package
+/// file name, to unix seconds. What release-age floors prefer over the
+/// build date, since a package can be built long before it is served.
+pub type Published = std::collections::BTreeMap<String, std::collections::BTreeMap<String, i64>>;
+
 /// Installed packages whose newer repository build is younger than the
-/// tier's minimum release age.
-pub fn age_holds(host: &Host, settings: &Settings, now: i64) -> Result<Vec<Hold>> {
+/// tier's minimum release age, by publish time when the repository's
+/// index records one and by build date otherwise.
+pub fn age_holds(
+    host: &Host,
+    settings: &Settings,
+    now: i64,
+    published: &Published,
+) -> Result<Vec<Hold>> {
     let mut holds = Vec::new();
     for package in host.installed()? {
         if settings
@@ -47,18 +58,25 @@ pub fn age_holds(host: &Host, settings: &Settings, now: i64) -> Result<Vec<Hold>
         if min == Age::ZERO {
             continue;
         }
-        let Some(built) = candidate.build_date else {
-            continue;
+        let (since, what) = match published
+            .get(&source.name)
+            .and_then(|files| files.get(&candidate.filename))
+        {
+            Some(&at) => (at, "published"),
+            None => match candidate.build_date {
+                Some(built) => (built, "built"),
+                None => continue,
+            },
         };
-        let age = now - built;
+        let age = now - since;
         if age < min.0.as_secs() as i64 {
             holds.push(Hold {
                 name: package.name.clone(),
                 reason: format!(
-                    "{} {} was built {}, less than the {} floor for {}",
+                    "{} {} was {what} {} ago, less than the {} floor for {}",
                     source.name,
                     candidate.version,
-                    crate::aur::format_age(built, now),
+                    crate::aur::format_age(since, now),
                     min,
                     source.tier
                 ),
