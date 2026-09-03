@@ -381,14 +381,24 @@ impl RunWith<&App> for Rollback {
                     "packages were rolled back; retaining the snapshot pin after a later bookkeeping failure",
                 ));
             }
-            restore_mirrorlist(app, &mirrorlist, &original_mirrorlist, was_pinned)?;
-            engine.refresh(
+            if let Err(recovery) =
+                restore_mirrorlist(app, &mirrorlist, &original_mirrorlist, was_pinned)
+            {
+                return Err(err.wrap_err(format!(
+                    "rollback also failed to restore the mirrorlist: {recovery:#}"
+                )));
+            }
+            if let Err(recovery) = engine.refresh(
                 crate::engine::RefreshOpts { force: true },
                 ApplyOpts {
                     dry_run: false,
                     no_confirm: true,
                 },
-            )?;
+            ) {
+                return Err(err.wrap_err(format!(
+                    "mirrorlist restored, but rollback recovery failed to refresh databases: {recovery:#}"
+                )));
+            }
             return Err(err);
         }
         Ok(())
