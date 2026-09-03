@@ -90,7 +90,7 @@ pub const RULES: &[Rule] = &[
         id: "chmod-setuid",
         kind: Kind::Suspicious,
         description: "sets a setuid or setgid bit",
-        pattern: r"chmod\s+(u\+s|g\+s|[0-7]?[2-7][0-7]{3})\b",
+        pattern: r"chmod\s+((u|g|a)?\+s|[0-7]?[2-7][0-7]{3})\b",
     },
     Rule {
         id: "npm-install",
@@ -217,6 +217,7 @@ mod tests {
             "{}",
             hits[0].description
         );
+        assert_eq!(scan("chmod +s tool\nchmod a+s tool\n").len(), 2);
     }
 
     #[test]
