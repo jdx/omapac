@@ -7,7 +7,7 @@ use usage_rs::RunWith;
 use super::{App, print_json};
 use crate::channel::{self, Release, WriteRequest};
 use crate::engine::{ApplyOpts, Engine, Operation, Transaction};
-use crate::host::Host;
+use crate::host::{Host, HostPaths};
 
 /// Show the channel and snapshot this machine follows, or pin one
 ///
@@ -170,7 +170,7 @@ impl RunWith<&App> for Channel {
                 }
                 let original = std::fs::read_to_string(&backup)
                     .wrap_err_with(|| format!("reading {}", backup.display()))?;
-                channel::write_privileged(&path, &original, false, app.paths.sysroot.as_deref())?;
+                channel::restore_privileged(&path, &original, app.paths.sysroot.as_deref())?;
                 let patch = crate::ledger::Patch {
                     snapshot: Some(String::new()),
                     ..Default::default()
@@ -285,8 +285,7 @@ impl RunWith<&App> for Rollback {
                 release.id,
                 describe(&release)
             );
-            let host = app.host()?;
-            let engine = app.engine()?;
+            let (_staging, host, engine) = staged_snapshot(app, &base, &release.id)?;
             let mut tx = Transaction::new(Operation::Upgrade {
                 allow_downgrade: true,
             })
@@ -295,7 +294,8 @@ impl RunWith<&App> for Rollback {
             tx.ignore_group
                 .extend(manifest.settings.update_ignore_group.iter().cloned());
             let resolved = engine.plan(&tx)?;
-            let command = engine
+            let command = app
+                .engine()?
                 .apply_invocation(
                     &tx,
                     ApplyOpts {
@@ -396,6 +396,94 @@ impl RunWith<&App> for Rollback {
         }
         Ok(())
     }
+}
+
+/// Build a disposable pacman root with the host's installed database and the
+/// snapshot mirror, then refresh only that root. Planning against it matches
+/// the live rollback without changing the host's mirrorlist or sync databases.
+fn staged_snapshot(
+    app: &App,
+    snapshot_base: &str,
+    id: &str,
+) -> Result<(tempfile::TempDir, Host, crate::engine::pacman::PacmanCli)> {
+    let live = app.host()?;
+    let staging = tempfile::tempdir().wrap_err("creating rollback planning root")?;
+    let root = staging.path();
+
+    copy_tree_if_exists(
+        &app.rooted(std::path::Path::new("/etc/pacman.d")),
+        &root.join("etc/pacman.d"),
+    )?;
+    let logical_db_path = live.config.options.db_path();
+    copy_tree_if_exists(
+        &live.db_path().join("local"),
+        &root
+            .join(
+                logical_db_path
+                    .strip_prefix("/")
+                    .unwrap_or(&logical_db_path),
+            )
+            .join("local"),
+    )?;
+
+    let config = app
+        .paths
+        .config
+        .clone()
+        .unwrap_or_else(|| std::path::PathBuf::from(alpm_db::conf::DEFAULT_PATH));
+    let staged_config = root.join(config.strip_prefix("/").unwrap_or(&config));
+    if let Some(parent) = staged_config.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::copy(app.rooted(&config), &staged_config)
+        .wrap_err_with(|| format!("staging {}", config.display()))?;
+    let mirrorlist = root.join(channel::MIRRORLIST.trim_start_matches('/'));
+    if let Some(parent) = mirrorlist.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&mirrorlist, channel::pin_text(snapshot_base, id))?;
+
+    let paths = HostPaths {
+        config: Some(config),
+        sysroot: Some(root.to_path_buf()),
+    };
+    let mut engine = app.engine()?;
+    engine.config = paths.config.clone();
+    engine.sysroot = paths.sysroot.clone();
+    engine.elevation = crate::engine::sudo::Elevation::Never;
+    engine.refresh(
+        crate::engine::RefreshOpts { force: true },
+        ApplyOpts {
+            dry_run: false,
+            no_confirm: true,
+        },
+    )?;
+    let host = Host::load(paths)?;
+    Ok((staging, host, engine))
+}
+
+fn copy_tree_if_exists(from: &std::path::Path, to: &std::path::Path) -> Result<()> {
+    let Ok(metadata) = std::fs::symlink_metadata(from) else {
+        return Ok(());
+    };
+    if metadata.is_dir() {
+        std::fs::create_dir_all(to)?;
+        for entry in std::fs::read_dir(from)? {
+            let entry = entry?;
+            copy_tree_if_exists(&entry.path(), &to.join(entry.file_name()))?;
+        }
+    } else if metadata.is_file() {
+        if let Some(parent) = to.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(from, to)?;
+    } else if metadata.file_type().is_symlink() {
+        if let Some(parent) = to.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::os::unix::fs::symlink(std::fs::read_link(from)?, to)?;
+    }
+    Ok(())
 }
 
 /// Write a pacman configuration file per a JSON request on stdin; omapac

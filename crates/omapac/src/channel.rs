@@ -137,7 +137,26 @@ pub fn write_privileged(
         path: path.to_path_buf(),
         contents: contents.to_string(),
         backup,
+        remove_backup: false,
     };
+    apply_privileged(request, sysroot)
+}
+
+/// Restore `path` and remove the one-time backup in the same privileged
+/// request, so a later pin captures the newly current mirrorlist.
+pub fn restore_privileged(path: &Path, contents: &str, sysroot: Option<&Path>) -> Result<()> {
+    apply_privileged(
+        WriteRequest {
+            path: path.to_path_buf(),
+            contents: contents.to_string(),
+            backup: false,
+            remove_backup: true,
+        },
+        sysroot,
+    )
+}
+
+fn apply_privileged(request: WriteRequest, sysroot: Option<&Path>) -> Result<()> {
     match request.apply(sysroot) {
         Ok(()) => Ok(()),
         Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
@@ -168,7 +187,7 @@ pub fn write_privileged(
             }
             Ok(())
         }
-        Err(err) => Err(err).wrap_err_with(|| format!("writing {}", path.display())),
+        Err(err) => Err(err).wrap_err_with(|| format!("writing {}", request.path.display())),
     }
 }
 
@@ -178,6 +197,8 @@ pub struct WriteRequest {
     pub path: PathBuf,
     pub contents: String,
     pub backup: bool,
+    #[serde(default)]
+    pub remove_backup: bool,
 }
 
 impl WriteRequest {
@@ -210,8 +231,8 @@ impl WriteRequest {
                 format!("{} is outside /etc/pacman.d", self.path.display()),
             ));
         }
-        if self.backup {
-            let backup = backup_path(&self.path);
+        let backup = backup_path(&self.path);
+        if self.backup || self.remove_backup {
             if std::fs::symlink_metadata(&backup)
                 .is_ok_and(|metadata| metadata.file_type().is_symlink())
             {
@@ -220,11 +241,19 @@ impl WriteRequest {
                     format!("{} must not be a symlink", backup.display()),
                 ));
             }
-            if !backup.exists() && self.path.exists() {
+            if self.backup && !backup.exists() && self.path.exists() {
                 std::fs::copy(&self.path, &backup)?;
             }
         }
-        std::fs::write(&self.path, &self.contents)
+        std::fs::write(&self.path, &self.contents)?;
+        if self.remove_backup {
+            match std::fs::remove_file(backup) {
+                Ok(()) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => return Err(err),
+            }
+        }
+        Ok(())
     }
 }
 
@@ -266,6 +295,7 @@ mod tests {
             path: mirrorlist.clone(),
             contents: text.clone(),
             backup: true,
+            remove_backup: false,
         }
         .apply(Some(dir.path()))
         .unwrap();
@@ -279,6 +309,7 @@ mod tests {
             path: mirrorlist.clone(),
             contents: pin_text("https://m", "2026-09-04T06"),
             backup: true,
+            remove_backup: false,
         }
         .apply(Some(dir.path()))
         .unwrap();
@@ -297,6 +328,7 @@ mod tests {
             path: mirrorlist.clone(),
             contents: "changed".into(),
             backup: true,
+            remove_backup: false,
         }
         .apply(Some(dir.path()))
         .unwrap_err();
@@ -306,6 +338,7 @@ mod tests {
             path: dir.path().join("etc/passwd"),
             contents: String::new(),
             backup: false,
+            remove_backup: false,
         };
         assert!(outside.apply(Some(dir.path())).is_err());
     }

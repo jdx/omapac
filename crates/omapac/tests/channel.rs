@@ -104,6 +104,24 @@ fn channel_shows_the_release_and_pin_state() {
 }
 
 #[test]
+fn update_records_the_release_when_no_packages_change() {
+    let s = setup();
+    let (code, out, err) = run(&s, &["update", "--no-aur", "-y"], "");
+    assert_eq!(code, 0, "{err}\n{out}");
+    let ledger = std::fs::read_to_string(s.rig.root.join("var/lib/omapac/state.json")).unwrap();
+    assert!(
+        ledger.contains("\"snapshot\": \"2026-09-03T06\""),
+        "{ledger}"
+    );
+    assert!(
+        s.rig
+            .log()
+            .iter()
+            .any(|line| line.ends_with("-Sy --noconfirm"))
+    );
+}
+
+#[test]
 fn pin_writes_the_mirrorlist_and_unpin_restores_it() {
     let s = setup();
     let mirrorlist = s.rig.root.join("etc/pacman.d/mirrorlist");
@@ -151,6 +169,22 @@ fn pin_writes_the_mirrorlist_and_unpin_restores_it() {
         text,
         "Server = https://stable-mirror.omarchy.org/$repo/os/$arch\n"
     );
+    assert!(
+        !s.rig
+            .root
+            .join("etc/pacman.d/mirrorlist.omapac-unpinned")
+            .exists()
+    );
+    // The next pin must back up edits made after unpinning.
+    std::fs::write(&mirrorlist, "Server = https://new/$repo/os/$arch\n").unwrap();
+    let (code, _, err) = run(&s, &["channel", "pin", "2026-09-01T06"], "");
+    assert_eq!(code, 0, "{err}");
+    let backup =
+        std::fs::read_to_string(s.rig.root.join("etc/pacman.d/mirrorlist.omapac-unpinned"))
+            .unwrap();
+    assert!(backup.contains("https://new/"), "{backup}");
+    let (code, _, err) = run(&s, &["channel", "unpin"], "");
+    assert_eq!(code, 0, "{err}");
     let (_, out, _) = run(&s, &["channel", "unpin"], "");
     assert!(out.contains("not pinned"), "{out}");
 
@@ -183,7 +217,7 @@ fn rollback_pins_refreshes_and_syncs_with_downgrades() {
     assert!(out.contains("pinned to snapshot 2026-09-01T06"), "{out}");
     let log = s.rig.log();
     assert!(
-        log[0].ends_with("-Syy"),
+        log[0].contains("-Syy --noconfirm"),
         "forced refresh after pinning: {log:?}"
     );
     assert!(log.iter().any(|l| l.contains("-Suu --print")), "{log:?}");
@@ -205,7 +239,14 @@ fn rollback_dry_run_prints_the_downgrade_plan_and_command() {
     assert_eq!(code, 0, "{err}\n{out}");
     assert!(out.contains("roll back 1 package(s)"), "{out}");
     assert!(out.contains("would run:") && out.contains("-Suu"), "{out}");
-    assert!(s.rig.log().iter().all(|line| line.contains("--print")));
+    let log = s.rig.log();
+    assert!(log[0].contains("-Syy --noconfirm"), "{log:?}");
+    assert!(log[0].contains("--sysroot"), "{log:?}");
+    assert!(log[1].contains("-Suu --print"), "{log:?}");
+    assert_eq!(
+        std::fs::read_to_string(s.rig.root.join("etc/pacman.d/mirrorlist")).unwrap(),
+        "Server = https://stable-mirror.omarchy.org/$repo/os/$arch\n"
+    );
 }
 
 #[test]

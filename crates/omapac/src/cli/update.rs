@@ -201,6 +201,39 @@ impl RunWith<&App> for Update {
             return Ok(());
         }
 
+        // Resolve and cache the exact release after a successful refresh. A
+        // pinned mirror must use its snapshot manifest, not today's channel
+        // pointer. An empty package plan still means the host converged.
+        let repo_empty = repo_plan
+            .as_ref()
+            .is_some_and(|(resolved, _)| resolved.is_empty());
+        let converged_release = if repo_plan.is_some() && !self.no_refresh {
+            let release = match crate::channel::current_pin(&app.mirrorlist_path()) {
+                Some(id) => match settings.channel_snapshot_base.as_deref() {
+                    Some(base) => app.snapshot_release(base, &id, false).map(Some),
+                    None => Err(eyre::eyre!(
+                        "mirrorlist is pinned to {id}, but channel.snapshot_base is not configured"
+                    )),
+                },
+                None => app.release(&host, false),
+            };
+            match release {
+                Ok(release) => release,
+                Err(err) => {
+                    eprintln!("warning: could not cache the release manifest: {err:#}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        if repo_empty && let Some(release) = &converged_release {
+            app.record(&crate::ledger::Patch {
+                snapshot: Some(release.id.clone()),
+                ..Default::default()
+            })?;
+        }
+
         if let Some((_, plan)) = &repo_plan {
             transaction::validate_plan(plan, "upgrade", self.yes)?;
         }
@@ -220,33 +253,6 @@ impl RunWith<&App> for Update {
         // post hooks once the pre hooks succeeded, including on update errors.
         run_hooks(&settings.update_pre_hooks, "pre")?;
         let update_result: Result<()> = (|| {
-            // Resolve and cache the exact release before changing packages. A
-            // pinned mirror must use its snapshot manifest, not today's channel
-            // pointer.
-            let converged_release = if repo_plan
-                .as_ref()
-                .is_some_and(|(resolved, _)| !resolved.is_empty())
-            {
-                let release = match crate::channel::current_pin(&app.mirrorlist_path()) {
-                    Some(id) => match settings.channel_snapshot_base.as_deref() {
-                        Some(base) => app.snapshot_release(base, &id, false).map(Some),
-                        None => Err(eyre::eyre!(
-                            "mirrorlist is pinned to {id}, but channel.snapshot_base is not configured"
-                        )),
-                    },
-                    None => app.release(&host, false),
-                };
-                match release {
-                    Ok(release) => release,
-                    Err(err) => {
-                        eprintln!("warning: could not cache the release manifest: {err:#}");
-                        None
-                    }
-                }
-            } else {
-                None
-            };
-
             // Repository transaction.
             if let Some((resolved, p)) = &repo_plan
                 && !resolved.is_empty()
