@@ -59,6 +59,8 @@ impl Checkout {
             dir,
         };
         if checkout.dir.join(".git").is_dir() {
+            let url = remote.url(pkgbase);
+            checkout.git(&["remote", "set-url", "origin", &url])?;
             checkout.git(&["fetch", "--quiet", "origin"])?;
             checkout.git(&["checkout", "--quiet", "--force", "--detach", "origin/HEAD"])?;
         } else {
@@ -418,7 +420,11 @@ mod tests {
             "pkgname=foo\npkgver=1\npkgrel=1\n"
         );
 
-        // A second sync fetches and returns to the remote head.
+        // A second sync repairs a stale origin, fetches, and returns to the
+        // requested remote's head.
+        checkout
+            .git(&["remote", "set-url", "origin", "file:///does/not/exist"])
+            .unwrap();
         let again = Checkout::sync(&remote, &cache, "foo").unwrap();
         assert_eq!(again.head().unwrap(), head);
     }
