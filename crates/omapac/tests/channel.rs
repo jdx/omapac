@@ -58,7 +58,9 @@ fn setup() -> Setup {
     );
     rig.write_root(
         "/etc/omapac/conf.d/10-omarchy.toml",
-        &format!("[channel]\nsnapshot_base = \"{base}/snapshots\"\n"),
+        &format!(
+            "[channel]\nsnapshot_base = \"{base}/snapshots\"\n[update]\nignore_group = [\"legacy\"]\n"
+        ),
     );
     Setup { rig, base }
 }
@@ -170,10 +172,30 @@ fn rollback_pins_refreshes_and_syncs_with_downgrades() {
         "forced refresh after pinning: {log:?}"
     );
     assert!(log.iter().any(|l| l.contains("-Suu --print")), "{log:?}");
+    assert!(
+        log.iter().any(|l| l.contains("--ignoregroup legacy")),
+        "{log:?}"
+    );
     let apply = log.iter().find(|l| l.contains("-Suu --noconfirm")).unwrap();
     assert!(apply.contains("OMARCHY_UPDATE_PACMAN=1"), "{apply}");
     let ledger = std::fs::read_to_string(s.rig.root.join("var/lib/omapac/state.json")).unwrap();
     assert!(ledger.contains("\"by\": \"rollback\""), "{ledger}");
+}
+
+#[test]
+fn rollback_restores_the_pin_when_confirmation_fails() {
+    let s = setup();
+    let original = std::fs::read_to_string(s.rig.root.join("etc/pacman.d/mirrorlist")).unwrap();
+    let plan = "pacman\\t7.0.0-1\\tcore\\thttps://m/pacman.pkg\\t1000\\n";
+    let (code, _, err) = run(&s, &["rollback", "--snapshot", "2026-09-01T06"], plan);
+    assert_ne!(code, 0);
+    assert!(err.contains("no terminal to ask on; pass -y"), "{err}");
+    assert_eq!(
+        std::fs::read_to_string(s.rig.root.join("etc/pacman.d/mirrorlist")).unwrap(),
+        original
+    );
+    let ledger = std::fs::read_to_string(s.rig.root.join("var/lib/omapac/state.json")).unwrap();
+    assert!(!ledger.contains("2026-09-01T06"), "{ledger}");
 }
 
 #[test]

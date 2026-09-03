@@ -283,56 +283,77 @@ impl RunWith<&App> for Rollback {
             println!("would refresh databases and plan a downgrade transaction");
             return Ok(());
         }
-        if !self.yes
-            && !crate::ui::confirm(
-                &format!("Pin to {}, refresh databases, and roll back?", release.id),
-                false,
-            )?
-        {
-            bail!("cancelled");
-        }
+        let mirrorlist = app.mirrorlist_path();
+        let original_mirrorlist = std::fs::read_to_string(&mirrorlist)
+            .wrap_err_with(|| format!("reading {}", mirrorlist.display()))?;
+        let previous_snapshot = app.ledger()?.snapshot.unwrap_or_default();
         let release = app.pin(&self.snapshot, self.force)?;
         println!("pinned to snapshot {} ({})", release.id, describe(&release));
-        let host = app.host()?;
         let engine = app.engine()?;
-        engine.refresh(
-            crate::engine::RefreshOpts { force: true },
-            ApplyOpts {
-                dry_run: false,
-                no_confirm: true,
-            },
-        )?;
-        let tx = Transaction::new(Operation::Upgrade {
-            allow_downgrade: true,
-        })
-        .ignoring(manifest.settings.update_ignore.iter().cloned())
-        .overwriting(manifest.settings.update_overwrite.iter().cloned());
-        let resolved = engine.plan(&tx)?;
-        let command = engine
-            .apply_invocation(
-                &tx,
+        let result = (|| -> Result<()> {
+            engine.refresh(
+                crate::engine::RefreshOpts { force: true },
                 ApplyOpts {
-                    dry_run: true,
+                    dry_run: false,
                     no_confirm: true,
                 },
-            )
-            .display();
-        let plan = super::transaction::plan(&host, &resolved, command);
-        let performed = super::transaction::confirm_and_apply(
-            &engine,
-            &resolved,
-            &plan,
-            "roll back",
-            true,
-            false,
-        )?;
-        if performed {
-            app.record(&super::transaction::ledger_patch(
+            )?;
+            let host = app.host()?;
+            let mut tx = Transaction::new(Operation::Upgrade {
+                allow_downgrade: true,
+            })
+            .ignoring(manifest.settings.update_ignore.iter().cloned())
+            .overwriting(manifest.settings.update_overwrite.iter().cloned());
+            tx.ignore_group
+                .extend(manifest.settings.update_ignore_group.iter().cloned());
+            let resolved = engine.plan(&tx)?;
+            let command = engine
+                .apply_invocation(
+                    &tx,
+                    ApplyOpts {
+                        dry_run: true,
+                        no_confirm: true,
+                    },
+                )
+                .display();
+            let plan = super::transaction::plan(&host, &resolved, command);
+            let performed = super::transaction::confirm_and_apply(
+                &engine,
+                &resolved,
                 &plan,
-                &[],
-                "rollback",
+                "roll back",
+                self.yes,
                 false,
-            ))?;
+            )?;
+            if performed {
+                app.record(&super::transaction::ledger_patch(
+                    &plan,
+                    &[],
+                    "rollback",
+                    false,
+                ))?;
+            }
+            Ok(())
+        })();
+        if let Err(err) = result {
+            channel::write_privileged(
+                &mirrorlist,
+                &original_mirrorlist,
+                false,
+                app.paths.sysroot.as_deref(),
+            )?;
+            app.record(&crate::ledger::Patch {
+                snapshot: Some(previous_snapshot),
+                ..Default::default()
+            })?;
+            engine.refresh(
+                crate::engine::RefreshOpts { force: true },
+                ApplyOpts {
+                    dry_run: false,
+                    no_confirm: true,
+                },
+            )?;
+            return Err(err);
         }
         Ok(())
     }
