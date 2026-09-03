@@ -42,19 +42,16 @@ impl Source {
     /// The sync database, parsed on first use. `None` when pacman has not
     /// downloaded it yet.
     pub fn db(&self) -> Result<Option<&SyncDb>> {
-        let db = self.db.get_or_init(|| {
-            if self.db_path.exists() {
-                Some(
-                    SyncDb::read(&self.db_path, &self.name).unwrap_or_else(|_| SyncDb {
-                        repo: self.name.clone(),
-                        packages: Vec::new(),
-                    }),
-                )
-            } else {
-                None
-            }
-        });
-        Ok(db.as_ref())
+        if let Some(db) = self.db.get() {
+            return Ok(db.as_ref());
+        }
+        if !self.db_path.exists() {
+            return Ok(self.db.get_or_init(|| None).as_ref());
+        }
+
+        let db = SyncDb::read(&self.db_path, &self.name)
+            .wrap_err_with(|| format!("reading {}", self.db_path.display()))?;
+        Ok(self.db.get_or_init(|| Some(db)).as_ref())
     }
 
     /// Whether the sync database file exists.

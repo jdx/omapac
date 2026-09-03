@@ -176,6 +176,16 @@ fn diagnose_host(host: &Host, add: &mut impl FnMut(Status, &str, String)) {
 
     let now = SystemTime::now();
     for source in &host.sources {
+        if source.has_db()
+            && let Err(err) = source.db()
+        {
+            add(
+                Status::Fail,
+                "sync",
+                format!("[{}] database is unreadable: {err:#}", source.name),
+            );
+            continue;
+        }
         match source.db_modified() {
             None => add(
                 Status::Warn,
@@ -237,14 +247,14 @@ fn diagnose_host(host: &Host, add: &mut impl FnMut(Status, &str, String)) {
         .as_ref()
         .map(|root| root.join(gpg_dir.strip_prefix("/").unwrap_or(&gpg_dir)))
         .unwrap_or(gpg_dir);
-    if gpg_dir.join("pubring.gpg").exists() {
+    if gpg_dir.join("pubring.gpg").exists() || gpg_dir.join("pubring.kbx").exists() {
         add(Status::Ok, "keyring", gpg_dir.display().to_string());
     } else {
         add(
             Status::Warn,
             "keyring",
             format!(
-                "{} has no pubring.gpg; run `pacman-key --init`",
+                "{} has no pubring.gpg or pubring.kbx; run `pacman-key --init`",
                 gpg_dir.display()
             ),
         );
