@@ -116,7 +116,19 @@ impl Diff {
             })
             .map(|step| step.name.clone())
             .collect();
-        let mut patch = transaction::ledger_patch_for_installed(host, &present, true, by)?;
+        let mut patch = transaction::ledger_patch_for_installed(host, &ledger, &present, true, by)?;
+        for step in self.steps.iter().filter(|step| {
+            step.action == Action::Noop
+                && step.state == State::Present
+                && ledger
+                    .packages
+                    .get(&step.name)
+                    .is_some_and(|entry| !entry.explicit)
+        }) {
+            let mut entry = ledger.packages[&step.name].clone();
+            entry.explicit = true;
+            patch.upsert.insert(step.name.clone(), entry);
+        }
         patch.remove.extend(
             self.steps
                 .iter()
@@ -201,6 +213,7 @@ impl Diff {
         manifest: &Manifest,
         engine: &crate::engine::pacman::PacmanCli,
         opts: RunOpts<'_>,
+        committed: &mut bool,
     ) -> Result<()> {
         let RunOpts { by, yes, dry_run } = opts;
         let unavailable: Vec<&str> = self
@@ -228,6 +241,7 @@ impl Diff {
             tx.ignore_group
                 .extend(manifest.settings.update_ignore_group.iter().cloned());
             if let Some(plan) = run(host, engine, tx, "install", yes, dry_run)? {
+                *committed = true;
                 app.record(&transaction::ledger_patch(&plan, &targets, by, false))?;
             }
         }
@@ -238,6 +252,7 @@ impl Diff {
                 *recursive = false;
             }
             if let Some(plan) = run(host, engine, tx, "remove", yes, dry_run)? {
+                *committed = true;
                 app.record(&transaction::ledger_patch(&plan, &[], by, true))?;
             }
         }
