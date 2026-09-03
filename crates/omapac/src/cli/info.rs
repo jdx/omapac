@@ -114,7 +114,7 @@ impl RunWith<&App> for Info {
         // The release train label for Arch-tier packages, from the cached
         // release manifest when there is one.
         if infos.iter().any(|i| matches!(i.tier, Tier::Arch))
-            && let Ok(Some(release)) = app.release(&host, true)
+            && let Ok(Some(release)) = app.active_release(&host, true)
         {
             for found in infos.iter_mut().filter(|i| matches!(i.tier, Tier::Arch)) {
                 found.train = Some(Train {
