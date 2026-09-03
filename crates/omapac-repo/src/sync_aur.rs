@@ -416,7 +416,8 @@ pub fn decide(
 
 /// Whether the change between two commits is only a version or checksum
 /// bump: no files beyond PKGBUILD and .SRCINFO, and every changed line is
-/// a version, release, checksum, or source line.
+/// a version, release, or checksum line. Expanded source lines may change
+/// in .SRCINFO, but the executable PKGBUILD source expressions may not.
 pub fn pure_bump(checkout: &omapac::aur::git::Checkout, from: &str, to: &str) -> Result<bool> {
     let files = checkout.changed_files(Some(from), to)?;
     if files.iter().any(|f| f != "PKGBUILD" && f != ".SRCINFO") {
@@ -430,21 +431,24 @@ pub fn diff_is_bump(diff: &str) -> bool {
     let mut saw_change = false;
     let mut old_array = None;
     let mut new_array = None;
+    let mut allow_sources = false;
     for line in diff.lines() {
-        if line.starts_with("@@") {
+        if let Some(path) = line.strip_prefix("+++ b/") {
+            allow_sources = path == ".SRCINFO";
+        } else if line.starts_with("@@") {
             old_array = None;
             new_array = None;
         } else if let Some(changed) = line.strip_prefix('+') {
             if !changed.starts_with("++ ") {
                 saw_change = true;
-                if !bump_line(changed.trim(), &mut new_array) {
+                if !bump_line(changed.trim(), &mut new_array, allow_sources) {
                     return false;
                 }
             }
         } else if let Some(changed) = line.strip_prefix('-') {
             if !changed.starts_with("-- ") {
                 saw_change = true;
-                if !bump_line(changed.trim(), &mut old_array) {
+                if !bump_line(changed.trim(), &mut old_array, allow_sources) {
                     return false;
                 }
             }
@@ -456,14 +460,15 @@ pub fn diff_is_bump(diff: &str) -> bool {
     saw_change
 }
 
-fn bump_line(line: &str, array: &mut Option<&'static str>) -> bool {
+fn bump_line(line: &str, array: &mut Option<&'static str>, allow_sources: bool) -> bool {
     if line.is_empty() || line == ")" {
         update_array(line, array);
         return true;
     }
     let name = line.split(['=', ' ']).next().unwrap_or_default();
     let stem = name.split('_').next().unwrap_or_default();
-    let assignment = matches!(stem, "pkgver" | "pkgrel" | "source" | "noextract")
+    let assignment = matches!(stem, "pkgver" | "pkgrel")
+        || (allow_sources && matches!(stem, "source" | "noextract"))
         || matches!(
             stem,
             "md5sums"
@@ -479,7 +484,8 @@ fn bump_line(line: &str, array: &mut Option<&'static str>) -> bool {
         update_array(line, array);
         return true;
     }
-    if matches!(array, Some("source" | "noextract"))
+    if allow_sources
+        && matches!(array, Some("source" | "noextract"))
         && (line.starts_with('\'') || line.starts_with('"'))
     {
         update_array(line, array);
@@ -487,8 +493,8 @@ fn bump_line(line: &str, array: &mut Option<&'static str>) -> bool {
     }
     // A bare checksum or SKIP inside a multi-line array.
     let bare = line.trim_matches(['\'', '"', ')', '(']);
-    let allowed =
-        bare == "SKIP" || (bare.len() >= 32 && bare.chars().all(|c| c.is_ascii_hexdigit()));
+    let allowed = matches!(array, Some("checksum"))
+        && (bare == "SKIP" || (bare.len() >= 32 && bare.chars().all(|c| c.is_ascii_hexdigit())));
     update_array(line, array);
     allowed
 }
@@ -500,6 +506,8 @@ fn update_array(line: &str, array: &mut Option<&'static str>) {
         *array = match stem {
             "source" => Some("source"),
             "noextract" => Some("noextract"),
+            "md5sums" | "sha1sums" | "sha224sums" | "sha256sums" | "sha384sums" | "sha512sums"
+            | "b2sums" | "cksums" => Some("checksum"),
             _ => None,
         };
     }
@@ -544,12 +552,12 @@ mod tests {
 
     #[test]
     fn bump_diffs() {
-        let bump = "diff --git a/PKGBUILD b/PKGBUILD\n--- a/PKGBUILD\n+++ b/PKGBUILD\n@@ -2,3 +2,3 @@\n-pkgver=13.0.1\n+pkgver=13.0.2\n-source=(\"yay-13.0.1.tar.gz::https://github.com/Jguer/yay/archive/v13.0.1.tar.gz\")\n+source=(\"yay-13.0.2.tar.gz::https://github.com/Jguer/yay/archive/v13.0.2.tar.gz\")\n-sha256sums=('b77454bce87110180a1b6664c2d260de78124c9894b71101610ba84f551eb0d0')\n+sha256sums=('0000000000000000000000000000000000000000000000000000000000000000')\n--- a/.SRCINFO\n+++ b/.SRCINFO\n-\tpkgver = 13.0.1\n+\tpkgver = 13.0.2\n-\tsha256sums = b774\n+\tsha256sums = 0000\n";
+        let bump = "diff --git a/PKGBUILD b/PKGBUILD\n--- a/PKGBUILD\n+++ b/PKGBUILD\n@@ -2,3 +2,3 @@\n-pkgver=13.0.1\n+pkgver=13.0.2\n-sha256sums=('b77454bce87110180a1b6664c2d260de78124c9894b71101610ba84f551eb0d0')\n+sha256sums=('0000000000000000000000000000000000000000000000000000000000000000')\n--- a/.SRCINFO\n+++ b/.SRCINFO\n-\tpkgver = 13.0.1\n+\tpkgver = 13.0.2\n-\tsource = yay-13.0.1.tar.gz::https://github.com/Jguer/yay/archive/v13.0.1.tar.gz\n+\tsource = yay-13.0.2.tar.gz::https://github.com/Jguer/yay/archive/v13.0.2.tar.gz\n-\tsha256sums = b774\n+\tsha256sums = 0000\n";
         assert!(diff_is_bump(bump));
-        let multiline = "--- a/PKGBUILD\n+++ b/PKGBUILD\n-  'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n+  'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'\n-pkgrel=1\n+pkgrel=2\n";
+        let multiline = "--- a/PKGBUILD\n+++ b/PKGBUILD\n@@ -1,4 +1,4 @@\n sha256sums=(\n-  'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n+  'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'\n )\n-pkgrel=1\n+pkgrel=2\n";
         assert!(diff_is_bump(multiline));
         let multiline_source = "--- a/PKGBUILD\n+++ b/PKGBUILD\n@@ -1,4 +1,4 @@\n source=(\n-  'app-1.tar.gz::https://example.com/app-1.tar.gz'\n+  'app-2.tar.gz::https://example.com/app-2.tar.gz'\n )\n-pkgver=1\n+pkgver=2\n";
-        assert!(diff_is_bump(multiline_source));
+        assert!(!diff_is_bump(multiline_source));
         let unrelated_array = "--- a/PKGBUILD\n+++ b/PKGBUILD\n@@ -1,3 +1,3 @@\n depends=(\n-  'safe'\n+  'hostile'\n )\n";
         assert!(!diff_is_bump(unrelated_array));
         let hostile =
