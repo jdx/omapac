@@ -3,6 +3,7 @@
 //! it. See `PLAN.md`, "Lockfile".
 
 use std::collections::BTreeMap;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use eyre::{Context as _, Result};
@@ -78,7 +79,27 @@ impl Lockfile {
         let mut lock = self.clone();
         lock.version = VERSION;
         let text = toml::to_string_pretty(&lock).wrap_err("serialising the lockfile")?;
-        std::fs::write(path, text).wrap_err_with(|| format!("writing {}", path.display()))
+        let parent = path.parent().unwrap_or_else(|| Path::new("."));
+        static NEXT_TEMP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let temp_path = parent.join(format!(
+            ".omapac.lock.tmp-{}-{}",
+            std::process::id(),
+            NEXT_TEMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let result = (|| -> std::io::Result<()> {
+            let mut temp = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temp_path)?;
+            temp.write_all(text.as_bytes())?;
+            temp.sync_all()?;
+            std::fs::rename(&temp_path, path)
+        })();
+        if let Err(err) = result {
+            let _ = std::fs::remove_file(&temp_path);
+            return Err(err).wrap_err_with(|| format!("publishing {}", path.display()));
+        }
+        Ok(())
     }
 }
 
