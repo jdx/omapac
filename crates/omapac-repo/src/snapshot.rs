@@ -163,7 +163,7 @@ impl Store {
     pub fn ids(&self) -> Result<Vec<String>> {
         let mut ids: Vec<String> = std::fs::read_dir(self.root.join("snapshots"))?
             .filter_map(Result::ok)
-            .filter(|e| e.path().is_dir())
+            .filter(|e| e.path().join("release.json").is_file())
             .filter_map(|e| e.file_name().to_str().map(str::to_string))
             .collect();
         ids.sort();
@@ -528,10 +528,18 @@ fn cut_snapshot(
     now: jiff::Timestamp,
     key: &SecretKey,
 ) -> Result<Release> {
-    let dir = store.snapshot_dir(id);
-    if dir.exists() {
+    let final_dir = store.snapshot_dir(id);
+    if final_dir.exists() {
         bail!("snapshot {id} exists");
     }
+    let dir = store
+        .root
+        .join("snapshots")
+        .join(format!(".partial-{id}-{}", std::process::id()));
+    let mut partial = PartialSnapshot {
+        path: dir.clone(),
+        committed: false,
+    };
     let previous = store.ids()?.into_iter().rev().find(|p| p.as_str() < id);
     let previous_dir = previous.as_ref().map(|p| store.snapshot_dir(p));
     std::fs::create_dir_all(&dir)?;
@@ -573,8 +581,8 @@ fn cut_snapshot(
                     .map(|p| p.join(&rel).join(&name))
                     .filter(|p| {
                         p.is_file()
-                            && !name.to_string_lossy().ends_with(".db")
-                            && !name.to_string_lossy().ends_with(".files")
+                            && !name.to_string_lossy().contains(".db")
+                            && !name.to_string_lossy().contains(".files")
                             && p.metadata().map(|m| m.len()).ok()
                                 == file.metadata().map(|m| m.len()).ok()
                     });
@@ -617,8 +625,28 @@ fn cut_snapshot(
         hold_reason: None,
         db_digests,
     };
-    store.write_release(&release, key)?;
+    crate::feed::write_signed(
+        &dir.join("release.json"),
+        &release,
+        key,
+        &format!("release {}", release.id),
+    )?;
+    std::fs::rename(&dir, &final_dir).wrap_err_with(|| format!("committing snapshot {id}"))?;
+    partial.committed = true;
     Ok(release)
+}
+
+struct PartialSnapshot {
+    path: PathBuf,
+    committed: bool,
+}
+
+impl Drop for PartialSnapshot {
+    fn drop(&mut self) {
+        if !self.committed {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
 }
 
 fn run_suite(store: &Store, test: &Test) -> Result<(TestResult, Vec<String>)> {
@@ -681,6 +709,7 @@ pub fn check_snapshot(
 ) -> Result<CheckOutcome> {
     let dir = store.snapshot_dir(&release.id);
     let mut outcome = CheckOutcome::default();
+    let mut seen_repos = std::collections::BTreeSet::new();
     let mut repos: Vec<PathBuf> = std::fs::read_dir(&dir)?
         .filter_map(Result::ok)
         .map(|e| e.path())
@@ -693,6 +722,7 @@ pub fn check_snapshot(
             .and_then(|n| n.to_str())
             .unwrap_or_default()
             .to_string();
+        seen_repos.insert(repo.clone());
         for arch_entry in std::fs::read_dir(repo_dir.join("os"))?.filter_map(Result::ok) {
             let pool = arch_entry.path();
             let db_path = pool.join(format!("{repo}.db"));
@@ -744,6 +774,13 @@ pub fn check_snapshot(
                 }
                 outcome.verified.push(package.name.clone());
             }
+        }
+    }
+    for repo in release.db_digests.keys() {
+        if !seen_repos.contains(repo) {
+            outcome
+                .problems
+                .push(format!("{repo}: repository directory is missing"));
         }
     }
     if outcome.missing > 0 && !allow_missing {
