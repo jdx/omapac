@@ -77,6 +77,9 @@ impl RunWith<&App> for Info {
         for name in &self.packages {
             let found = if self.aur { None } else { info(&host, name)? };
             let found = match found {
+                Some(found) if found.tier == Tier::Foreign && !self.no_aur => {
+                    info_aur(&host, &app.aur_rpc(), name)?.or(Some(found))
+                }
                 Some(found) => Some(found),
                 None if self.no_aur => None,
                 None => info_aur(&host, &app.aur_rpc(), name)?,

@@ -195,7 +195,7 @@ fn encode(s: &str) -> String {
     let mut out = String::new();
     for byte in s.bytes() {
         match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'+' | b'@' => {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
                 out.push(byte as char)
             }
             other => out.push_str(&format!("%{other:02X}")),
@@ -247,6 +247,7 @@ mod tests {
         assert!(matches!(parse("nope"), Err(Error::Parse(_))));
         assert_eq!(encode("google-chrome"), "google-chrome");
         assert_eq!(encode("a b/c"), "a%20b%2Fc");
+        assert_eq!(encode("c++-gtk-utils"), "c%2B%2B-gtk-utils");
     }
 
     /// Against the real AUR, only when asked for.

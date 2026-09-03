@@ -212,12 +212,11 @@ impl SrcInfo {
     fn merged(&self, pkgname: &str, key: &str, arch: &str) -> Vec<Dependency> {
         let package = self.packages.iter().find(|p| p.name == pkgname);
         let values = match package {
-            Some(p)
-                if p.fields
-                    .iter()
-                    .any(|(k, _)| k == key || k.starts_with(&format!("{key}_"))) =>
-            {
-                p.all_for_arch(key, arch)
+            Some(p) if p.fields.iter().any(|(k, _)| k == key) => p.all_for_arch(key, arch),
+            Some(p) if p.fields.iter().any(|(k, _)| k == &format!("{key}_{arch}")) => {
+                let mut values = self.base.all(key);
+                values.extend(p.all(&format!("{key}_{arch}")));
+                values
             }
             _ => self.base.all_for_arch(key, arch),
         };
@@ -359,6 +358,25 @@ mod tests {
             SrcInfo::parse("pkgbase = x\n\tjunk\n"),
             Err(Error::Malformed { line: 2, .. })
         ));
+    }
+
+    #[test]
+    fn package_arch_fields_only_override_that_arch() {
+        let text = "pkgbase = split\n\tpkgver = 1\n\tpkgrel = 1\n\tdepends = common\n\tdepends_x86_64 = base-x86\n\n pkgname = split\n\tdepends_x86_64 = package-x86\n";
+        let info = SrcInfo::parse(text).unwrap();
+
+        let x86: Vec<_> = info
+            .depends("split", "x86_64")
+            .into_iter()
+            .map(|dependency| dependency.name)
+            .collect();
+        assert_eq!(x86, ["common", "package-x86"]);
+        let arm: Vec<_> = info
+            .depends("split", "aarch64")
+            .into_iter()
+            .map(|dependency| dependency.name)
+            .collect();
+        assert_eq!(arm, ["common"]);
     }
 
     #[test]
