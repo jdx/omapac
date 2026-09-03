@@ -19,6 +19,7 @@ fn run(rig: &Rig, url: &str, args: &[&str]) -> (i32, String, String) {
     let output = Command::new(env!("CARGO_BIN_EXE_omapac"))
         .env("PATH", format!("{}:/usr/bin:/bin", rig.bin.display()))
         .env("HOME", &rig.home)
+        .env_remove("XDG_CONFIG_HOME")
         .env("XDG_CACHE_HOME", rig.dir.path().join("cache"))
         .env("OMAPAC_SECURITY_TRACKER_URL", url)
         .arg("--sysroot")
