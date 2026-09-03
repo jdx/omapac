@@ -100,6 +100,10 @@ impl Checkout {
     }
 
     fn git(&self, args: &[&str]) -> Result<String> {
+        Ok(String::from_utf8_lossy(&self.git_bytes(args)?).into_owned())
+    }
+
+    fn git_bytes(&self, args: &[&str]) -> Result<Vec<u8>> {
         let output = git_command()
             .arg("-C")
             .arg(&self.dir)
@@ -114,7 +118,7 @@ impl Checkout {
                 String::from_utf8_lossy(&output.stderr).trim()
             );
         }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        Ok(output.stdout)
     }
 
     /// The remote's current head.
@@ -168,8 +172,11 @@ impl Checkout {
 
     /// A file's content at a commit, `None` when it does not exist there.
     pub fn show(&self, commit: &str, path: &str) -> Result<Option<String>> {
-        let listed = self.git(&["ls-tree", "--name-only", commit, "--", path])?;
-        if listed.lines().any(|candidate| candidate == path) {
+        let listed = self.git_bytes(&["ls-tree", "-z", "--name-only", commit, "--", path])?;
+        if listed
+            .split(|byte| *byte == 0)
+            .any(|candidate| candidate == path.as_bytes())
+        {
             Ok(Some(self.git(&["show", &format!("{commit}:{path}")])?))
         } else {
             Ok(None)
@@ -180,10 +187,14 @@ impl Checkout {
     /// whole tree at `to`).
     pub fn changed_files(&self, from: Option<&str>, to: &str) -> Result<Vec<String>> {
         let out = match from {
-            Some(from) => self.git(&["diff", "--name-only", from, to])?,
-            None => self.git(&["ls-tree", "--name-only", "-r", to])?,
+            Some(from) => self.git_bytes(&["diff", "--name-only", "-z", from, to])?,
+            None => self.git_bytes(&["ls-tree", "--name-only", "-z", "-r", to])?,
         };
-        Ok(out.lines().map(str::to_string).collect())
+        Ok(out
+            .split(|byte| *byte == 0)
+            .filter(|path| !path.is_empty())
+            .map(|path| String::from_utf8_lossy(path).into_owned())
+            .collect())
     }
 
     /// A unified diff of `paths` between two commits.
@@ -327,6 +338,7 @@ mod tests {
         .unwrap();
         std::fs::write(work.join(".SRCINFO"), "pkgbase = foo\n\tpkgver = 2\n\tpkgrel = 1\n\tsource = https://evil.example/x\n\tsha256sums = SKIP\n\npkgname = foo\n").unwrap();
         std::fs::write(work.join("foo.install"), "post_install() { :; }\n").unwrap();
+        std::fs::write(work.join("café install"), "post_install() { :; }\n").unwrap();
         run(&["add", "."], &work);
         run(&["commit", "--quiet", "-m", "bump to 2"], &work);
         let bare = dir.path().join("foo.git");
@@ -372,7 +384,7 @@ mod tests {
         assert!(!checkout.has_commit("0000000000000000000000000000000000000000"));
         assert_eq!(
             checkout.changed_files(Some(first), &head).unwrap(),
-            [".SRCINFO", "PKGBUILD", "foo.install"]
+            [".SRCINFO", "PKGBUILD", "café install", "foo.install"]
         );
         assert!(
             checkout
@@ -389,6 +401,10 @@ mod tests {
         let new = checkout.srcinfo(&head).unwrap();
         assert!(new.has_skipped_checksum("x86_64"));
         assert_eq!(checkout.show(first, "foo.install").unwrap(), None);
+        assert_eq!(
+            checkout.show(&head, "café install").unwrap().as_deref(),
+            Some("post_install() { :; }\n")
+        );
         assert!(
             checkout
                 .show("0000000000000000000000000000000000000000", ".SRCINFO")
