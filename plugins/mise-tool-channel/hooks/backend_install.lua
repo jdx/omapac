@@ -34,6 +34,11 @@ function PLUGIN:BackendInstall(ctx)
         local strip = options.strip
         if strip == nil then
             strip = 1
+        else
+            strip = tonumber(strip)
+            if strip ~= 0 and strip ~= 1 then
+                error("tool channel: strip must be 0 or 1")
+            end
         end
         archiver.decompress(artifact, ctx.install_path, { strip_components = strip })
         local exe = options.exe or self:find_executable(ctx.install_path, ctx.tool)

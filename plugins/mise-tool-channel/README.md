@@ -25,7 +25,7 @@ Set per tool in `mise.toml`, or through the environment:
 | `pubkey`   | `OMAPAC_TOOLS_PUBKEY`   | a minisign key file; default `/etc/omapac/keys`  |
 | `platform` |                         | override the mise platform, such as `linux-x64`  |
 | `exe`      |                         | the executable inside the archive to expose      |
-| `strip`    |                         | leading path components to strip when extracting |
+| `strip`    | `1`                     | leading path components to strip (`0` or `1`) |
 
 On Omarchy the distro ships the channel base and key, and its system
 mise config aliases the agent CLIs to this backend:
