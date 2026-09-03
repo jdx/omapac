@@ -30,7 +30,7 @@ run() { docker exec "$name" bash -c "$1"; }
 # Capture, then match: grep -q closing a pipe early would turn into a
 # SIGPIPE failure under pipefail.
 expect() {
-	local pattern=$1 out
+	local pattern="$1" out
 	out=$(run "$2")
 	grep -qE -- "$pattern" <<<"$out" || {
 		echo "expected /$pattern/ in output of: $2" >&2
@@ -63,7 +63,7 @@ fi
 # and nothing changes.
 candidate=$(run "comm -23 <(pacman -Slq | sort -u) <(pacman -Qq | sort -u) | head -n1")
 [ -n "$candidate" ] || skip "no uninstalled sync package available"
-expect 'would run: /usr/sbin/pacman -S --noconfirm --needed -- ' "omapac install -n '$candidate'"
+expect 'would run: /usr/bin/pacman -S --noconfirm --needed -- ' "omapac install -n '$candidate'"
 expect 'would run:|nothing to upgrade|up to date' "omapac update -n --no-aur"
 before=$(run "pacman -Q | wc -l")
 
