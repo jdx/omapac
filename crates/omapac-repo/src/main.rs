@@ -6,6 +6,7 @@ mod feed;
 mod index;
 mod rekor;
 mod sign;
+mod snapshot;
 mod sync_aur;
 mod vendor;
 mod verdict;
@@ -45,6 +46,7 @@ enum Commands {
     Attest(attest::Attest),
     Index(index::IndexCmd),
     Sign(sign::Sign),
+    Snapshot(snapshot::Snapshot),
     SyncAur(sync_aur::SyncAur),
     Vendor(vendor::Vendor),
     Verdict(verdict::VerdictCmd),
@@ -61,6 +63,7 @@ fn main() -> Result<()> {
         Some(Commands::Attest(cmd)) => cmd.run_with(()),
         Some(Commands::Index(cmd)) => cmd.run_with(()),
         Some(Commands::Sign(cmd)) => cmd.run_with(()),
+        Some(Commands::Snapshot(cmd)) => cmd.run_with(()),
         Some(Commands::SyncAur(cmd)) => cmd.run_with(()),
         Some(Commands::Vendor(cmd)) => cmd.run_with(()),
         Some(Commands::Verdict(cmd)) => cmd.run_with(()),
