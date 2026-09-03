@@ -227,11 +227,16 @@ impl RunWith<&App> for Drop {
 
     fn run_with(self, app: &App) -> Self::Output {
         let paths = app.manifest_paths();
-        let packages: Vec<crate::engine::Target> = self
-            .packages
-            .iter()
-            .map(|spec| spec.parse().expect("target parsing is infallible"))
-            .collect();
+        let mut packages = Vec::new();
+        for spec in &self.packages {
+            let target: crate::engine::Target = spec.parse().expect("target parsing is infallible");
+            if !packages
+                .iter()
+                .any(|existing: &crate::engine::Target| existing.name == target.name)
+            {
+                packages.push(target);
+            }
+        }
         for target in &packages {
             let name = &target.name;
             if edit::remove_package(&paths.user, name)? {
