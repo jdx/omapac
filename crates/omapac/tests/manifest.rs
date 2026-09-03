@@ -175,7 +175,7 @@ fn drop_keeps_what_a_lower_layer_declares() {
     )
     .unwrap();
     let (code, out, err) = rig.run(
-        &["drop", "-n", "yay", "glibc", "never-there"],
+        &["drop", "-n", "yay", "core/glibc", "never-there"],
         YAY_REMOVE,
         0,
     );
@@ -193,4 +193,15 @@ fn drop_keeps_what_a_lower_layer_declares() {
         !manifest.contains("yay") && !manifest.contains("glibc"),
         "{manifest}"
     );
+}
+
+#[test]
+fn missing_status_distinguishes_a_matching_manifest() {
+    let rig = Rig::new();
+    std::fs::create_dir_all(rig.user_manifest().parent().unwrap()).unwrap();
+    std::fs::write(rig.user_manifest(), "[packages]\npacman = {}\n").unwrap();
+    let (code, out, err) = rig.run(&["status", "--missing"], "", 0);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("nothing missing"), "{out}");
+    assert!(!out.contains("nothing declared"), "{out}");
 }
