@@ -37,9 +37,13 @@ pub struct Sign {
     /// The gpg program
     #[usage(long, default = "gpg")]
     gpg: String,
-    /// Require a stored transparency log entry about the envelope
+    /// Require a stored transparency log entry about the envelope, with
+    /// an inclusion proof that reaches its root
     #[usage(long)]
     require_rekor: bool,
+    /// The log's public key (SPKI PEM) to verify checkpoints with
+    #[usage(long, value_hint = usage_rs::ValueHint::FilePath)]
+    rekor_pubkey: Option<PathBuf>,
     /// Require the package to be listed with this digest in the index
     #[usage(long)]
     index: Option<PathBuf>,
@@ -86,6 +90,13 @@ impl RunWith<()> for Sign {
             ),
             None => None,
         };
+        let log_key = match &self.rekor_pubkey {
+            Some(path) => Some(crate::rekor::log_key(
+                &std::fs::read_to_string(path)
+                    .wrap_err_with(|| format!("reading {}", path.display()))?,
+            )?),
+            None => None,
+        };
         let packages: Vec<PathBuf> = if self.package.is_empty() {
             let mut all: Vec<PathBuf> = std::fs::read_dir(&self.dir)
                 .wrap_err_with(|| format!("reading {}", self.dir.display()))?
@@ -108,7 +119,13 @@ impl RunWith<()> for Sign {
             let outcome = if sig_path(package).exists() {
                 Outcome::AlreadySigned
             } else {
-                match check(package, &keys, self.require_rekor, index.as_ref()) {
+                match check(
+                    package,
+                    &keys,
+                    self.require_rekor,
+                    log_key.as_ref(),
+                    index.as_ref(),
+                ) {
                     Err(reason) => Outcome::Refused { reason },
                     Ok(build_key) if self.dry_run => Outcome::WouldSign { build_key },
                     Ok(build_key) => match gpg_sign(&self.gpg, &self.gpg_key, package) {
@@ -159,6 +176,7 @@ pub fn check(
     package: &Path,
     keys: &[PublicKey],
     require_rekor: bool,
+    log_key: Option<&p256::ecdsa::VerifyingKey>,
     index: Option<&crate::index::Index>,
 ) -> Result<String, String> {
     let (sha256, _) = packslip::digest_file(package).map_err(|e| format!("hashing: {e}"))?;
@@ -187,6 +205,8 @@ pub fn check(
             .map_err(|e| format!("{e:#}"))?
             .ok_or_else(|| "no transparency log entry beside the package".to_string())?;
         crate::rekor::check(&entry, &envelope)
+            .map_err(|e| format!("transparency log entry: {e:#}"))?;
+        crate::rekor::verify_inclusion(&entry, log_key)
             .map_err(|e| format!("transparency log entry: {e:#}"))?;
     }
     if let Some(index) = index {

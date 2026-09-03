@@ -138,7 +138,10 @@ For every package in the directory without a .sig (or the packages given), verif
     flag --gpg help="The gpg program" default=gpg {
         arg <GPG>
     }
-    flag --require-rekor help="Require a stored transparency log entry about the envelope"
+    flag --require-rekor help="Require a stored transparency log entry about the envelope, with an inclusion proof that reaches its root"
+    flag --rekor-pubkey help="The log's public key (SPKI PEM) to verify checkpoints with" {
+        arg <REKOR_PUBKEY>
+    }
     flag --index help="Require the package to be listed with this digest in the index" {
         arg <INDEX>
     }
@@ -146,6 +149,7 @@ For every package in the directory without a .sig (or the packages given), verif
     flag "-J --json" help="Print the report as JSON"
     flag "-h --help" help="Print help" action=help builtin=#true
     complete dir type=dir
+    complete rekor_pubkey type=path
 }
 cmd snapshot help="Cut, test, promote, hold, and prune snapshots" subcommand_required=#true {
     long_help #"""
