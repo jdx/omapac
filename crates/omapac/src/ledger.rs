@@ -67,6 +67,7 @@ impl Default for Ledger {
             schema: SCHEMA,
             packages: BTreeMap::new(),
             index_sequence: None,
+            index_sequences: BTreeMap::new(),
             snapshot: None,
         }
     }
