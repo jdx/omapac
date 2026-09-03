@@ -370,7 +370,10 @@ fn a_tampered_mirror_is_caught() {
         ],
     );
     assert_ne!(code, 0);
-    assert!(err.contains("reading") || err.contains("response exceeds"), "{err}");
+    assert!(
+        err.contains("reading") || err.contains("response exceeds"),
+        "{err}"
+    );
     assert!(
         !dest.join("tool-1.2.0-linux-x64.tar.gz").exists(),
         "nothing written"

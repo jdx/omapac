@@ -113,14 +113,16 @@ fn plugin_lists_and_installs_through_omapac() {
     assert_eq!(code, 0, "{out}\n{err}");
     assert!(out.contains("1.0.0"), "{out}");
 
-    // An archive: extracted with the top-level directory stripped, and
-    // bin/tool found and linked.
-    let (code, out, err) = mise.run(&["install", "tool-channel:tool@1.2.0"], &edge);
+    // An explicit executable overrides bin/tool already present in the archive.
+    let (code, out, err) = mise.run(
+        &["install", "tool-channel:tool[exe=alternate]@1.2.0"],
+        &edge,
+    );
     assert_eq!(code, 0, "{out}\n{err}");
     let linked = mise
         .home
         .join("data/installs/tool-channel-tool/1.2.0/bin/tool");
-    assert_eq!(std::fs::read_to_string(&linked).unwrap(), "archived 1.2.0");
+    assert_eq!(std::fs::read_to_string(&linked).unwrap(), "alternate 1.2.0");
 
     // A held version is refused by omapac, so mise reports the failure.
     let (code, out, err) = mise.run(&["install", "tool-channel:tool@1.1.0"], &channel_env);
