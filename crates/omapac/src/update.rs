@@ -24,7 +24,22 @@ pub struct Hold {
 /// Publish times from repository indexes: repository name, then package
 /// file name, to unix seconds. What release-age floors prefer over the
 /// build date, since a package can be built long before it is served.
-pub type Published = std::collections::BTreeMap<String, std::collections::BTreeMap<String, i64>>;
+#[derive(Debug, Default)]
+pub struct Published {
+    pub times: std::collections::BTreeMap<String, std::collections::BTreeMap<String, i64>>,
+    /// Repositories whose signed index was rejected as stale or rolled back.
+    pub unsafe_repos: std::collections::BTreeMap<String, String>,
+}
+
+impl Published {
+    pub fn new() -> Published {
+        Published::default()
+    }
+
+    pub fn insert(&mut self, repo: String, times: std::collections::BTreeMap<String, i64>) {
+        self.times.insert(repo, times);
+    }
+}
 
 /// Installed packages whose newer repository build is younger than the
 /// tier's minimum release age, by publish time when the repository's
@@ -58,7 +73,18 @@ pub fn age_holds(
         if min == Age::ZERO {
             continue;
         }
+        if let Some(reason) = published.unsafe_repos.get(&source.name) {
+            holds.push(Hold {
+                name: package.name.clone(),
+                reason: format!(
+                    "{} {} release age cannot be verified because its signed index was rejected: {reason}",
+                    source.name, candidate.version
+                ),
+            });
+            continue;
+        }
         let (since, what) = match published
+            .times
             .get(&source.name)
             .and_then(|files| files.get(&candidate.filename))
         {

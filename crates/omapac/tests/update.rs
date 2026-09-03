@@ -457,9 +457,9 @@ fn prune_orphans_and_pacnew_command() {
 }
 
 /// A signed index for [core] that publishes pacman's newer build at `at`.
-fn core_index(key: &packslip::minisign::SecretKey, at: &str) -> String {
+fn core_index(key: &packslip::minisign::SecretKey, sequence: u64, at: &str) -> String {
     let body = format!(
-        r#"{{"version":1,"repo":"core","sequence":1,"generated_at":"2026-09-01T00:00:00Z","db":{{"file":"core.db","sha256":""}},
+        r#"{{"version":1,"repo":"core","sequence":{sequence},"generated_at":"2026-09-01T00:00:00Z","db":{{"file":"core.db","sha256":""}},
             "packages":{{"pacman-7.1.0.r9.g54d9411-2-x86_64.pkg.tar.zst":{{"sha256":"","size":991730,"published_at":"{at}"}}}}}}"#
     );
     let sig = key.sign(body.as_bytes(), "feed").to_file();
@@ -487,7 +487,7 @@ fn age_floor_prefers_the_index_publish_time() {
         let s = setup(INFO.to_string());
         s.rig
             .write_root("/etc/omapac/keys/omarchy.pub", &key.public_key().to_file());
-        let base = core_index(&key, published);
+        let base = core_index(&key, 1, published);
         let conf = common::DEFAULT_CONF.replace(
             "Server = https://m/$repo/os/$arch",
             &format!("Server = {base}/$repo/os/$arch"),
@@ -537,6 +537,34 @@ fn age_floor_prefers_the_index_publish_time() {
     );
     assert!(
         out.contains("hold: pacman: core 7.1.0.r9.g54d9411-2 was built"),
+        "{out}"
+    );
+
+    // A validly signed replay below the ledger floor fails closed instead of
+    // discarding index publish times and accepting the old build date.
+    let s = setup(INFO.to_string());
+    s.rig
+        .write_root("/etc/omapac/keys/omarchy.pub", &key.public_key().to_file());
+    s.rig.write_root(
+        "/var/lib/omapac/state.json",
+        r#"{"schema":1,"index_sequences":{"core":2}}"#,
+    );
+    std::fs::write(
+        s.rig.home.join(".config/omapac/omapac.toml"),
+        "[policy]\naur.jail = false\nrepo.min_release_age.arch = \"30d\"\n",
+    )
+    .unwrap();
+    let replay = core_index(&key, 1, "2024-01-01T00:00:00Z");
+    let conf = common::DEFAULT_CONF.replace(
+        "Server = https://m/$repo/os/$arch",
+        &format!("Server = {replay}/$repo/os/$arch"),
+    );
+    s.rig.write_root("/etc/pacman.conf", &conf);
+    let (code, out, err) = run(&s, &["update", "-n", "--no-aur"], UPGRADE);
+    assert_eq!(code, 0, "{err}\n{out}");
+    assert!(err.contains("stale or rolled-back index"), "{err}");
+    assert!(
+        out.contains("hold: pacman: core 7.1.0.r9.g54d9411-2 release age cannot be verified"),
         "{out}"
     );
 }

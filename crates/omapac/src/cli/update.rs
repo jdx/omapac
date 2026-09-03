@@ -103,10 +103,24 @@ impl App {
                         .collect();
                     published.insert(source.name.clone(), times);
                 }
-                Err(err) => eprintln!(
-                    "note: [{}] index unavailable, release ages use build dates: {err:#}",
-                    source.name
-                ),
+                Err(err) => {
+                    let detail = format!("{err:#}");
+                    if detail.contains("older than")
+                        || detail.contains("stale")
+                        || detail.contains("rolled-back")
+                    {
+                        eprintln!(
+                            "warning: [{}] stale or rolled-back index; release-age floor blocks upgrades: {detail}",
+                            source.name
+                        );
+                        published.unsafe_repos.insert(source.name.clone(), detail);
+                    } else {
+                        eprintln!(
+                            "note: [{}] index unavailable, release ages use build dates: {detail}",
+                            source.name
+                        );
+                    }
+                }
             }
         }
         published
