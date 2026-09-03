@@ -2,6 +2,7 @@
 //! their evidence, for mise. See `docs/spec/tool-channel.md`.
 
 use std::collections::BTreeMap;
+use std::str::FromStr as _;
 
 use packslip::model::Level;
 use serde::{Deserialize, Serialize};
@@ -90,11 +91,17 @@ impl ToolIndex {
             .map(|(k, v)| (k.as_str(), v))
             .collect();
         versions.sort_by(|a, b| {
-            a.1.published_at
-                .cmp(&b.1.published_at)
+            timestamp_cmp(&a.1.published_at, &b.1.published_at)
                 .then_with(|| a.1.vetted_at.cmp(&b.1.vetted_at))
         });
         versions
+    }
+}
+
+fn timestamp_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    match (jiff::Timestamp::from_str(a), jiff::Timestamp::from_str(b)) {
+        (Ok(a), Ok(b)) => a.cmp(&b),
+        _ => a.cmp(b),
     }
 }
 
@@ -159,5 +166,31 @@ mod tests {
             .collect();
         assert_eq!(stable, vec!["9.0.0"]);
         assert!(index.versions("other", None, false).is_empty());
+    }
+
+    #[test]
+    fn publish_order_normalizes_rfc3339_offsets() {
+        let mut index = ToolIndex::empty("now");
+        let mut entry = ToolEntry {
+            project: "pkg:github/x/y".into(),
+            vendor_pubkey: "RW".into(),
+            versions: BTreeMap::new(),
+        };
+        entry.versions.insert(
+            "earlier".into(),
+            version("2026-09-03T01:00:00+02:00", &["edge"], false),
+        );
+        entry.versions.insert(
+            "later".into(),
+            version("2026-09-03T00:00:00Z", &["edge"], false),
+        );
+        index.tools.insert("tool".into(), entry);
+
+        let ordered: Vec<&str> = index
+            .versions("tool", None, false)
+            .iter()
+            .map(|(version, _)| *version)
+            .collect();
+        assert_eq!(ordered, vec!["earlier", "later"]);
     }
 }

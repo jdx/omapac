@@ -165,7 +165,14 @@ impl RunWith<()> for Vendor {
     type Output = Result<()>;
 
     fn run_with(self, _: ()) -> Self::Output {
-        let config = load_config(&self.pkgdir.join("vendor.toml"))?;
+        let config_path = self.pkgdir.join("vendor.toml");
+        let config = load_config(&config_path)?;
+        if config.artifacts.is_empty() {
+            bail!(
+                "{} must declare at least one [artifacts] selector",
+                config_path.display()
+            );
+        }
         let now = now()?;
         let lock_path = self.pkgdir.join("vendor.lock");
         let previous = read_lock(&lock_path)?;
@@ -235,17 +242,10 @@ impl RunWith<()> for Vendor {
 }
 
 pub fn load_config(path: &Path) -> Result<VendorToml> {
-    let config = toml::from_str(
+    toml::from_str(
         &std::fs::read_to_string(path).wrap_err_with(|| format!("reading {}", path.display()))?,
     )
-    .wrap_err_with(|| format!("parsing {}", path.display()))?;
-    if config.artifacts.is_empty() {
-        bail!(
-            "{} must declare at least one [artifacts] selector",
-            path.display()
-        );
-    }
-    Ok(config)
+    .wrap_err_with(|| format!("parsing {}", path.display()))
 }
 
 /// The sidecar for a resolved release.
@@ -409,15 +409,24 @@ pub fn pubkey_text(dir: &Path, spec: &str) -> Result<String> {
 }
 
 pub fn fetch(url: &str) -> Result<Vec<u8>> {
+    fetch_limited(url, 64 * 1024 * 1024)
+}
+
+/// Fetch at most `max_size` bytes. The extra byte distinguishes an exact-size
+/// response from an oversized one without buffering the rest of the body.
+pub fn fetch_limited(url: &str, max_size: u64) -> Result<Vec<u8>> {
     let mut response = ureq::get(url)
         .call()
         .wrap_err_with(|| format!("fetching {url}"))?;
     let bytes = response
         .body_mut()
         .with_config()
-        .limit(4 * 1024 * 1024 * 1024)
+        .limit(max_size.saturating_add(1))
         .read_to_vec()
         .wrap_err_with(|| format!("reading {url}"))?;
+    if bytes.len() as u64 > max_size {
+        bail!("{url}: response exceeds the {max_size}-byte limit");
+    }
     Ok(bytes)
 }
 

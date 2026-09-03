@@ -291,7 +291,7 @@ fn publish_release(
                 );
             }
         } else {
-            let bytes = crate::vendor::fetch(url)?;
+            let bytes = crate::vendor::fetch_limited(url, chosen.size)?;
             let sha256 = crate::rekor::sha256_hex(&bytes);
             if sha256 != chosen.sha256 {
                 bail!(
