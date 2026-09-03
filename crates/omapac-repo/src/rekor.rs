@@ -172,7 +172,7 @@ pub struct InclusionProof {
     /// Hex.
     #[serde(rename = "rootHash")]
     pub root_hash: String,
-    /// Base64 sibling hashes, leaf to root.
+    /// Hex sibling hashes, leaf to root.
     #[serde(default)]
     pub hashes: Vec<String>,
     /// The signed checkpoint (a signed note) the proof leads to.
@@ -323,11 +323,7 @@ pub fn verify_inclusion(entry: &Entry, key: Option<&p256::ecdsa::VerifyingKey>) 
         .wrap_err("entry body is not base64")?;
     let mut hashes = Vec::new();
     for h in &proof.hashes {
-        let bytes = BASE64
-            .decode(h)
-            .ok()
-            .and_then(|b| <[u8; 32]>::try_from(b).ok())
-            .ok_or_else(|| eyre::eyre!("inclusion proof hash is not 32 base64 bytes"))?;
+        let bytes = decode_hash(h)?;
         hashes.push(bytes);
     }
     let root = root_from_inclusion(proof.log_index, proof.tree_size, leaf_hash(&body), &hashes)?;
@@ -362,6 +358,18 @@ pub fn verify_inclusion(entry: &Entry, key: Option<&p256::ecdsa::VerifyingKey>) 
         }
     }
     Ok(())
+}
+
+fn decode_hash(hex: &str) -> Result<[u8; 32]> {
+    if hex.len() != 64 || !hex.is_ascii() {
+        bail!("inclusion proof hash is not 32 hex bytes");
+    }
+    let mut bytes = [0u8; 32];
+    for (index, byte) in bytes.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16)
+            .map_err(|_| eyre::eyre!("inclusion proof hash is not 32 hex bytes"))?;
+    }
+    Ok(bytes)
 }
 
 /// Check that a stored entry is about `envelope`: its body is a `dsse`
@@ -461,6 +469,34 @@ mod tests {
             root_from_inclusion(0, 2, [0; 32], &[]).is_err(),
             "proof length is checked"
         );
+    }
+
+    #[test]
+    fn inclusion_proof_parses_rekor_hex_siblings() {
+        let leaves = [b"left".to_vec(), b"right".to_vec()];
+        let sibling = leaf_hash(&leaves[1]);
+        let root = node_hash(&leaf_hash(&leaves[0]), &sibling);
+        let hex = |hash: [u8; 32]| {
+            hash.iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        };
+        let entry = Entry {
+            log_url: "http://log".into(),
+            uuid: "u".into(),
+            log_index: 0,
+            log_id: "l".into(),
+            integrated_time: 1,
+            body: BASE64.encode(&leaves[0]),
+            inclusion_proof: Some(serde_json::json!({
+                "logIndex": 0,
+                "treeSize": 2,
+                "rootHash": hex(root),
+                "hashes": [hex(sibling)]
+            })),
+            signed_entry_timestamp: None,
+        };
+        verify_inclusion(&entry, None).unwrap();
     }
 
     #[test]
