@@ -399,3 +399,40 @@ fn no_snapshot_base_is_a_clear_error() {
     assert_ne!(code, 0);
     assert!(err.contains("no snapshot store configured"), "{err}");
 }
+
+#[test]
+fn info_and_update_carry_the_release_train_labels() {
+    let s = setup();
+    // Nothing cached yet: info has no label.
+    let (_, out, _) = run(&s, &["info", "pacman"], "");
+    assert!(!out.contains("Release Train"), "{out}");
+    // `channel` caches the manifest; info then labels Arch-tier packages.
+    let (code, _, err) = run(&s, &["channel"], "");
+    assert_eq!(code, 0, "{err}");
+    let (_, out, _) = run(&s, &["info", "pacman", "pacman-mirrorlist"], "");
+    assert!(
+        out.contains("Release Train    tested in snapshot 2026-09-03T06"),
+        "{out}"
+    );
+    assert!(
+        out.contains("Release Train    in snapshot 2026-09-03T06, not exercised by the suite"),
+        "{out}"
+    );
+    let (_, out, _) = run(&s, &["info", "--json", "pacman"], "");
+    let infos: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(infos[0]["train"]["tested"], true);
+    // The OPR tier carries no train label.
+    let (_, out, _) = run(&s, &["info", "yay"], "");
+    assert!(!out.contains("Release Train"), "{out}");
+
+    // update fetches the manifest itself and heads the plan with it.
+    let (code, out, err) = run(&s, &["update", "-n", "--no-aur"], "");
+    assert_eq!(code, 0, "{err}\n{out}");
+    assert!(
+        out.contains("snapshot: 2026-09-03T06 (tests pass, stable since 2026-09-06T08:00:00Z; 2 tested pkgbase(s))"),
+        "{out}"
+    );
+    let (_, out, _) = run(&s, &["update", "-n", "--no-aur", "--json"], "");
+    let plan: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(plan["snapshot"], "2026-09-03T06");
+}

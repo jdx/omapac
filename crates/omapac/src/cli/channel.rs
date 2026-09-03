@@ -79,6 +79,10 @@ impl App {
             return Ok(None);
         };
         let keyring = crate::trust::Keyring::load(self.paths.sysroot.as_deref())?;
+        if keyring.is_empty() {
+            // Nothing could verify a manifest, so do not fetch one.
+            return Ok(None);
+        }
         let cache = crate::trust::Cache::for_repo(&source.name, self.paths.sysroot.as_deref())?;
         let fetched: crate::trust::Fetched<Release> =
             crate::trust::fetch(&feed, "release.json", &keyring, &cache, offline)?;
@@ -235,7 +239,7 @@ impl RunWith<&App> for Channel {
     }
 }
 
-fn describe(release: &Release) -> String {
+pub(crate) fn describe(release: &Release) -> String {
     let tests = match &release.tests {
         Some(t) => format!("tests {:?}", t.result).to_lowercase(),
         None => "untested".to_string(),
