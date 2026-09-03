@@ -142,6 +142,15 @@ fn install_yes_applies_through_sudo() {
 }
 
 #[test]
+fn install_does_not_apply_removal_only_warnings() {
+    let rig = Rig::new();
+    let plan = "pacman\\t7.1.0-3\\tcore\\thttps://m/pacman.pkg\\t1\\n";
+    let (code, out, err) = rig.run(&["install", "-y", "pacman"], plan, 0);
+    assert_eq!(code, 0, "{err}\n{out}");
+    assert!(!out.contains("HoldPkg"), "{out}");
+}
+
+#[test]
 fn install_reports_a_failing_pacman() {
     let rig = Rig::new();
     let (code, _, err) = rig.run(&["install", "-y", "pacman"], HELIX_PLAN, 3);
@@ -201,6 +210,8 @@ fn remove_plans_with_hold_warning_and_applies() {
     assert_eq!(code, 0);
     assert!(out.contains("remove 1 package(s):"), "{out}");
     assert!(out.contains("yay  13.0.1-1  [opr]"), "{out}");
+    assert!(!out.contains("outside Arch and Omarchy review"), "{out}");
+    assert!(!out.contains("does not check package signatures"), "{out}");
     assert!(out.contains("would run:"), "{out}");
     assert!(rig.log()[0].contains("-R --print"), "{:?}", rig.log());
 
