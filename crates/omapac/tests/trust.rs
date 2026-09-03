@@ -43,6 +43,7 @@ fn run(s: &Setup, base: &str, args: &[&str]) -> (i32, String, String) {
     s.rig.write_root("/etc/pacman.conf", &conf);
     let output = Command::new(env!("CARGO_BIN_EXE_omapac"))
         .env("HOME", &s.rig.home)
+        .env_remove("XDG_CONFIG_HOME")
         .env("XDG_CACHE_HOME", s.rig.dir.path().join("cache"))
         .arg("--sysroot")
         .arg(&s.rig.root)
