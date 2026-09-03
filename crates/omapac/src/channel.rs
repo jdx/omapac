@@ -188,6 +188,14 @@ impl WriteRequest {
         let allowed = sysroot
             .map(|root| root.join("etc/pacman.d"))
             .unwrap_or_else(|| PathBuf::from("/etc/pacman.d"));
+        if std::fs::symlink_metadata(&allowed)
+            .is_ok_and(|metadata| metadata.file_type().is_symlink())
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("{} must not be a symlink", allowed.display()),
+            ));
+        }
         let allowed = std::fs::canonicalize(&allowed)?;
         let parent = self
             .path
@@ -198,12 +206,20 @@ impl WriteRequest {
             .is_ok_and(|metadata| metadata.file_type().is_symlink());
         if !parent.starts_with(&allowed) || target_is_symlink {
             return Err(std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
+                std::io::ErrorKind::InvalidInput,
                 format!("{} is outside /etc/pacman.d", self.path.display()),
             ));
         }
         if self.backup {
             let backup = backup_path(&self.path);
+            if std::fs::symlink_metadata(&backup)
+                .is_ok_and(|metadata| metadata.file_type().is_symlink())
+            {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("{} must not be a symlink", backup.display()),
+                ));
+            }
             if !backup.exists() && self.path.exists() {
                 std::fs::copy(&self.path, &backup)?;
             }
@@ -271,6 +287,21 @@ mod tests {
                 .unwrap()
                 .contains("orig")
         );
+
+        let outside = dir.path().join("outside");
+        std::fs::write(&outside, "keep").unwrap();
+        let backup = backup_path(&mirrorlist);
+        std::fs::remove_file(&backup).unwrap();
+        std::os::unix::fs::symlink(&outside, &backup).unwrap();
+        let err = WriteRequest {
+            path: mirrorlist.clone(),
+            contents: "changed".into(),
+            backup: true,
+        }
+        .apply(Some(dir.path()))
+        .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+        assert_eq!(std::fs::read_to_string(outside).unwrap(), "keep");
         let outside = WriteRequest {
             path: dir.path().join("etc/passwd"),
             contents: String::new(),

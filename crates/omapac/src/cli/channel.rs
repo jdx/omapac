@@ -290,6 +290,7 @@ impl RunWith<&App> for Rollback {
         let release = app.pin(&self.snapshot, self.force)?;
         println!("pinned to snapshot {} ({})", release.id, describe(&release));
         let engine = app.engine()?;
+        let mut applied = false;
         let result = (|| -> Result<()> {
             engine.refresh(
                 crate::engine::RefreshOpts { force: true },
@@ -326,6 +327,7 @@ impl RunWith<&App> for Rollback {
                 false,
             )?;
             if performed {
+                applied = true;
                 app.record(&super::transaction::ledger_patch(
                     &plan,
                     &[],
@@ -336,6 +338,11 @@ impl RunWith<&App> for Rollback {
             Ok(())
         })();
         if let Err(err) = result {
+            if applied {
+                return Err(err.wrap_err(
+                    "packages were rolled back; retaining the snapshot pin after a later bookkeeping failure",
+                ));
+            }
             channel::write_privileged(
                 &mirrorlist,
                 &original_mirrorlist,
