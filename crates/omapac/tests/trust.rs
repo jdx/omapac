@@ -312,6 +312,11 @@ fn verify_checks_the_provenance_sidecar_and_the_log_entry() {
     assert_eq!(json["provenance"]["verified"], true);
     assert_eq!(json["transparency"]["ok"], true);
 
+    // Offline verification uses the cached index and does not attempt to
+    // fetch evidence sidecars.
+    let (code, out, err) = run(&s, "http://127.0.0.1:9/", &["verify", "--offline", "yay"]);
+    assert_eq!(code, 0, "{err}\n{out}");
+
     // A stranger's envelope fails, and so does the exit status.
     let base = serve_with(&envelope(&stranger, &yay_sha));
     let (code, out, _) = run(&s, &base, &["verify", "yay"]);
