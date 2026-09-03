@@ -74,21 +74,38 @@ impl RunWith<BinInfo> for Keygen {
             );
         }
         let key = SecretKey::generate();
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&self.out)
-            .wrap_err_with(|| format!("creating {}", self.out.display()))?;
-        file.write_all(key.to_file().as_bytes())?;
-        let public_result = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&pubkey)
-            .and_then(|mut public| public.write_all(key.public_key().to_file().as_bytes()));
-        if let Err(err) = public_result {
-            let _ = std::fs::remove_file(&self.out);
-            return Err(err).wrap_err_with(|| format!("writing {}", pubkey.display()));
+        let mut secret_created = false;
+        let mut public_created = false;
+        let write_result: Result<()> = (|| {
+            let mut secret = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&self.out)
+                .wrap_err_with(|| format!("creating {}", self.out.display()))?;
+            secret_created = true;
+            secret
+                .write_all(key.to_file().as_bytes())
+                .wrap_err_with(|| format!("writing {}", self.out.display()))?;
+            let mut public = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&pubkey)
+                .wrap_err_with(|| format!("creating {}", pubkey.display()))?;
+            public_created = true;
+            public
+                .write_all(key.public_key().to_file().as_bytes())
+                .wrap_err_with(|| format!("writing {}", pubkey.display()))?;
+            Ok(())
+        })();
+        if let Err(err) = write_result {
+            if public_created {
+                let _ = std::fs::remove_file(&pubkey);
+            }
+            if secret_created {
+                let _ = std::fs::remove_file(&self.out);
+            }
+            return Err(err);
         }
         println!(
             "wrote {} and {} (key id {})",
