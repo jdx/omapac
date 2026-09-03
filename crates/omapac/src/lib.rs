@@ -11,6 +11,7 @@ pub mod cli;
 pub mod engine;
 pub mod host;
 pub mod ledger;
+pub mod lockfile;
 pub mod manifest;
 pub mod resolve;
 pub mod ui;

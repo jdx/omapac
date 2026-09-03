@@ -3,6 +3,7 @@
 //! "AUR is commit-bound".
 
 pub mod git;
+pub mod review;
 pub mod rpc;
 pub mod srcinfo;
 
