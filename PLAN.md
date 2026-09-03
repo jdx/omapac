@@ -241,7 +241,7 @@ nvidia-580xx-utils = { hold = true }         # IgnorePkg semantics
 mode = "warn"                                # interactive default; unattended is always deny
 aur.min_commit_age = "72h"
 repo.min_release_age.opr = "48h"             # this user chose to lag OPR; default is 0
-aur.allow_network_build = ["google-chrome"]  # jail grant
+aur.allow_network_build.google-chrome = { commit = "<approved-commit>" } # jail grant
 
 [update]
 overwrite = ["/usr/share/omarchy/*"]         # replaces the hardcoded flag in omarchy-update
@@ -337,9 +337,14 @@ checksums, and extracts with network allowed. The second phase, `makepkg --noext
 runs under Landlock plus seccomp with writes limited to the build directory, network
 denied, and the environment scrubbed of tokens and agent sockets. Packages that
 legitimately need network in `build()` get an explicit grant in
-`aur.allow_network_build`, or in the OPR package manifest for OPR-built packages. If
-the kernel cannot enforce the jail, the build fails instead of running unjailed. This
-is the same Landlock strategy mise and aube already implement. An optional devtools
+`aur.allow_network_build`, or in the OPR package manifest for OPR-built packages. An
+AUR grant records the approved commit, becomes invalid when the candidate commit
+changes, and must then be reviewed and approved again. Even with network enabled,
+Landlock limits reads to the build tree, the declared source cache, and the read-only
+system compiler/runtime paths needed by makepkg; the rest of the invoking user's home,
+credentials, agent sockets, and unrelated system data remain inaccessible. If the
+kernel cannot enforce the jail, the build fails instead of running unjailed. This is
+the same Landlock strategy mise and aube already implement. An optional devtools
 chroot sits behind `aur.chroot`.
 
 **Install-script policy.** `.INSTALL` scriptlets from `aur` packages are default-deny:
@@ -591,8 +596,14 @@ and any snapshot that was ever `stable` for a year.
 
 Release manifest: each snapshot has a signed `release.json` recording its id, the Arch
 snapshot and OPR index sequence it was built from, creation time, test suite results
-with logs, the list of tested pkgbases, promotion times, and whether it was expedited
-or held. It is signed with the index key.
+with logs, promotion times, and whether it was expedited or held. It also contains a
+map keyed by repository name with the SHA-256 digest of each exact sync database and a
+canonical package map keyed by `repo/name` whose value is the selected version and
+`tested` or `snapshot` label. `tested` means the package's pkgbase was present in the
+successful test run recorded by this manifest; every other package is `snapshot`.
+Keys are unique and sorted bytewise before signing, so clients can deterministically
+match a transaction package to its version and label. The whole manifest is signed
+with the index key.
 
 Channels are pointers: `edge` points at the newest snapshot; `rc` at the newest
 snapshot that passed the test suite; `stable` at the newest `rc` snapshot that soaked
@@ -674,14 +685,17 @@ is the documented one-liner for people who want hard fails.
    each candidate commit against the approved commit, consult the verdict feed.
 6. Print one plan: repo upgrades by tier with the tested or snapshot label, AUR
    upgrades with findings, packages held by policy, pacnew candidates, orphans.
-7. Confirm unless `-y`. Under `-y` every warn becomes deny-and-skip.
-8. Apply the repo transaction with the pacman guard variable set. Return a structured
+7. Confirm unless `-y`. Under `-y`, candidate and package policy warnings become
+   deny-and-skip. `trust.custom_repos = "warn"` instead emits a warning and permits a
+   signed custom repository; an unsigned custom repository is always denied.
+8. Run configured pre-update hooks, including the pre-transaction snapper snapshot.
+9. Apply the repo transaction with the pacman guard variable set. Return a structured
    error on file conflicts; omarchy keeps its quarantine fallback in v1.
-9. Build and install approved AUR upgrades one pkgbase at a time in the jail.
-10. List orphans; remove only interactively or with `--prune-orphans`.
-11. Report pacnew and pacsave files.
-12. Run configured pre-update and post-update hooks so snapper and omarchy's own hooks
-    stay outside omapac.
+10. Build and install approved AUR upgrades one pkgbase at a time in the jail.
+11. List orphans; remove only interactively or with `--prune-orphans`.
+12. Report pacnew and pacsave files.
+13. Run configured post-update hooks. Hook commands stay outside omapac; omapac only
+    guarantees their ordering around all package mutations.
 
 ## CLI surface
 
