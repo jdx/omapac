@@ -55,7 +55,7 @@ pub fn age_holds(host: &Host, settings: &Settings, now: i64) -> Result<Vec<Hold>
             holds.push(Hold {
                 name: package.name.clone(),
                 reason: format!(
-                    "{} {} was built {} ago, less than the {} floor for {}",
+                    "{} {} was built {}, less than the {} floor for {}",
                     source.name,
                     candidate.version,
                     crate::aur::format_age(built, now),
