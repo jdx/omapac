@@ -211,9 +211,11 @@ fn index_and_list() {
 
     // Rollback protection: a lower sequence than the one seen is refused.
     let cache_key = omapac::trust::sha256_bytes(s.base.trim_end_matches('/').as_bytes());
+    let sysroot_key = omapac::trust::sha256_bytes(s.rig.root.as_os_str().as_encoded_bytes());
     std::fs::write(
         s.rig.dir.path().join(format!(
-            "cache/omapac/trust/tools/{cache_key}/index.sequence"
+            "cache/omapac/trust/sysroot-{}/tools/{cache_key}/index.sequence",
+            &sysroot_key[..32]
         )),
         "9",
     )
