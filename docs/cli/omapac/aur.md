@@ -11,6 +11,6 @@ Review, approve, and build AUR packages
 ## Subcommands
 
 - [`omapac aur approve [FLAGS] <PACKAGE>`](/cli/omapac/aur/approve.md)
-- [`omapac aur build [--commit <COMMIT>] [-J --json] <PACKAGE>`](/cli/omapac/aur/build.md)
+- [`omapac aur build [FLAGS] <PACKAGE>`](/cli/omapac/aur/build.md)
 - [`omapac aur diff [--commit <COMMIT>] <PACKAGE>`](/cli/omapac/aur/diff.md)
 - [`omapac aur review [FLAGS] <PACKAGE>`](/cli/omapac/aur/review.md)
