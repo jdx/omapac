@@ -60,10 +60,6 @@ impl RunWith<&App> for Update {
         let dry_run = self.dry_run || self.json;
         let engine = app.engine()?;
 
-        if !dry_run {
-            run_hooks(&settings.update_pre_hooks, "pre")?;
-        }
-
         // Refresh first so the plan is against current databases.
         let host = app.host()?;
         crate::update::wait_for_db_lock(&host.db_path(), Duration::from_secs(60))?;
@@ -202,97 +198,113 @@ impl RunWith<&App> for Update {
             return Ok(());
         }
 
-        // Repository transaction.
-        if let Some((resolved, p)) = &repo_plan
-            && !resolved.is_empty()
-        {
-            let performed =
-                transaction::confirm_and_apply(&engine, resolved, p, "upgrade", self.yes, false)?;
-            if performed {
-                let mut explicit = Vec::new();
-                for change in &p.changes {
-                    if host
-                        .installed_package(&change.name)?
-                        .is_some_and(|package| package.reason == alpm_db::InstallReason::Explicit)
-                    {
-                        explicit.push(change.name.clone());
+        if let Some((_, plan)) = &repo_plan {
+            transaction::validate_plan(plan, "upgrade", self.yes)?;
+        }
+        let has_work = repo_plan
+            .as_ref()
+            .is_some_and(|(resolved, _)| !resolved.is_empty())
+            || !aur.is_empty()
+            || (self.prune_orphans && !orphans.is_empty());
+        if has_work && !self.yes && !crate::ui::confirm("Proceed with update?", true)? {
+            eyre::bail!("cancelled");
+        }
+        if !has_work {
+            return Ok(());
+        }
+
+        // Hooks bracket only an update the user has accepted. Always run the
+        // post hooks once the pre hooks succeeded, including on update errors.
+        run_hooks(&settings.update_pre_hooks, "pre")?;
+        let update_result: Result<()> = (|| {
+            // Repository transaction.
+            if let Some((resolved, p)) = &repo_plan
+                && !resolved.is_empty()
+            {
+                let performed = transaction::apply_confirmed(&engine, resolved, p, self.yes)?;
+                if performed {
+                    let mut explicit = Vec::new();
+                    for change in &p.changes {
+                        if host
+                            .installed_package(&change.name)?
+                            .is_some_and(|package| {
+                                package.reason == alpm_db::InstallReason::Explicit
+                            })
+                        {
+                            explicit.push(change.name.clone());
+                        }
+                    }
+                    app.record(&transaction::ledger_patch(p, &explicit, "update", false))?;
+                }
+            }
+
+            // AUR upgrades, one at a time.
+            let mut skipped = Vec::new();
+            for candidate in &aur {
+                match update_aur_package(app, &candidate.name, self.yes)? {
+                    AurOutcome::Updated(commit) => {
+                        println!(
+                            "updated {} to {} from AUR commit {}",
+                            candidate.name,
+                            candidate.available,
+                            &commit[..12]
+                        );
+                    }
+                    AurOutcome::Skipped(reason) => {
+                        eprintln!("skipped {}: {reason}", candidate.name);
+                        skipped.push(candidate.name.clone());
                     }
                 }
-                app.record(&transaction::ledger_patch(p, &explicit, "update", false))?;
             }
-        }
 
-        // AUR upgrades, one at a time.
-        let mut skipped = Vec::new();
-        for candidate in &aur {
-            match update_aur_package(app, &candidate.name, self.yes)? {
-                AurOutcome::Updated(commit) => {
-                    println!(
-                        "updated {} to {} from AUR commit {}",
-                        candidate.name,
-                        candidate.available,
-                        &commit[..12]
-                    );
+            // Orphans.
+            if self.prune_orphans && !orphans.is_empty() {
+                let tx = Transaction::remove(orphans.clone());
+                let resolved = engine.plan(&tx)?;
+                let command = engine
+                    .apply_invocation(
+                        &tx,
+                        ApplyOpts {
+                            dry_run: true,
+                            no_confirm: true,
+                        },
+                    )
+                    .display();
+                let p = transaction::plan_with_custom_repos(
+                    &host,
+                    &resolved,
+                    command,
+                    settings.trust_custom_repos,
+                );
+                transaction::validate_plan(&p, "remove orphans", self.yes)?;
+                let performed = transaction::apply_confirmed(&engine, &resolved, &p, self.yes)?;
+                if performed {
+                    app.record(&transaction::ledger_patch(&p, &[], "update", true))?;
                 }
-                AurOutcome::Skipped(reason) => {
-                    eprintln!("skipped {}: {reason}", candidate.name);
-                    skipped.push(candidate.name.clone());
-                }
             }
-        }
 
-        // Orphans.
-        if self.prune_orphans && !orphans.is_empty() {
-            let tx = Transaction::remove(orphans.clone());
-            let resolved = engine.plan(&tx)?;
-            let command = engine
-                .apply_invocation(
-                    &tx,
-                    ApplyOpts {
-                        dry_run: true,
-                        no_confirm: true,
-                    },
-                )
-                .display();
-            let p = transaction::plan_with_custom_repos(
-                &host,
-                &resolved,
-                command,
-                settings.trust_custom_repos,
-            );
-            let performed = transaction::confirm_and_apply(
-                &engine,
-                &resolved,
-                &p,
-                "remove orphans",
-                self.yes,
-                false,
-            )?;
-            if performed {
-                app.record(&transaction::ledger_patch(&p, &[], "update", true))?;
+            let final_pacnew: Vec<String> = pacnew_files(&etc)
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect();
+            for file in final_pacnew.iter().filter(|file| !pacnew.contains(file)) {
+                println!("pacnew: {file}");
             }
-        }
 
-        let final_pacnew: Vec<String> = pacnew_files(&etc)
-            .iter()
-            .map(|path| path.display().to_string())
-            .collect();
-        for file in final_pacnew.iter().filter(|file| !pacnew.contains(file)) {
-            println!("pacnew: {file}");
-        }
-
-        run_hooks(&settings.update_post_hooks, "post")?;
-        if !skipped.is_empty() {
-            let mut msg = String::new();
-            let _ = write!(
-                msg,
-                "{} AUR package(s) skipped: {}; review them with `omapac aur review <name>`",
-                skipped.len(),
-                skipped.join(", ")
-            );
-            eprintln!("{msg}");
-        }
-        Ok(())
+            if !skipped.is_empty() {
+                let mut msg = String::new();
+                let _ = write!(
+                    msg,
+                    "{} AUR package(s) skipped: {}; review them with `omapac aur review <name>`",
+                    skipped.len(),
+                    skipped.join(", ")
+                );
+                eprintln!("{msg}");
+            }
+            Ok(())
+        })();
+        let post_result = run_hooks(&settings.update_post_hooks, "post");
+        update_result.and(post_result)
     }
 }
 
@@ -307,7 +319,8 @@ fn update_aur_package(app: &App, name: &str, yes: bool) -> Result<AurOutcome> {
     let (reviewed, mut lock) = app.review_aur(name, None, !yes && crate::ui::interactive())?;
     let approved_here = lock
         .aur
-        .get(name)
+        .get(&reviewed.pkgbase)
+        .or_else(|| lock.aur.get(name))
         .is_some_and(|e| e.commit == reviewed.target);
     if !approved_here {
         if yes {
@@ -333,7 +346,9 @@ fn update_aur_package(app: &App, name: &str, yes: bool) -> Result<AurOutcome> {
                 return Ok(AurOutcome::Skipped("not approved".to_string()));
             }
         }
-        lock.aur.insert(name.to_string(), reviewed.lock_entry());
+        lock.aur.remove(name);
+        lock.aur
+            .insert(reviewed.pkgbase.clone(), reviewed.lock_entry());
         lock.save(&app.lockfile_path())?;
     } else if !yes
         && !crate::ui::confirm(
@@ -345,6 +360,7 @@ fn update_aur_package(app: &App, name: &str, yes: bool) -> Result<AurOutcome> {
     }
     let prepared = app.prepare_aur(name, None, true, true)?;
     let files = app.build_aur(&prepared, true)?;
+    let built = crate::aur::build::built_packages(&files)?;
     let engine = app.engine()?;
     engine.install_files(
         &crate::engine::FileInstall {
@@ -358,21 +374,24 @@ fn update_aur_package(app: &App, name: &str, yes: bool) -> Result<AurOutcome> {
         },
     )?;
     let mut patch = crate::ledger::Patch::default();
-    patch.upsert.insert(
-        name.to_string(),
-        crate::ledger::Entry {
-            version: prepared.reviewed.srcinfo.version(),
-            tier: crate::resolve::Tier::Aur,
-            repo: None,
-            aur_commit: Some(prepared.reviewed.target.clone()),
-            explicit: app
-                .host()?
-                .installed_package(name)?
-                .is_none_or(|p| p.reason == alpm_db::InstallReason::Explicit),
-            by: "update".to_string(),
-            at: crate::ledger::now(),
-        },
-    );
+    let host = app.host()?;
+    for package in built {
+        let explicit = host
+            .installed_package(&package.name)?
+            .is_none_or(|installed| installed.reason == alpm_db::InstallReason::Explicit);
+        patch.upsert.insert(
+            package.name,
+            crate::ledger::Entry {
+                version: package.version,
+                tier: crate::resolve::Tier::Aur,
+                repo: None,
+                aur_commit: Some(prepared.reviewed.target.clone()),
+                explicit,
+                by: "update".to_string(),
+                at: crate::ledger::now(),
+            },
+        );
+    }
     app.record(&patch)?;
     Ok(AurOutcome::Updated(prepared.reviewed.target.clone()))
 }

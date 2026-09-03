@@ -32,6 +32,15 @@ fn setup(rpc_body: String) -> Setup {
     let mut perms = std::fs::metadata(&makepkg).unwrap().permissions();
     std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
     std::fs::set_permissions(&makepkg, perms).unwrap();
+    let bsdtar = rig.bin.join("bsdtar");
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fakes/bsdtar"),
+        &bsdtar,
+    )
+    .unwrap();
+    let mut perms = std::fs::metadata(&bsdtar).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+    std::fs::set_permissions(&bsdtar, perms).unwrap();
     let aur = FakeAur::new(rig.dir.path());
     aur.create(
         "yay",
@@ -52,6 +61,10 @@ fn setup(rpc_body: String) -> Setup {
 }
 
 fn run(s: &Setup, args: &[&str], print: &str) -> (i32, String, String) {
+    run_with_status(s, args, print, 0)
+}
+
+fn run_with_status(s: &Setup, args: &[&str], print: &str, status: i32) -> (i32, String, String) {
     let output = Command::new(env!("CARGO_BIN_EXE_omapac"))
         .env("PATH", format!("{}:/usr/bin:/bin", s.rig.bin.display()))
         .env("HOME", &s.rig.home)
@@ -61,6 +74,7 @@ fn run(s: &Setup, args: &[&str], print: &str) -> (i32, String, String) {
         .env("OMAPAC_AUR_GIT_BASE", s.aur.base())
         .env("FAKE_PACMAN_LOG", &s.rig.log)
         .env("FAKE_PACMAN_PRINT", print)
+        .env("FAKE_PACMAN_STATUS", status.to_string())
         .arg("--sysroot")
         .arg(&s.rig.root)
         .args(args)
@@ -102,8 +116,19 @@ fn update_refreshes_plans_with_holds_and_applies() {
         "{out}"
     );
     let log = s.rig.log();
-    assert_eq!(log[0], "hook-pre", "{log:?}");
-    assert!(log[1].ends_with("-Sy"), "refresh first: {log:?}");
+    let pre = log.iter().position(|line| line == "hook-pre").unwrap();
+    let plan_pos = log
+        .iter()
+        .position(|line| line.contains("-Su --print"))
+        .unwrap();
+    let apply_pos = log
+        .iter()
+        .position(|line| line.contains("-Su --noconfirm"))
+        .unwrap();
+    assert!(
+        plan_pos < pre && pre < apply_pos,
+        "hooks bracket apply: {log:?}"
+    );
     let plan = log.iter().find(|l| l.contains("-Su --print")).unwrap();
     assert!(plan.contains("--ignore glibc,pacman"), "{plan}");
     assert!(plan.contains("--overwrite /usr/share/omarchy/*"), "{plan}");
@@ -130,6 +155,25 @@ fn dry_run_and_json_run_nothing() {
     let json: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(json["repo"]["changes"][0]["name"], "pacman");
     assert_eq!(json["orphans"][0], "yay");
+}
+
+#[test]
+fn post_hooks_run_after_an_apply_failure() {
+    let s = setup(INFO.to_string());
+    s.rig.write_root(
+        "/etc/omapac/conf.d/10-hooks.toml",
+        "[update]\npre_hooks = [\"echo hook-pre >> $FAKE_PACMAN_LOG\"]\npost_hooks = [\"echo hook-post >> $FAKE_PACMAN_LOG\"]\n",
+    );
+    let (code, _, _) = run_with_status(
+        &s,
+        &["update", "-y", "--no-aur", "--no-refresh"],
+        UPGRADE,
+        7,
+    );
+    assert_ne!(code, 0);
+    let log = s.rig.log();
+    assert!(log.iter().any(|line| line == "hook-pre"), "{log:?}");
+    assert_eq!(log.last().map(String::as_str), Some("hook-post"), "{log:?}");
 }
 
 #[test]
@@ -162,7 +206,7 @@ fn aur_upgrade_is_reviewed_built_and_installed_when_clean() {
     let log = s.rig.log();
     assert!(
         log.iter()
-            .any(|line| line.as_str() == "makepkg --noconfirm --force"),
+            .any(|line| line.as_str() == "makepkg --noconfirm --force --holdver"),
         "{log:?}"
     );
     assert!(

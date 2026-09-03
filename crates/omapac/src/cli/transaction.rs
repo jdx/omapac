@@ -215,6 +215,15 @@ pub fn confirm_and_apply(
         println!("would run: {}", plan.command);
         return Ok(false);
     }
+    validate_plan(plan, verb, yes)?;
+    if !yes && !ui::confirm("Proceed?", true)? {
+        bail!("cancelled");
+    }
+    apply_confirmed(engine, resolved, plan, yes)
+}
+
+/// Enforce the unattended warning policy before any side effects begin.
+pub fn validate_plan(plan: &Plan, verb: &str, yes: bool) -> Result<()> {
     if yes {
         let blocking = plan
             .warnings
@@ -229,11 +238,19 @@ pub fn confirm_and_apply(
                 blocking
             );
         }
-    } else {
-        println!("run: {}", plan.command);
-        if !ui::confirm("Proceed?", true)? {
-            bail!("cancelled");
-        }
+    }
+    Ok(())
+}
+
+/// Apply a plan whose containing workflow has already confirmed it.
+pub fn apply_confirmed(
+    engine: &dyn Engine,
+    resolved: &ResolvedTx,
+    plan: &Plan,
+    yes: bool,
+) -> Result<bool> {
+    if plan.changes.is_empty() {
+        return Ok(false);
     }
     engine.apply(
         resolved,
