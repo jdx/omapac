@@ -141,6 +141,8 @@ pub enum InvalidDocument {
     PublishedAt(String),
     #[error("artifact {0:?} appears more than once")]
     DuplicateArtifact(String),
+    #[error("subject {0:?} appears more than once")]
+    DuplicateSubject(String),
     #[error("subject {0:?} has no matching artifact")]
     OrphanSubject(String),
     #[error("artifact {0:?} has no matching subject")]
@@ -182,7 +184,11 @@ impl Statement {
                 return Err(InvalidDocument::OrphanArtifact(artifact.name.clone()));
             }
         }
+        let mut subjects = std::collections::BTreeSet::new();
         for subject in &self.subject {
+            if !subjects.insert(subject.name.as_str()) {
+                return Err(InvalidDocument::DuplicateSubject(subject.name.clone()));
+            }
             if !seen.contains(subject.name.as_str()) {
                 return Err(InvalidDocument::OrphanSubject(subject.name.clone()));
             }
@@ -339,6 +345,12 @@ mod tests {
         assert!(matches!(
             s.validate(),
             Err(InvalidDocument::DuplicateArtifact(_))
+        ));
+        let mut s = sample();
+        s.subject.push(s.subject[0].clone());
+        assert!(matches!(
+            s.validate(),
+            Err(InvalidDocument::DuplicateSubject(_))
         ));
         let mut s = sample();
         s.predicate.artifacts.clear();

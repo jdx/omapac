@@ -25,6 +25,18 @@ fn keygen_create_verify() {
     let (code, _, err) = packslip(d, &["keygen", "-o", "release.key"]);
     assert_ne!(code, 0, "never overwrite a key");
     assert!(err.contains("not overwriting"), "{err}");
+    std::fs::write(d.join("occupied.pub"), "keep").unwrap();
+    let (code, _, _err) = packslip(d, &["keygen", "-o", "occupied.key"]);
+    assert_ne!(code, 0);
+    assert_eq!(
+        std::fs::read_to_string(d.join("occupied.pub")).unwrap(),
+        "keep"
+    );
+    assert!(!d.join("occupied.key").exists());
+    let (code, _, err) = packslip(d, &["keygen", "-o", "same.pub"]);
+    assert_ne!(code, 0);
+    assert!(err.contains("both resolve"), "{err}");
+    assert!(!d.join("same.pub").exists());
 
     std::fs::write(d.join("tool-v1.2.3-linux-x64.tar.xz"), b"linux").unwrap();
     std::fs::write(d.join("tool-v1.2.3-darwin-arm64.tar.xz"), b"mac").unwrap();

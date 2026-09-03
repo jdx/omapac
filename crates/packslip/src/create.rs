@@ -121,7 +121,12 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
             path: input.path.display().to_string(),
             source,
         })?;
-        let (os, arch, libc, format) = infer_platform(&name);
+        let (inferred_os, arch, inferred_libc, format) = infer_platform(&name);
+        let os = input.os.or(inferred_os);
+        let libc = input.libc.map(str::to_string).or_else(|| match os {
+            Some("linux") => Some(inferred_libc.unwrap_or("gnu").to_string()),
+            _ => None,
+        });
         subject.push(Subject {
             name: name.clone(),
             digest: Digest { sha256 },
@@ -132,9 +137,9 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
         artifacts.push(Artifact {
             url,
             name,
-            os: input.os.or(os).map(str::to_string),
+            os: os.map(str::to_string),
             arch: input.arch.or(arch).map(str::to_string),
-            libc: input.libc.or(libc).map(str::to_string),
+            libc,
             size,
             format: format.map(str::to_string),
             provenance: input.provenance.clone(),
@@ -255,6 +260,51 @@ mod tests {
             created.statement.declared_level(),
             crate::Level::L2,
             "one artifact lacks provenance"
+        );
+
+        let overridden = create(&Request {
+            project: "pkg:github/example/tool",
+            version: "1.0.0",
+            published_at: Some("2026-09-01T00:00:00Z"),
+            source: None,
+            artifacts: vec![ArtifactInput {
+                path: &a,
+                os: Some("darwin"),
+                arch: None,
+                libc: None,
+                provenance: Vec::new(),
+            }],
+            url_base: None,
+            sbom: None,
+            supersedes: None,
+            key: &key,
+        })
+        .unwrap();
+        assert_eq!(overridden.statement.predicate.artifacts[0].libc, None);
+        let overridden = create(&Request {
+            artifacts: vec![ArtifactInput {
+                path: &b,
+                os: Some("linux"),
+                arch: None,
+                libc: None,
+                provenance: Vec::new(),
+            }],
+            ..Request {
+                project: "pkg:github/example/tool",
+                version: "1.0.0",
+                published_at: Some("2026-09-01T00:00:00Z"),
+                source: None,
+                artifacts: Vec::new(),
+                url_base: None,
+                sbom: None,
+                supersedes: None,
+                key: &key,
+            }
+        })
+        .unwrap();
+        assert_eq!(
+            overridden.statement.predicate.artifacts[0].libc.as_deref(),
+            Some("gnu")
         );
 
         let verified = crate::verify(
