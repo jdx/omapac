@@ -206,6 +206,14 @@ impl Checkout {
         self.git(&args)
     }
 
+    /// A unified diff with complete file context, for parsers whose state
+    /// cannot safely be reconstructed from Git's three context lines.
+    pub fn diff_full(&self, from: &str, to: &str, paths: &[&str]) -> Result<String> {
+        let mut args = vec!["diff", "--no-color", "--unified=1000000", from, to, "--"];
+        args.extend(paths);
+        self.git(&args)
+    }
+
     /// Lines added plus removed between two commits, across the tree.
     pub fn diff_size(&self, from: &str, to: &str) -> Result<usize> {
         let out = self.git(&["diff", "--numstat", from, to])?;

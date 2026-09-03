@@ -213,7 +213,19 @@ fn current_verdicts<'a>(matching: impl Iterator<Item = &'a Verdict>) -> Vec<&'a 
     let mut matching: Vec<_> = matching.collect();
     matching.reverse();
     matching.retain(|verdict| {
-        seen.insert((verdict.reviewer.kind.as_str(), verdict.reviewer.id.as_str()))
+        let (subject_kind, subject_owner, subject_value) = match &verdict.subject {
+            VerdictSubject::Commit { pkgbase, commit } => {
+                ("commit", pkgbase.as_str(), commit.as_str())
+            }
+            VerdictSubject::Digest { sha256 } => ("digest", "", sha256.as_str()),
+        };
+        seen.insert((
+            verdict.reviewer.kind.as_str(),
+            verdict.reviewer.id.as_str(),
+            subject_kind,
+            subject_owner,
+            subject_value,
+        ))
     });
     matching.reverse();
     matching
@@ -276,6 +288,24 @@ mod tests {
         let verdicts = feed.for_commit("yay", "abcdef");
         assert_eq!(verdicts.len(), 2);
         assert!(verdicts.iter().all(|v| v.verdict == VerdictKind::Pass));
+    }
+
+    #[test]
+    fn prefix_matches_do_not_supersede_a_different_commit_subject() {
+        let feed: Verdicts = serde_json::from_str(
+            r#"{"version":1,"sequence":2,"issued_at":"2026-09-03T00:00:00Z","verdicts":[
+              {"subject":{"pkgbase":"yay","commit":"abcdef"},"reviewer":{"kind":"static","id":"policy"},"verdict":"block","issued_at":"2026-09-01T00:00:00Z"},
+              {"subject":{"pkgbase":"yay","commit":"abc"},"reviewer":{"kind":"static","id":"policy"},"verdict":"pass","issued_at":"2026-09-03T00:00:00Z"}
+            ]}"#,
+        )
+        .unwrap();
+        let verdicts = feed.for_commit("yay", "abcdef123456");
+        assert_eq!(verdicts.len(), 2);
+        assert!(
+            verdicts
+                .iter()
+                .any(|verdict| verdict.verdict == VerdictKind::Block)
+        );
     }
 
     #[test]
