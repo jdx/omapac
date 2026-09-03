@@ -735,6 +735,7 @@ name = "omapac-repo"
 version = "0.1.0"
 dependencies = [
  "alpm-db",
+ "base64 0.22.1",
  "color-eyre",
  "eyre",
  "jiff",
@@ -743,7 +744,10 @@ dependencies = [
  "packslip",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
+ "toml",
+ "ureq",
  "usage-rs",
 ]
 
