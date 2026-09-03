@@ -21,6 +21,7 @@ path = "src/main.rs"
 alpm-db.workspace = true
 color-eyre.workspace = true
 eyre.workspace = true
+jiff.workspace = true
 nix.workspace = true
 omapac-cli-support.workspace = true
 omapac-policy.workspace = true
@@ -33,4 +34,5 @@ which.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
+serde_json.workspace = true
 tempfile.workspace = true

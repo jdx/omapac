@@ -17,10 +17,19 @@ pub struct BinInfo {
     pub version: &'static str,
 }
 
-impl RunWith<BinInfo> for Version {
+impl AsRef<BinInfo> for BinInfo {
+    fn as_ref(&self) -> &BinInfo {
+        self
+    }
+}
+
+/// Any context that can hand over a [`BinInfo`] can run `version`, so a
+/// binary's own context struct works as the dispatch context.
+impl<Ctx: AsRef<BinInfo>> RunWith<Ctx> for Version {
     type Output = Result<()>;
 
-    fn run_with(self, bin: BinInfo) -> Self::Output {
+    fn run_with(self, ctx: Ctx) -> Self::Output {
+        let bin = ctx.as_ref();
         if self.json {
             let json = serde_json::json!({
                 "name": bin.name,
