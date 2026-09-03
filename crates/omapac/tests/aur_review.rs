@@ -31,6 +31,7 @@ fn setup() -> Setup {
 fn run(s: &Setup, args: &[&str]) -> (i32, String, String) {
     let output = Command::new(env!("CARGO_BIN_EXE_omapac"))
         .env("HOME", &s.rig.home)
+        .env_remove("XDG_CONFIG_HOME")
         .env("XDG_CACHE_HOME", s.rig.dir.path().join("cache"))
         .env("OMAPAC_AUR_RPC_BASE", &s.rpc)
         .env("OMAPAC_AUR_GIT_BASE", s.aur.base())
