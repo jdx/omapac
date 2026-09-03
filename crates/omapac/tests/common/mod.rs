@@ -4,6 +4,7 @@
 
 pub mod aur;
 pub mod http;
+pub mod tools;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

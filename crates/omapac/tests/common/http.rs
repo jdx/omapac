@@ -8,6 +8,16 @@ use std::thread;
 /// Serve `routes` (path prefix, body) until the process exits; returns the
 /// base URL.
 pub fn serve(routes: Vec<(&'static str, String)>) -> String {
+    serve_bytes(
+        routes
+            .into_iter()
+            .map(|(path, body)| (path, body.into_bytes()))
+            .collect(),
+    )
+}
+
+/// Serve raw bodies, for binary fixtures.
+pub fn serve_bytes(routes: Vec<(&'static str, Vec<u8>)>) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     thread::spawn(move || {
@@ -28,15 +38,17 @@ pub fn serve(routes: Vec<(&'static str, String)>) -> String {
                 }
             }
             let path = request_line.split_whitespace().nth(1).unwrap_or("/");
-            let (status, body) = match routes.iter().find(|(prefix, _)| path.starts_with(prefix)) {
-                Some((_, body)) => ("200 OK", body.clone()),
-                None => ("404 Not Found", "{}".to_string()),
-            };
+            let (status, body): (&str, Vec<u8>) =
+                match routes.iter().find(|(prefix, _)| path.starts_with(prefix)) {
+                    Some((_, body)) => ("200 OK", body.clone()),
+                    None => ("404 Not Found", b"{}".to_vec()),
+                };
             let _ = write!(
                 stream,
-                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                "HTTP/1.1 {status}\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                 body.len()
             );
+            let _ = stream.write_all(&body);
             let _ = stream.flush();
         }
     });
