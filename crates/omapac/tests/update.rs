@@ -477,8 +477,11 @@ fn age_floor_prefers_the_index_publish_time() {
     // saying it was published two years ago lifts a one-year floor that
     // the build date alone would apply.
     let key = packslip::minisign::SecretKey::from_seed([42u8; 32]);
+    let recent = jiff::Timestamp::from_second(omapac::ledger::now() - 86_400)
+        .unwrap()
+        .to_string();
     for (published, floor, expect_hold) in [
-        ("2026-09-02T00:00:00Z", "30d", true),
+        (recent.as_str(), "30d", true),
         ("2024-01-01T00:00:00Z", "365d", false),
     ] {
         let s = setup(INFO.to_string());
@@ -497,6 +500,10 @@ fn age_floor_prefers_the_index_publish_time() {
         .unwrap();
         let (code, out, err) = run(&s, &["update", "-n", "--no-aur"], UPGRADE);
         assert_eq!(code, 0, "{err}\n{out}");
+        assert!(
+            !s.rig.root.join("var/lib/omapac/state.json").exists(),
+            "dry-run must not record the index sequence"
+        );
         assert!(!err.contains("index unavailable"), "{err}");
         if expect_hold {
             assert!(
