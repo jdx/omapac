@@ -1305,6 +1305,7 @@ name = "omapac"
 version = "0.1.0"
 dependencies = [
  "alpm-db",
+ "base64 0.22.1",
  "color-eyre",
  "eyre",
  "indexmap",
