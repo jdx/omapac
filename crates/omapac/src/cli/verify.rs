@@ -443,6 +443,13 @@ impl RunWith<&App> for Verify {
                     "provenance: FAILED: {}",
                     p.error.as_deref().unwrap_or("unknown")
                 ),
+                None if self.offline
+                    && report.sidecars.iter().any(|sidecar| {
+                        sidecar == &format!("{}.provenance.json", report.filename)
+                    }) =>
+                {
+                    println!("provenance: published, not checked offline")
+                }
                 None => println!("provenance: none published"),
             }
             match &report.transparency {
