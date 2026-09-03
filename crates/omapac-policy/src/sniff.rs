@@ -191,6 +191,14 @@ mod tests {
         assert!(rules_hit("# see https://discord.com/api/webhooks/docs\n").is_empty());
         // `go build` is not `go install`; `eval` inside a word is not eval.
         assert!(rules_hit("go build ./...\nmedieval=1\n").is_empty());
+        assert!(
+            !rules_hit("curl -o ~/Downloads/tool https://example.test/tool\n")
+                .contains(&"hidden-download")
+        );
+        assert!(
+            rules_hit("curl -o ~/.cache/tool https://example.test/tool\n")
+                .contains(&"hidden-download")
+        );
     }
 
     #[test]
