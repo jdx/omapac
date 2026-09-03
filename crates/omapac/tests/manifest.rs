@@ -118,12 +118,12 @@ fn apply_and_add_refuse_a_lone_unavailable_package() {
 }
 
 #[test]
-fn held_packages_are_ignored_by_the_install_transaction() {
+fn hold_does_not_skip_an_initial_install() {
     let rig = Rig::new();
     let (code, _, err) = rig.run(&["add", "-y", "--hold", "curl"], HELIX_PLAN, 0);
     assert_eq!(code, 0, "{err}");
     assert!(
-        rig.log().last().unwrap().contains("--ignore curl"),
+        !rig.log().last().unwrap().contains("--ignore curl"),
         "{:?}",
         rig.log()
     );
@@ -175,7 +175,7 @@ fn drop_keeps_what_a_lower_layer_declares() {
     )
     .unwrap();
     let (code, out, err) = rig.run(
-        &["drop", "-n", "yay", "core/glibc", "never-there"],
+        &["drop", "-n", "yay", "core/glibc", "never-there", "glibc"],
         YAY_REMOVE,
         0,
     );

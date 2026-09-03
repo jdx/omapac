@@ -182,7 +182,7 @@ impl Diff {
                     manifest.settings.update_ignore.iter().cloned().chain(
                         self.steps
                             .iter()
-                            .filter(|step| step.hold)
+                            .filter(|step| step.hold && step.action != Action::Install)
                             .map(|step| step.name.clone()),
                     ),
                 )
