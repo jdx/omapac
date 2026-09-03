@@ -40,7 +40,7 @@ pub struct Entry {
 }
 
 /// The ledger file.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Ledger {
     #[serde(default = "schema")]
     pub schema: u32,
@@ -56,6 +56,17 @@ pub struct Ledger {
 
 fn schema() -> u32 {
     SCHEMA
+}
+
+impl Default for Ledger {
+    fn default() -> Self {
+        Self {
+            schema: SCHEMA,
+            packages: BTreeMap::new(),
+            index_sequence: None,
+            snapshot: None,
+        }
+    }
 }
 
 /// A change to merge into the ledger.
@@ -291,6 +302,7 @@ mod tests {
     fn load_merge_save_round_trip() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("var/lib/omapac/state.json");
+        assert_eq!(Ledger::default().schema, SCHEMA);
         let ledger = Ledger::load(&path).unwrap();
         assert_eq!(ledger.schema, SCHEMA);
         assert!(ledger.packages.is_empty());
