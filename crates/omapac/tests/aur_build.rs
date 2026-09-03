@@ -266,3 +266,160 @@ fn install_scripts_can_be_denied_by_policy() {
         "{err}"
     );
 }
+
+/// yay depending on an AUR-only library, and the library as its own
+/// recipe; the RPC answers for both.
+const YAY_NEEDS_LIB_PKGBUILD: &str = "# Maintainer: jguer\npkgname=yay\npkgver=13.0.1\npkgrel=1\ndepends=('zorbqlib>=1.0')\nsource=(\"yay-13.0.1.tar.gz::https://github.com/Jguer/yay/archive/v13.0.1.tar.gz\")\nsha256sums=('b77454bce87110180a1b6664c2d260de78124c9894b71101610ba84f551eb0d0')\nbuild() {\n  make build\n}\npackage() {\n  make DESTDIR=\"$pkgdir\" install\n}\n";
+const YAY_NEEDS_LIB_SRCINFO: &str = "pkgbase = yay\n\tpkgver = 13.0.1\n\tpkgrel = 1\n\tarch = x86_64\n\tdepends = zorbqlib>=1.0\n\tsource = yay-13.0.1.tar.gz::https://github.com/Jguer/yay/archive/v13.0.1.tar.gz\n\tsha256sums = b77454bce87110180a1b6664c2d260de78124c9894b71101610ba84f551eb0d0\n\npkgname = yay\n";
+const ZORBQLIB_PKGBUILD: &str = "# Maintainer: jguer\npkgname=zorbqlib\npkgver=1.2\npkgrel=1\nsource=(\"https://github.com/example/zorbqlib/archive/v1.2.tar.gz\")\nsha256sums=('0000000000000000000000000000000000000000000000000000000000000000')\npackage() {\n  :\n}\n";
+const ZORBQLIB_SRCINFO: &str = "pkgbase = zorbqlib\n\tpkgver = 1.2\n\tpkgrel = 1\n\tarch = x86_64\n\tsource = https://github.com/example/zorbqlib/archive/v1.2.tar.gz\n\tsha256sums = 0000000000000000000000000000000000000000000000000000000000000000\n\npkgname = zorbqlib\n";
+const ZORBQLIB_NEEDS_YAY_SRCINFO: &str = "pkgbase = zorbqlib\n\tpkgver = 1.2\n\tpkgrel = 1\n\tarch = x86_64\n\tdepends = yay>13.5\n\tsource = https://github.com/example/zorbqlib/archive/v1.2.tar.gz\n\tsha256sums = 0000000000000000000000000000000000000000000000000000000000000000\n\npkgname = zorbqlib\n";
+
+fn info_with_zorbqlib() -> String {
+    let mut info: serde_json::Value = serde_json::from_str(INFO).unwrap();
+    let mut zorbqlib = info["results"][0].clone();
+    zorbqlib["Name"] = "zorbqlib".into();
+    zorbqlib["PackageBase"] = "zorbqlib".into();
+    zorbqlib["Version"] = "1.2-1".into();
+    zorbqlib["Depends"] = serde_json::json!([]);
+    zorbqlib["MakeDepends"] = serde_json::json!([]);
+    info["results"].as_array_mut().unwrap().push(zorbqlib);
+    info["resultcount"] = serde_json::json!(info["results"].as_array().unwrap().len());
+    info.to_string()
+}
+
+fn setup_with_zorbqlib(zorbqlib_srcinfo: &str) -> Setup {
+    let s = setup();
+    s.aur.commit(
+        "yay",
+        &[
+            ("PKGBUILD", YAY_NEEDS_LIB_PKGBUILD),
+            (".SRCINFO", YAY_NEEDS_LIB_SRCINFO),
+        ],
+        "need zorbqlib",
+        "2026-01-02T00:00:00Z",
+    );
+    s.aur.create(
+        "zorbqlib",
+        &[
+            ("PKGBUILD", ZORBQLIB_PKGBUILD),
+            (".SRCINFO", zorbqlib_srcinfo),
+        ],
+        "2026-01-01T00:00:00Z",
+    );
+    let rpc = common::http::serve(vec![("/rpc/v5/info", info_with_zorbqlib())]);
+    Setup {
+        rig: s.rig,
+        aur: s.aur,
+        rpc,
+    }
+}
+
+#[test]
+fn aur_dependencies_are_built_first_and_installed_as_deps() {
+    let s = setup_with_zorbqlib(ZORBQLIB_SRCINFO);
+    no_jail(&s);
+    // Both recipes need approval; unattended, an unapproved dependency
+    // is refused like any other package.
+    run(&s, &["aur", "approve", "-y", "yay"], "");
+    let (code, _, err) = run(&s, &["install", "--aur", "-y", "yay"], "");
+    assert_ne!(code, 0);
+    assert!(
+        err.contains("zorbqlib at") && err.contains("is not approved"),
+        "{err}"
+    );
+    assert!(
+        s.rig.log().iter().all(|l| !l.contains("-U")),
+        "nothing installed: {:?}",
+        s.rig.log()
+    );
+
+    let (code, out, err) = run(&s, &["aur", "approve", "-y", "zorbqlib"], "");
+    assert_eq!(code, 0, "{err}\n{out}");
+    let lock = std::fs::read_to_string(s.rig.home.join(".config/omapac/omapac.lock")).unwrap();
+    let (code, out, err) = run(&s, &["install", "--aur", "-y", "yay"], "");
+    assert_eq!(code, 0, "{err}\n{out}\nlock before install:\n{lock}");
+    assert!(
+        out.contains("yay needs zorbqlib>=1.0 from the AUR; reviewing it first"),
+        "{out}"
+    );
+    assert!(
+        out.contains("installed zorbqlib 1.2-1 from AUR commit") && out.contains("as a dependency"),
+        "{out}"
+    );
+    assert!(
+        out.contains("installed yay 13.0.1-1 from AUR commit"),
+        "{out}"
+    );
+    let log = s.rig.log();
+    let builds: Vec<&String> = log
+        .iter()
+        .filter(|l| l.contains("makepkg") && l.contains("--noextract"))
+        .collect();
+    assert_eq!(builds.len(), 2, "{log:?}");
+    // sudo and pacman both log the install line; count pacman's.
+    let installs: Vec<&String> = log
+        .iter()
+        .filter(|l| l.starts_with("--sysroot") && l.contains("-U"))
+        .collect();
+    assert_eq!(installs.len(), 2, "{log:?}");
+    assert!(
+        installs[0].contains("zorbqlib-1.2-1") && installs[0].contains("--asdeps"),
+        "{installs:?}"
+    );
+    assert!(
+        installs[1].contains("yay-13.0.1-1") && !installs[1].contains("--asdeps"),
+        "{installs:?}"
+    );
+    let ledger: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(s.rig.root.join("var/lib/omapac/state.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(ledger["packages"]["zorbqlib"]["explicit"], false);
+    assert_eq!(ledger["packages"]["yay"]["explicit"], true);
+}
+
+#[test]
+fn aur_dependency_cycles_and_unknown_deps_are_refused() {
+    let s = setup_with_zorbqlib(ZORBQLIB_NEEDS_YAY_SRCINFO);
+    no_jail(&s);
+    run(&s, &["aur", "approve", "-y", "yay"], "");
+    run(&s, &["aur", "approve", "-y", "zorbqlib"], "");
+    // The installed yay does not satisfy yay>13.5, so the dependency
+    // leads back to the package being built.
+    let (code, _, err) = run(&s, &["install", "--aur", "-y", "yay"], "");
+    assert_ne!(code, 0);
+    assert!(
+        err.contains("AUR dependency cycle: yay -> zorbqlib -> yay"),
+        "{err}"
+    );
+    assert!(
+        s.rig.log().iter().all(|l| !l.contains("-U")),
+        "{:?}",
+        s.rig.log()
+    );
+
+    // A dependency nobody has.
+    s.aur.commit(
+        "zorbqlib",
+        &[(
+            ".SRCINFO",
+            &ZORBQLIB_SRCINFO.replace(
+                "\tarch = x86_64\n",
+                "\tarch = x86_64\n\tdepends = libnowhere\n",
+            ),
+        )],
+        "need nowhere",
+        "2026-01-03T00:00:00Z",
+    );
+    // The recipe moved, so unattended approval refuses the drift; a
+    // reviewer approves the new commit with --force.
+    let (code, out, err) = run(&s, &["aur", "approve", "--force", "zorbqlib"], "");
+    assert_eq!(code, 0, "{err}\n{out}");
+    let (code, _, err) = run(&s, &["install", "--aur", "-y", "zorbqlib"], "");
+    assert_ne!(code, 0);
+    assert!(
+        err.contains("dependency libnowhere is in no repository and not on the AUR"),
+        "{err}"
+    );
+}

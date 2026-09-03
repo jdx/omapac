@@ -151,51 +151,7 @@ impl Install {
                 bail!("cancelled");
             }
             let files = app.build_aur(&prepared, self.yes)?;
-            let packages = crate::aur::build::built_packages(&files)?;
-            let selected: Vec<_> = files
-                .into_iter()
-                .zip(packages)
-                .filter(|(_, package)| package.name == *name)
-                .collect();
-            if selected.is_empty() {
-                bail!("{name}: makepkg did not produce the requested package");
-            }
-            let files: Vec<_> = selected.iter().map(|(file, _)| file.clone()).collect();
-            let engine = app.engine()?;
-            let install = crate::engine::FileInstall {
-                files: files.clone(),
-                as_deps: self.as_deps,
-                overwrite: Vec::new(),
-            };
-            crate::engine::Engine::install_files(
-                &engine,
-                &install,
-                crate::engine::ApplyOpts {
-                    dry_run: false,
-                    no_confirm: true,
-                },
-            )?;
-            let mut patch = crate::ledger::Patch::default();
-            for (_, package) in selected {
-                patch.upsert.insert(
-                    package.name,
-                    crate::ledger::Entry {
-                        version: package.version,
-                        tier: crate::resolve::Tier::Aur,
-                        repo: None,
-                        aur_commit: Some(prepared.reviewed.target.clone()),
-                        explicit: !self.as_deps,
-                        by: "install".to_string(),
-                        at: crate::ledger::now(),
-                    },
-                );
-            }
-            app.record(&patch)?;
-            println!(
-                "installed {name} {} from AUR commit {}",
-                prepared.reviewed.srcinfo.version(),
-                &prepared.reviewed.target[..12]
-            );
+            app.install_built(&prepared, &files, self.as_deps, "install")?;
         }
         Ok(())
     }

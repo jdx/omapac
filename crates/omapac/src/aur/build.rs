@@ -63,7 +63,7 @@ pub struct MissingDeps {
     /// Satisfiable from a sync database, as `repo/name` targets.
     pub repo: Vec<crate::engine::Target>,
     /// Not in any sync database; presumably AUR.
-    pub other: Vec<String>,
+    pub other: Vec<alpm_db::dep::Dependency>,
 }
 
 /// Work out which of the recipe's dependencies are missing.
@@ -96,7 +96,7 @@ pub fn missing_deps(host: &Host, reviewed: &Reviewed, arch: &str) -> Result<Miss
                     missing.repo.push(target);
                 }
             }
-            None => missing.other.push(dep.to_string()),
+            None => missing.other.push(dep),
         }
     }
     Ok(missing)
