@@ -45,6 +45,7 @@ fn run(s: &Setup, base: &str, args: &[&str]) -> (i32, String, String) {
         .env("HOME", &s.rig.home)
         .env_remove("XDG_CONFIG_HOME")
         .env("XDG_CACHE_HOME", s.rig.dir.path().join("cache"))
+        .current_dir(&s.rig.home)
         .arg("--sysroot")
         .arg(&s.rig.root)
         .args(args)
@@ -92,6 +93,9 @@ fn verify_checks_the_cached_file_and_the_database_against_the_index() {
     let body = index(5, &db_sha, &yay_sha).replace("yay-13.0.1-1-x86_64.pkg.tar.zst", &filename);
     let base = serve(&s, &body);
 
+    // A same-named file in the current directory does not turn a bare
+    // package name into a file target.
+    std::fs::write(s.rig.home.join("yay"), b"unrelated").unwrap();
     let (code, out, err) = run(&s, &base, &["verify", "yay"]);
     assert_eq!(code, 0, "{err}\n{out}");
     assert!(out.contains("yay from [omarchy] as "), "{out}");
