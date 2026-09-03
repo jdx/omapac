@@ -336,7 +336,7 @@ fn unattended_update_allows_signed_custom_repo_warnings() {
         s.rig
             .log()
             .iter()
-            .any(|line| line.contains("-Su --noconfirm")),
+            .any(|line| line.contains("-Su --noconfirm") && !line.contains("--print")),
         "{:?}",
         s.rig.log()
     );
