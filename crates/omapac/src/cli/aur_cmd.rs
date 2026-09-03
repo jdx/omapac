@@ -139,6 +139,7 @@ const MAX_AUR_DEPTH: usize = 8;
 
 #[derive(Clone)]
 struct AncestorOutputs {
+    pkgname: String,
     commit: String,
     packages: Vec<(String, String, Vec<alpm_db::dep::Dependency>)>,
 }
@@ -157,6 +158,7 @@ impl AncestorOutputs {
             })
             .collect();
         Self {
+            pkgname: prepared.reviewed.pkgname.clone(),
             commit: prepared.reviewed.target.clone(),
             packages,
         }
@@ -260,40 +262,7 @@ impl App {
         if !missing.other.is_empty() {
             self.build_aur_dependencies(prepared, &missing.other, chain, ancestors, built, yes)?;
         }
-        if !missing.repo.is_empty() {
-            let engine = self.engine()?;
-            let mut tx = crate::engine::Transaction::install(missing.repo.clone());
-            if let crate::engine::Operation::Install { as_deps, .. } = &mut tx.operation {
-                *as_deps = true;
-            }
-            let resolved = crate::engine::Engine::plan(&engine, &tx)?;
-            let command = engine
-                .apply_invocation(
-                    &tx,
-                    crate::engine::ApplyOpts {
-                        dry_run: true,
-                        no_confirm: true,
-                    },
-                )
-                .display();
-            let plan = super::transaction::plan(&host, &resolved, command);
-            let performed = super::transaction::confirm_and_apply(
-                &engine,
-                &resolved,
-                &plan,
-                "install dependencies",
-                yes,
-                false,
-            )?;
-            if performed {
-                self.record(&super::transaction::ledger_patch(
-                    &plan,
-                    &[],
-                    "install",
-                    false,
-                ))?;
-            }
-        }
+        self.install_aur_repo_dependencies(&host, &missing.repo, yes)?;
         let opts = crate::aur::build::BuildOpts::from_settings(
             &prepared.settings,
             &prepared.reviewed.pkgbase,
@@ -334,14 +303,41 @@ impl App {
             let preserve_explicit = host
                 .installed_package(&dep.name)?
                 .is_some_and(|package| package.reason == alpm_db::local::InstallReason::Explicit);
-            if let Some(ancestor) = ancestors.iter().find(|ancestor| ancestor.satisfies(dep)) {
+            if let Some(ancestor) = ancestors
+                .iter()
+                .find(|ancestor| ancestor.satisfies(dep))
+                .cloned()
+            {
                 if ancestor.packages.len() > 1 {
                     let prepared = self.prepare_aur(
-                        &dep.name,
+                        &ancestor.pkgname,
                         Some(&ancestor.commit),
                         true,
                         parent.unattended,
                     )?;
+                    // `--nodeps` only skips makepkg's dependency preflight:
+                    // the recipe still needs every tool and library except
+                    // the descendant whose split sibling this bootstrap is
+                    // about to provide.
+                    let bootstrap_host = self.host()?;
+                    let mut missing = crate::aur::build::missing_deps(
+                        &bootstrap_host,
+                        &prepared.reviewed,
+                        &prepared.arch,
+                    )?;
+                    let descendant = AncestorOutputs::from_prepared(parent);
+                    missing.other.retain(|dep| !descendant.satisfies(dep));
+                    self.install_aur_repo_dependencies(&bootstrap_host, &missing.repo, yes)?;
+                    if !missing.other.is_empty() {
+                        self.build_aur_dependencies(
+                            &prepared,
+                            &missing.other,
+                            &chain,
+                            &ancestors,
+                            built,
+                            yes,
+                        )?;
+                    }
                     let opts = crate::aur::build::BuildOpts::from_settings(
                         &prepared.settings,
                         &prepared.reviewed.pkgbase,
@@ -427,6 +423,50 @@ impl App {
             let files = self.build_aur_chain(&prepared, &chain, &ancestors, built, yes)?;
             self.install_built(&prepared, &files, !preserve_explicit, "install")?;
             built.push((dep.name.clone(), version, provides));
+        }
+        Ok(())
+    }
+
+    fn install_aur_repo_dependencies(
+        &self,
+        host: &crate::host::Host,
+        dependencies: &[crate::engine::Target],
+        yes: bool,
+    ) -> Result<()> {
+        if dependencies.is_empty() {
+            return Ok(());
+        }
+        let engine = self.engine()?;
+        let mut tx = crate::engine::Transaction::install(dependencies.to_vec());
+        if let crate::engine::Operation::Install { as_deps, .. } = &mut tx.operation {
+            *as_deps = true;
+        }
+        let resolved = crate::engine::Engine::plan(&engine, &tx)?;
+        let command = engine
+            .apply_invocation(
+                &tx,
+                crate::engine::ApplyOpts {
+                    dry_run: true,
+                    no_confirm: true,
+                },
+            )
+            .display();
+        let plan = super::transaction::plan(host, &resolved, command);
+        let performed = super::transaction::confirm_and_apply(
+            &engine,
+            &resolved,
+            &plan,
+            "install dependencies",
+            yes,
+            false,
+        )?;
+        if performed {
+            self.record(&super::transaction::ledger_patch(
+                &plan,
+                &[],
+                "install",
+                false,
+            ))?;
         }
         Ok(())
     }
