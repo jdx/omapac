@@ -521,7 +521,7 @@ fn format_secs(secs: i64) -> String {
 }
 
 /// The newest snapshot before `held` that was promoted to `channel` (any
-/// snapshot for edge) and is not held.
+/// snapshot for edge), is not held, and still has a passing suite result.
 fn fallback(store: &Store, channel: &str, held: &str) -> Result<Option<String>> {
     for id in store.ids()?.into_iter().rev() {
         if id.as_str() >= held {
@@ -531,9 +531,10 @@ fn fallback(store: &Store, channel: &str, held: &str) -> Result<Option<String>> 
         if release.held {
             continue;
         }
+        let passed = release.tests.as_ref().map(|tests| tests.result) == Some(TestResult::Pass);
         let eligible = match channel {
-            "stable" => release.promoted.stable.is_some(),
-            "rc" => release.promoted.rc.is_some(),
+            "stable" => release.promoted.stable.is_some() && passed,
+            "rc" => release.promoted.rc.is_some() && passed,
             _ => true,
         };
         if eligible {
