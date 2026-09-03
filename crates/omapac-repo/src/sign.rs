@@ -205,24 +205,33 @@ pub fn check(
 
 fn gpg_sign(gpg: &str, key: &str, package: &Path) -> Result<()> {
     let sig = sig_path(package);
-    let status = Command::new(gpg)
-        .args([
-            "--batch",
-            "--yes",
-            "--detach-sign",
-            "--local-user",
-            key,
-            "--output",
-        ])
-        .arg(&sig)
-        .arg(package)
-        .status()
-        .wrap_err_with(|| format!("running {gpg}"))?;
-    if !status.success() {
-        bail!("exited with status {}", status.code().unwrap_or(-1));
+    let temp = sig.with_extension("sig.tmp");
+    let _ = std::fs::remove_file(&temp);
+    let result = (|| {
+        let status = Command::new(gpg)
+            .args([
+                "--batch",
+                "--yes",
+                "--detach-sign",
+                "--local-user",
+                key,
+                "--output",
+            ])
+            .arg(&temp)
+            .arg(package)
+            .status()
+            .wrap_err_with(|| format!("running {gpg}"))?;
+        if !status.success() {
+            bail!("exited with status {}", status.code().unwrap_or(-1));
+        }
+        if !temp.is_file() {
+            bail!("{} was not written", temp.display());
+        }
+        std::fs::rename(&temp, &sig).wrap_err_with(|| format!("publishing {}", sig.display()))?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(temp);
     }
-    if !sig.is_file() {
-        bail!("{} was not written", sig.display());
-    }
-    Ok(())
+    result
 }

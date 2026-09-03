@@ -209,6 +209,12 @@ fn signs_only_packages_with_accepted_provenance() {
         out.contains("REFUSED  good-1-1-x86_64.pkg.tar.zst: gpg: exited with status 2"),
         "{out}"
     );
+    assert!(
+        !rig.path()
+            .join("repo/good-1-1-x86_64.pkg.tar.zst.sig")
+            .exists(),
+        "a failed signer must not leave a skippable signature"
+    );
 }
 
 #[test]

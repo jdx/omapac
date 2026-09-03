@@ -3,9 +3,6 @@
 # detached signature to the --output path, fails when FAKE_GPG_FAIL is set.
 set -euo pipefail
 echo "$*" >>"${FAKE_GPG_LOG:-/dev/null}"
-if [ -n "${FAKE_GPG_FAIL:-}" ]; then
-  exit 2
-fi
 out=""
 prev=""
 for a in "$@"; do
@@ -14,5 +11,9 @@ for a in "$@"; do
   fi
   prev="$a"
 done
+if [ -n "${FAKE_GPG_FAIL:-}" ]; then
+  : >"$out"
+  exit 2
+fi
 last="${*: -1}"
 echo "fake signature of $(basename "$last")" >"$out"
