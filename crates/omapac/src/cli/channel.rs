@@ -79,7 +79,7 @@ impl App {
             return Ok(None);
         };
         let keyring = crate::trust::Keyring::load(self.paths.sysroot.as_deref())?;
-        let cache = crate::trust::Cache::for_repo(&source.name);
+        let cache = crate::trust::Cache::for_repo(&source.name, self.paths.sysroot.as_deref())?;
         let fetched: crate::trust::Fetched<Release> =
             crate::trust::fetch(&feed, "release.json", &keyring, &cache, offline)?;
         Ok(Some(fetched.value))
@@ -93,7 +93,10 @@ impl App {
         offline: bool,
     ) -> Result<Release> {
         let keyring = crate::trust::Keyring::load(self.paths.sysroot.as_deref())?;
-        let cache = crate::trust::Cache::for_repo(&format!("snapshots/{id}"));
+        let cache = crate::trust::Cache::for_repo(
+            &format!("snapshots/{id}"),
+            self.paths.sysroot.as_deref(),
+        )?;
         let feed = crate::trust::FeedSource {
             repo: format!("snapshot {id}"),
             base: format!("{}/{id}", snapshot_base.trim_end_matches('/')),
@@ -331,7 +334,7 @@ impl RunWith<&App> for Rollback {
                 return Err(err);
             }
         };
-        let mut applied = false;
+        let mut retain_pin = false;
         let result = (|| -> Result<()> {
             engine.refresh(
                 crate::engine::RefreshOpts { force: true },
@@ -359,6 +362,18 @@ impl RunWith<&App> for Rollback {
                 )
                 .display();
             let plan = super::transaction::plan(&host, &resolved, command);
+            let already_converged = plan.changes.is_empty();
+            let mut explicit = Vec::new();
+            for change in &plan.changes {
+                if host
+                    .installed_package(&change.name)?
+                    .is_some_and(|package| {
+                        package.reason == alpm_db::local::InstallReason::Explicit
+                    })
+                {
+                    explicit.push(change.name.clone());
+                }
+            }
             let performed = super::transaction::confirm_and_apply(
                 &engine,
                 &resolved,
@@ -367,9 +382,9 @@ impl RunWith<&App> for Rollback {
                 self.yes,
                 false,
             )?;
+            retain_pin = performed || already_converged;
             let mut patch = if performed {
-                applied = true;
-                super::transaction::ledger_patch(&plan, &[], "rollback", false)
+                super::transaction::ledger_patch(&plan, &explicit, "rollback", false)
             } else {
                 crate::ledger::Patch::default()
             };
@@ -378,9 +393,9 @@ impl RunWith<&App> for Rollback {
             Ok(())
         })();
         if let Err(err) = result {
-            if applied {
+            if retain_pin {
                 return Err(err.wrap_err(
-                    "packages were rolled back; retaining the snapshot pin after a later bookkeeping failure",
+                    "the machine reached the snapshot; retaining its pin after a later bookkeeping failure",
                 ));
             }
             if let Err(recovery) =
@@ -422,6 +437,10 @@ fn staged_snapshot(
 
     let staged_db = root.join("db");
     copy_tree_if_exists(&live.db_path().join("local"), &staged_db.join("local"))?;
+    // Pacman may run elevated to read the live keyring. Keep its sync
+    // directory owned by the invoking user so TempDir can remove the
+    // root-owned database files it creates inside that directory.
+    std::fs::create_dir_all(staged_db.join("sync"))?;
 
     let staged_config = root.join("pacman.conf");
     let gpg_dir = app.rooted(&live.config.options.gpg_dir());
@@ -437,7 +456,6 @@ fn staged_snapshot(
     let mut engine = app.engine()?;
     engine.config = paths.config.clone();
     engine.sysroot = None;
-    engine.elevation = crate::engine::sudo::Elevation::Never;
     engine.refresh(
         crate::engine::RefreshOpts { force: true },
         ApplyOpts {
@@ -468,6 +486,15 @@ fn staged_pacman_config(
         gpg_dir.display(),
         live.config.options.sig_level,
     );
+    for (name, values) in [
+        ("HoldPkg", &live.config.options.hold_pkg),
+        ("IgnorePkg", &live.config.options.ignore_pkg),
+        ("IgnoreGroup", &live.config.options.ignore_group),
+    ] {
+        if !values.is_empty() {
+            let _ = writeln!(config, "{name} = {}", values.join(" "));
+        }
+    }
     for source in &live.sources {
         let repo = &source.repo;
         let _ = write!(config, "\n[{}]\nSigLevel = {}\n", repo.name, repo.sig_level);
