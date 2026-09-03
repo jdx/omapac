@@ -30,9 +30,8 @@ pub fn distance(a: &str, b: &str) -> usize {
 }
 
 /// Names in `known` that `name` resembles: within distance `max` (but not
-/// identical), or `name` with a suffix added to a known name. Names and
-/// candidates shorter than four characters are skipped because everything
-/// resembles them.
+/// identical). Names and candidates shorter than four characters are skipped
+/// because everything resembles them.
 pub fn similar<'a>(
     name: &str,
     known: impl IntoIterator<Item = &'a str>,
@@ -47,13 +46,7 @@ pub fn similar<'a>(
         if candidate == name || candidate.chars().count() < 4 {
             continue;
         }
-        let close = distance(name, candidate) <= max;
-        let padded = name.starts_with(candidate)
-            && matches!(
-                name.as_bytes().get(candidate.len()),
-                Some(b'-' | b'_' | b'.')
-            );
-        if close || padded {
+        if distance(name, candidate) <= max {
             found.push(candidate.to_string());
         }
     }
@@ -78,8 +71,10 @@ mod tests {
 
     #[test]
     fn lookalikes() {
-        let known = ["firefox", "firefox-bin", "helix", "yay", "bat"];
-        assert_eq!(similar("firefox-patch-bin", known, 2), ["firefox"]);
+        let known = ["firefox", "firefox-bin", "helix", "python", "yay", "bat"];
+        assert!(similar("firefox-bin", known, 2).is_empty());
+        assert!(similar("python-requests", known, 2).is_empty());
+        assert!(similar("firefox-patch-bin", known, 2).is_empty());
         assert_eq!(similar("firefx-bin", known, 2), ["firefox-bin"]);
         assert_eq!(similar("hellix", known, 2), ["helix"]);
         assert_eq!(
