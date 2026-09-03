@@ -73,7 +73,11 @@ pub fn infer_platform(name: &str) -> Platform {
     } else {
         None
     };
-    let arch = if lower.contains("x86_64") || lower.contains("x64") || lower.contains("amd64") {
+    let arch = if lower.contains("x86_64")
+        || lower.contains("x86-64")
+        || lower.contains("x64")
+        || lower.contains("amd64")
+    {
         Some("x86_64")
     } else if lower.contains("aarch64") || lower.contains("arm64") {
         Some("aarch64")
@@ -195,6 +199,10 @@ mod tests {
             (Some("windows"), Some("x86_64"), None, Some("exe"))
         );
         assert_eq!(infer_platform("SHASUMS256.txt"), (None, None, None, None));
+        assert_eq!(
+            infer_platform("tool-linux-x86-64.tar.gz"),
+            (Some("linux"), Some("x86_64"), Some("gnu"), Some("tar.gz"))
+        );
     }
 
     #[test]
