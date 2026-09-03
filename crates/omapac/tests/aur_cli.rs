@@ -20,6 +20,7 @@ fn rpc_server() -> String {
 fn run(rig: &Rig, base: &str, args: &[&str]) -> (i32, String, String) {
     let output = Command::new(env!("CARGO_BIN_EXE_omapac"))
         .env("HOME", &rig.home)
+        .env_remove("XDG_CONFIG_HOME")
         .env("OMAPAC_AUR_RPC_BASE", base)
         .arg("--sysroot")
         .arg(&rig.root)
