@@ -39,16 +39,17 @@ impl BuildOpts {
     ) -> Result<BuildOpts> {
         let makepkg = which::which("makepkg")
             .map_err(|_| eyre::eyre!("makepkg is not on PATH; install base-devel"))?;
+        let artifacts = cache_dir.join(".omapac-build");
         Ok(BuildOpts {
             jail: settings.aur_jail,
             network: settings
                 .aur_allow_network_build
                 .iter()
                 .any(|p| p == pkgbase),
-            pkgdest: cache_dir.join("pkgs").join(pkgbase),
-            srcdest: cache_dir.join("sources").join(pkgbase),
-            builddir: cache_dir.join("build").join(pkgbase),
-            logdest: cache_dir.join("logs").join(pkgbase),
+            pkgdest: artifacts.join("pkgs").join(pkgbase),
+            srcdest: artifacts.join("sources").join(pkgbase),
+            builddir: artifacts.join("build").join(pkgbase),
+            logdest: artifacts.join("logs").join(pkgbase),
             makepkg,
         })
     }
@@ -107,18 +108,21 @@ pub fn build(reviewed: &Reviewed, opts: &BuildOpts) -> Result<Vec<PathBuf>> {
     std::fs::create_dir_all(&opts.pkgdest)
         .wrap_err_with(|| format!("creating {}", opts.pkgdest.display()))?;
     let verifydir = opts.builddir.with_extension("verify");
-    if verifydir.exists() {
-        std::fs::remove_dir_all(&verifydir)
-            .wrap_err_with(|| format!("clearing {}", verifydir.display()))?;
+    for dir in [&verifydir, &opts.builddir] {
+        if dir.exists() {
+            std::fs::remove_dir_all(dir).wrap_err_with(|| format!("clearing {}", dir.display()))?;
+        }
     }
     for dir in [&opts.srcdest, &opts.builddir, &opts.logdest, &verifydir] {
         std::fs::create_dir_all(dir).wrap_err_with(|| format!("creating {}", dir.display()))?;
     }
+    copy_tree(&checkout.dir, &verifydir.join("worktree"))?;
+    copy_tree(&checkout.dir, &opts.builddir.join("worktree"))?;
 
     // Phase 1 only downloads and verifies sources. Unlike --nobuild,
     // --verifysource does not run prepare() or pkgver() outside the jail.
     let verify_args = ["--verifysource", "--noconfirm", "--force"];
-    let status = run_makepkg(reviewed, opts, &verify_args, true, &verifydir)
+    let status = run_makepkg(opts, &verify_args, true, &verifydir)
         .wrap_err("running makepkg --verifysource")?;
     std::fs::remove_dir_all(&verifydir)
         .wrap_err_with(|| format!("removing {}", verifydir.display()))?;
@@ -146,7 +150,7 @@ pub fn build(reviewed: &Reviewed, opts: &BuildOpts) -> Result<Vec<PathBuf>> {
     // VCS pkgver() must observe the freshly fetched checkout. makepkg cannot
     // update it separately from the build, so approved VCS recipes retain
     // network for this invocation; their VCS finding makes that risk explicit.
-    let status = run_makepkg(reviewed, opts, &args, opts.network || vcs, &opts.builddir)
+    let status = run_makepkg(opts, &args, opts.network || vcs, &opts.builddir)
         .wrap_err("running makepkg")?;
     if !status.success() {
         bail!(
@@ -157,7 +161,7 @@ pub fn build(reviewed: &Reviewed, opts: &BuildOpts) -> Result<Vec<PathBuf>> {
     }
 
     // What was built: makepkg knows the file names.
-    let output = run_makepkg_output(reviewed, opts, &["--packagelist"], false, &opts.builddir)
+    let output = run_makepkg_output(opts, &["--packagelist"], false, &opts.builddir)
         .wrap_err("running makepkg --packagelist")?;
     let files: Vec<PathBuf> = String::from_utf8_lossy(&output.stdout)
         .lines()
@@ -174,7 +178,6 @@ pub fn build(reviewed: &Reviewed, opts: &BuildOpts) -> Result<Vec<PathBuf>> {
 }
 
 fn run_makepkg(
-    reviewed: &Reviewed,
     opts: &BuildOpts,
     args: &[&str],
     network: bool,
@@ -184,7 +187,7 @@ fn run_makepkg(
         let mut command = Command::new(&opts.makepkg);
         command
             .args(args)
-            .current_dir(&reviewed.checkout.dir)
+            .current_dir(builddir.join("worktree"))
             .env_clear()
             .envs(crate::jail::scrubbed_env())
             .env("PKGDEST", &opts.pkgdest)
@@ -196,8 +199,8 @@ fn run_makepkg(
     }
 
     let spec = Spec {
-        // The checkout, including .git, stays read-only. All scratch state
-        // lives in private cache directories rather than shared /tmp sockets.
+        // makepkg needs to lock and sometimes update PKGBUILD, so it runs in
+        // a disposable checkout copy contained by this writable build root.
         writable: vec![
             opts.pkgdest.clone(),
             opts.srcdest.clone(),
@@ -207,7 +210,7 @@ fn run_makepkg(
         network,
         program: opts.makepkg.clone(),
         args: args.iter().map(|arg| (*arg).to_string()).collect(),
-        cwd: reviewed.checkout.dir.clone(),
+        cwd: builddir.join("worktree"),
     };
     let mut command = spec.command()?;
     command.env("PKGDEST", &opts.pkgdest);
@@ -223,7 +226,6 @@ fn run_makepkg(
 }
 
 fn run_makepkg_output(
-    reviewed: &Reviewed,
     opts: &BuildOpts,
     args: &[&str],
     network: bool,
@@ -233,7 +235,7 @@ fn run_makepkg_output(
         let mut command = Command::new(&opts.makepkg);
         command
             .args(args)
-            .current_dir(&reviewed.checkout.dir)
+            .current_dir(builddir.join("worktree"))
             .env_clear()
             .envs(crate::jail::scrubbed_env())
             .env("PKGDEST", &opts.pkgdest)
@@ -253,7 +255,7 @@ fn run_makepkg_output(
         network,
         program: opts.makepkg.clone(),
         args: args.iter().map(|arg| (*arg).to_string()).collect(),
-        cwd: reviewed.checkout.dir.clone(),
+        cwd: builddir.join("worktree"),
     };
     let mut command = spec.command()?;
     command
@@ -284,6 +286,28 @@ fn set_private_home(command: &mut Command, builddir: &Path) -> Result<()> {
         .env("npm_config_cache", cache.join("npm"))
         .env("TMPDIR", builddir.join("tmp"));
     std::fs::create_dir_all(builddir.join("tmp"))?;
+    Ok(())
+}
+
+fn copy_tree(from: &Path, to: &Path) -> Result<()> {
+    let metadata = std::fs::symlink_metadata(from)?;
+    if metadata.is_dir() {
+        std::fs::create_dir_all(to)?;
+        for entry in std::fs::read_dir(from)? {
+            let entry = entry?;
+            copy_tree(&entry.path(), &to.join(entry.file_name()))?;
+        }
+    } else if metadata.is_file() {
+        if let Some(parent) = to.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(from, to)?;
+    } else if metadata.file_type().is_symlink() {
+        if let Some(parent) = to.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::os::unix::fs::symlink(std::fs::read_link(from)?, to)?;
+    }
     Ok(())
 }
 

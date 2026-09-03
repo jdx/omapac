@@ -115,8 +115,15 @@ fn build_runs_both_phases_with_a_scrubbed_environment() {
         .rig
         .dir
         .path()
-        .join("cache/omapac/aur/pkgs/yay/yay-13.0.1-1-x86_64.pkg.tar.zst");
+        .join("cache/omapac/aur/.omapac-build/pkgs/yay/yay-13.0.1-1-x86_64.pkg.tar.zst");
     assert!(pkg.exists(), "{}", pkg.display());
+    assert!(
+        s.rig
+            .dir
+            .path()
+            .join("cache/omapac/aur/.omapac-build/build/yay/worktree/PKGBUILD")
+            .is_file()
+    );
 }
 
 #[test]
