@@ -18,7 +18,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 pub use settings::Settings;
-use settings::{PolicyToml, UpdateToml};
+use settings::{ChannelToml, PolicyToml, UpdateToml};
 
 /// Where a declared package comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -67,6 +67,7 @@ pub struct LayerToml {
     packages: IndexMap<String, PackageValue>,
     policy: PolicyToml,
     update: UpdateToml,
+    channel: ChannelToml,
 }
 
 /// A declared package after merging, with where it was declared.
@@ -168,7 +169,7 @@ impl Manifest {
                     },
                 );
             }
-            settings.merge(&layer.policy, &layer.update);
+            settings.merge(&layer.policy, &layer.update, &layer.channel);
         }
         let mut managed = Vec::new();
         for path in &paths.managed {
