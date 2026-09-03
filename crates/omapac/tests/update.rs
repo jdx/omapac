@@ -233,7 +233,7 @@ fn aur_upgrade_is_reviewed_built_and_installed_when_clean() {
     );
     assert!(
         log.iter()
-            .any(|l| l.contains("-U --noconfirm -- ") && l.contains("yay-13.0.2-1")),
+            .any(|l| l.contains("-U --noconfirm --asdeps -- ") && l.contains("yay-13.0.2-1")),
         "{log:?}"
     );
     let lock = std::fs::read_to_string(s.rig.home.join(".config/omapac/omapac.lock")).unwrap();
@@ -244,6 +244,81 @@ fn aur_upgrade_is_reviewed_built_and_installed_when_clean() {
     let ledger = std::fs::read_to_string(s.rig.root.join("var/lib/omapac/state.json")).unwrap();
     let ledger: serde_json::Value = serde_json::from_str(&ledger).unwrap();
     assert_eq!(ledger["packages"]["yay"]["explicit"], false);
+}
+
+#[test]
+fn aur_upgrade_fails_when_makepkg_does_not_produce_the_candidate() {
+    let s = setup(rpc_with_newer_yay());
+    let pkgbuild = YAY_PKGBUILD.replace("pkgver=13.0.1", "pkgver=13.0.2");
+    let srcinfo = YAY_SRCINFO.replace("pkgver = 13.0.1", "pkgver = 13.0.2");
+    s.aur.commit(
+        "yay",
+        &[("PKGBUILD", &pkgbuild), (".SRCINFO", &srcinfo)],
+        "bump to 13.0.2",
+        "2026-02-01T00:00:00Z",
+    );
+    let makepkg = s.rig.bin.join("makepkg");
+    let script = std::fs::read_to_string(&makepkg).unwrap().replace(
+        "mapfile -t pkgnames < <(sed -n 's/^pkgname = //p' .SRCINFO)",
+        "pkgnames=(\"unexpected-output\")",
+    );
+    std::fs::write(makepkg, script).unwrap();
+
+    let (code, out, err) = run(&s, &["update", "-y", "--aur-only"], "");
+    assert_ne!(code, 0, "{out}");
+    assert!(
+        err.contains("yay: makepkg did not produce the requested package"),
+        "{err}"
+    );
+    assert!(!out.contains("updated yay"), "{out}");
+    assert!(
+        s.rig.log().iter().all(|line| !line.contains(" -U ")),
+        "{:?}",
+        s.rig.log()
+    );
+}
+
+#[test]
+fn aur_update_ignores_configured_names() {
+    let s = setup(rpc_with_newer_yay());
+    std::fs::write(
+        s.rig.home.join(".config/omapac/omapac.toml"),
+        "[policy]\naur.jail = false\n[update]\nignore = [\"yay\"]\n",
+    )
+    .unwrap();
+    let (code, out, err) = run(&s, &["update", "-y", "--aur-only"], "");
+    assert_eq!(code, 0, "{err}\n{out}");
+    assert!(!out.contains("yay  13.0.1-1 ->"), "{out}");
+    assert!(s.rig.log().iter().all(|line| !line.starts_with("makepkg")));
+}
+
+#[test]
+fn aur_update_does_not_install_uninstalled_split_outputs() {
+    let s = setup(rpc_with_newer_yay());
+    let pkgbuild = YAY_PKGBUILD.replace("pkgver=13.0.1", "pkgver=13.0.2");
+    let srcinfo = YAY_SRCINFO
+        .replace("pkgver = 13.0.1", "pkgver = 13.0.2")
+        .replace(
+            "pkgname = yay\n",
+            "pkgname = yay\n\tdepends = yay-lib\n\npkgname = yay-lib\n\npkgname = yay-doc\n",
+        );
+    s.aur.commit(
+        "yay",
+        &[("PKGBUILD", &pkgbuild), (".SRCINFO", &srcinfo)],
+        "split docs from yay",
+        "2026-02-01T00:00:00Z",
+    );
+    let (code, out, err) = run(&s, &["update", "-y", "--aur-only"], "");
+    assert_eq!(code, 0, "{err}\n{out}");
+    let install = s
+        .rig
+        .log()
+        .into_iter()
+        .find(|line| line.contains("-U --noconfirm"))
+        .unwrap();
+    assert!(install.contains("yay-13.0.2-1"), "{install}");
+    assert!(install.contains("yay-lib-13.0.2-1"), "{install}");
+    assert!(!install.contains("yay-doc"), "{install}");
 }
 
 #[test]
