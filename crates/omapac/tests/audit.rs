@@ -61,8 +61,12 @@ fn audit_lists_open_issues_by_severity() {
     assert_eq!(report["vulnerabilities"][0]["package"], "pacman");
     assert_eq!(report["vulnerabilities"][0]["fix_available"], true);
 
-    let (code, _, _) = run(&rig, &url, &["audit", "--fail"]);
+    let (code, out, _) = run(&rig, &url, &["audit", "--fail"]);
     assert_eq!(code, 1, "--fail exits 1 with issues");
+    assert!(
+        out.contains("pacman") && out.contains("yay"),
+        "--fail flushes its piped report: {out}"
+    );
 
     // Offline reads the cache the first run wrote; without a cache it
     // is an error, and a dead tracker falls back to the cache with a note.
