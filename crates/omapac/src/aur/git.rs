@@ -188,15 +188,7 @@ impl Checkout {
     /// Lines added plus removed between two commits, across the tree.
     pub fn diff_size(&self, from: &str, to: &str) -> Result<usize> {
         let out = self.git(&["diff", "--numstat", from, to])?;
-        Ok(out
-            .lines()
-            .filter_map(|line| {
-                let mut parts = line.split('\t');
-                let added: usize = parts.next()?.parse().ok()?;
-                let removed: usize = parts.next()?.parse().ok()?;
-                Some(added + removed)
-            })
-            .sum())
+        Ok(numstat_size(&out))
     }
 
     /// The `.SRCINFO` at a commit, parsed.
@@ -209,9 +201,37 @@ impl Checkout {
     }
 }
 
+fn numstat_size(out: &str) -> usize {
+    out.lines().fold(0, |total, line| {
+        let mut parts = line.split('\t');
+        let Some(added) = parts.next() else {
+            return total;
+        };
+        let Some(removed) = parts.next() else {
+            return total;
+        };
+        if added == "-" || removed == "-" {
+            return usize::MAX;
+        }
+        let size = added
+            .parse::<usize>()
+            .ok()
+            .zip(removed.parse::<usize>().ok())
+            .map(|(added, removed)| added.saturating_add(removed))
+            .unwrap_or(0);
+        total.saturating_add(size)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn binary_numstat_is_unbounded_for_review_gates() {
+        assert_eq!(numstat_size("-\t-\timage.bin\n"), usize::MAX);
+        assert_eq!(numstat_size("2\t3\tPKGBUILD\n"), 5);
+    }
 
     /// A bare "AUR" with one package that has two commits.
     fn fake_aur() -> (tempfile::TempDir, Remote) {
