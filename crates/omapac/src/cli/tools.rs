@@ -333,16 +333,17 @@ fn fetch_artifact(
     let staging = tempfile::tempdir_in(&fetch.dest)?;
     let staged = staging.path().join(&artifact.name);
     std::fs::write(&staged, &bytes)?;
-    // The vendor's packslip, verified against the pinned vendor key and
-    // the file just written.
-    if version.vendor_pubkey.is_empty() {
-        bail!(
-            "{} {} has no version-pinned vendor key",
-            fetch.tool,
-            fetch.version
-        );
+    // A version may override the tool's pinned identity for a key
+    // rotation; otherwise the documented tool-level key applies.
+    let vendor_pubkey = if version.vendor_pubkey.is_empty() {
+        &entry.vendor_pubkey
+    } else {
+        &version.vendor_pubkey
+    };
+    if vendor_pubkey.is_empty() {
+        bail!("{} has no pinned vendor key", fetch.tool);
     }
-    let vendor_key = packslip::minisign::PublicKey::parse(&version.vendor_pubkey)
+    let vendor_key = packslip::minisign::PublicKey::parse(vendor_pubkey)
         .map_err(|e| eyre::eyre!("{}: vendor key in the index: {e}", fetch.tool))?;
     let vendor_sidecar = format!("{}.vendor.json", artifact.name);
     if !artifact.sidecars.iter().any(|s| s == &vendor_sidecar) {
