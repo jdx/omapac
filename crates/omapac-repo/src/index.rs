@@ -91,16 +91,36 @@ impl RunWith<()> for IndexCmd {
         let key_text = std::fs::read_to_string(&self.key)
             .wrap_err_with(|| format!("reading {}", self.key.display()))?;
         let key = SecretKey::parse(&key_text)?;
+        let previous = read_previous(&self.dir)?;
         let mut build_keys = Vec::new();
-        for path in &self.build_key {
-            let text = std::fs::read_to_string(path)
-                .wrap_err_with(|| format!("reading {}", path.display()))?;
+        let key_texts: Vec<(String, String)> = if self.build_key.is_empty() {
+            previous
+                .as_ref()
+                .map(|index| {
+                    index
+                        .build_keys
+                        .iter()
+                        .cloned()
+                        .map(|text| ("previous index".to_string(), text))
+                        .collect()
+                })
+                .unwrap_or_default()
+        } else {
+            self.build_key
+                .iter()
+                .map(|path| {
+                    std::fs::read_to_string(path)
+                        .wrap_err_with(|| format!("reading {}", path.display()))
+                        .map(|text| (path.display().to_string(), text))
+                })
+                .collect::<Result<_>>()?
+        };
+        for (source, text) in key_texts {
             build_keys.push((
-                PublicKey::parse(&text).map_err(|e| eyre::eyre!("{}: {e}", path.display()))?,
+                PublicKey::parse(&text).map_err(|e| eyre::eyre!("{source}: {e}"))?,
                 text,
             ));
         }
-        let previous = read_previous(&self.dir)?;
         let index = build(
             &self.repo,
             &self.dir,

@@ -191,6 +191,11 @@ fn attest_then_index_round_trip() {
         a_published
     );
     assert!(index["packages"]["d-1-1-x86_64.pkg.tar.zst"].is_object());
+    assert_eq!(index["build_keys"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        index["packages"]["a-1-1-x86_64.pkg.tar.zst"]["evidence"]["build_provenance"],
+        true
+    );
 
     // An explicit sequence must move forward.
     let (code, _, err) = repo_cmd(
