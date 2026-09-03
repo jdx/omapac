@@ -331,11 +331,14 @@ summary, and the git diff of PKGBUILD and install files between the approved and
 target commits. `omapac aur approve <pkg> [--commit]` records approval in the lock so a
 later unattended run proceeds.
 
-**Jailed builds.** makepkg runs as the invoking user, never root, in two phases so the
-jail can differ. The first phase, `makepkg --nobuild`, downloads sources, verifies
-checksums, and extracts with network allowed. The second phase, `makepkg --noextract`,
-runs under Landlock plus seccomp with writes limited to the build directory, network
-denied, and the environment scrubbed of tokens and agent sockets. Packages that
+**Jailed builds.** makepkg runs as the invoking user, never root, in three phases so the
+jail can differ. The first phase, `makepkg --verifysource`, only downloads sources and
+verifies checksums with network allowed; it does not extract them or execute
+`prepare()`. The second phase runs `makepkg --nobuild` under Landlock plus seccomp,
+with the verified source cache mounted read-only and network denied, to extract sources
+and execute the untrusted `prepare()` function. The final `makepkg --noextract` phase
+uses the same jail for the build and package functions, with writes limited to the
+build directory and the environment scrubbed of tokens and agent sockets. Packages that
 legitimately need network in `build()` get an explicit grant in
 `aur.allow_network_build`, or in the OPR package manifest for OPR-built packages. An
 AUR grant records the approved commit, becomes invalid when the candidate commit
@@ -555,9 +558,13 @@ What vetting a tool version means, run by the channel publisher of
 
 Channels match the distro channels: `tools/edge`, `tools/rc`, and `tools/stable`. A
 tool version reaches `stable` after the same soak as packages, so a stable machine gets
-tools and packages that aged together. The release manifest lists the tool index
-sequence alongside the package snapshot, which makes a given Omarchy stable state
-reproducible for tools as well.
+tools and packages that aged together. The release manifest lists the exact tool index
+sequence and channel pointer alongside the package snapshot. Both the plugin and later
+native mise integration first verify that manifest, reject a sequence below locally
+recorded rollback state, fetch that exact immutable tool index generation, and resolve
+versions only from it. A rollback pins the package snapshot, tool index sequence, and
+tool-channel pointer as one unit; `latest` never consults a newer current index while a
+release is pinned. This makes a given Omarchy stable state reproducible for tools too.
 
 How mise consumes it, in two stages:
 
@@ -599,11 +606,13 @@ snapshot and OPR index sequence it was built from, creation time, test suite res
 with logs, promotion times, and whether it was expedited or held. It also contains a
 map keyed by repository name with the SHA-256 digest of each exact sync database and a
 canonical package map keyed by `repo/name` whose value is the selected version and
-`tested` or `snapshot` label. `tested` means the package's pkgbase was present in the
-successful test run recorded by this manifest; every other package is `snapshot`.
-Keys are unique and sorted bytewise before signing, so clients can deterministically
-match a transaction package to its version and label. The whole manifest is signed
-with the index key.
+`tested` or `snapshot` label. The signed test result records each exact package output
+and selected version it exercised. `tested` is assigned only when both that output name
+and version match; unexercised siblings from a split PKGBUILD remain `snapshot`.
+Alternatively imported results must carry a signed pkgbase-to-output-and-version map
+before labels are derived. Keys are unique and sorted bytewise before signing, so
+clients can deterministically match a transaction package to its version and label.
+The whole manifest is signed with the index key.
 
 Channels are pointers: `edge` points at the newest snapshot; `rc` at the newest
 snapshot that passed the test suite; `stable` at the newest `rc` snapshot that soaked
