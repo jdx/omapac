@@ -159,12 +159,34 @@ impl SrcInfo {
 
     /// Whether any non-VCS source is checksummed with `SKIP`.
     pub fn has_skipped_checksum(&self, arch: &str) -> bool {
-        let sources = self.sources(arch);
-        let sums: Vec<&str> = self.checksums(arch).into_iter().map(|(_, v)| v).collect();
-        // Sums line up with sources per key; without per-key alignment
-        // across mixed keys, treat any SKIP beside a non-VCS source list
-        // as a finding.
-        sums.contains(&"SKIP") && sources.iter().any(|s| !s.is_vcs())
+        let arch_suffix = format!("_{arch}");
+        let mut checked = BTreeSet::new();
+        for (key, _) in self.checksums(arch) {
+            if !checked.insert(key) {
+                continue;
+            }
+            let source_key = if key.ends_with(&arch_suffix) {
+                format!("source{arch_suffix}")
+            } else {
+                "source".to_string()
+            };
+            let sources: Vec<Source> = self
+                .base
+                .all(&source_key)
+                .into_iter()
+                .map(Source::parse)
+                .collect();
+            if self
+                .base
+                .all(key)
+                .into_iter()
+                .zip(sources)
+                .any(|(sum, source)| sum == "SKIP" && !source.is_vcs())
+            {
+                return true;
+            }
+        }
+        false
     }
 
     /// Install scriptlets the recipe references.
@@ -343,6 +365,14 @@ mod tests {
         assert!(
             !info.has_skipped_checksum("x86_64"),
             "SKIP on a VCS source is normal"
+        );
+        let mixed = SrcInfo::parse(
+            "pkgbase = mixed\n\tpkgver = 1\n\tpkgrel = 1\n\tsource = git+https://x/y.git\n\tsource = fix.patch\n\tsha256sums = SKIP\n\tsha256sums = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n\npkgname = mixed\n",
+        )
+        .unwrap();
+        assert!(
+            !mixed.has_skipped_checksum("x86_64"),
+            "a VCS source's SKIP must not taint a hashed sibling"
         );
         assert_eq!(info.install_files().len(), 2);
 
