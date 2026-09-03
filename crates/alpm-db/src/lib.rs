@@ -6,3 +6,9 @@
 //! See `PLAN.md`, "Engine trait", for why that matters.
 
 #![forbid(unsafe_code)]
+
+pub mod conf;
+pub mod vercmp;
+
+pub use conf::{Check, Config, Options, Repo, SigLevel, Trust, Usage};
+pub use vercmp::{Evr, vercmp};
