@@ -29,8 +29,31 @@ pub fn write_signed<T: Serialize>(
 ) -> Result<()> {
     let bytes = serde_json::to_vec_pretty(value)?;
     let signature = key.sign(&bytes, comment).to_file();
-    write_atomic(path, &bytes)?;
-    write_atomic(&sig_path(path), signature.as_bytes())?;
+    write_signed_pair(path, &bytes, signature.as_bytes())
+}
+
+fn write_signed_pair(path: &Path, bytes: &[u8], signature: &[u8]) -> Result<()> {
+    let signature_path = sig_path(path);
+    let document_temp = path.with_extension("json.pair-tmp");
+    let signature_temp = signature_path.with_extension("minisig.pair-tmp");
+    std::fs::write(&document_temp, bytes)
+        .wrap_err_with(|| format!("writing {}", document_temp.display()))?;
+    if let Err(err) = std::fs::write(&signature_temp, signature) {
+        let _ = std::fs::remove_file(&document_temp);
+        return Err(err).wrap_err_with(|| format!("writing {}", signature_temp.display()));
+    }
+    let previous = std::fs::read(path).ok();
+    std::fs::rename(&document_temp, path)
+        .wrap_err_with(|| format!("publishing {}", path.display()))?;
+    if let Err(err) = std::fs::rename(&signature_temp, &signature_path) {
+        match previous {
+            Some(previous) => write_atomic(path, &previous)?,
+            None => {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+        return Err(err).wrap_err_with(|| format!("publishing {}", signature_path.display()));
+    }
     Ok(())
 }
 
@@ -58,5 +81,21 @@ pub fn now() -> String {
     match std::env::var("OMAPAC_REPO_NOW") {
         Ok(fixed) => fixed,
         Err(_) => jiff::Timestamp::now().to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failed_signature_publish_restores_document() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("feed.json");
+        std::fs::write(&path, b"old").unwrap();
+        std::fs::create_dir(sig_path(&path)).unwrap();
+        let key = SecretKey::from_seed([4u8; 32]);
+        assert!(write_signed(&path, &serde_json::json!({"new": true}), &key, "test").is_err());
+        assert_eq!(std::fs::read(path).unwrap(), b"old");
     }
 }

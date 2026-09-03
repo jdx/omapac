@@ -49,7 +49,7 @@ fn rpc() -> String {
     }))
 }
 
-const YAY_BUMP_PKGBUILD: &str = "# Maintainer: jguer\npkgname=yay\npkgver=13.0.2\npkgrel=1\nsource=(\"yay-13.0.2.tar.gz::https://github.com/Jguer/yay/archive/v13.0.2.tar.gz\")\nsha256sums=('0000000000000000000000000000000000000000000000000000000000000000')\nbuild() {\n  make build\n}\npackage() {\n  make DESTDIR=\"$pkgdir\" install\n}\n";
+const YAY_BUMP_PKGBUILD: &str = "# Maintainer: jguer\npkgname=yay\npkgver=13.0.2\npkgrel=1\nsource=(\"yay-${pkgver}.tar.gz::https://github.com/Jguer/yay/archive/v${pkgver}.tar.gz\")\nsha256sums=('0000000000000000000000000000000000000000000000000000000000000000')\nbuild() {\n  make build\n}\npackage() {\n  make DESTDIR=\"$pkgdir\" install\n}\n";
 const YAY_BUMP_SRCINFO: &str = "pkgbase = yay\n\tpkgver = 13.0.2\n\tpkgrel = 1\n\tarch = x86_64\n\tsource = yay-13.0.2.tar.gz::https://github.com/Jguer/yay/archive/v13.0.2.tar.gz\n\tsha256sums = 0000000000000000000000000000000000000000000000000000000000000000\n\npkgname = yay\n";
 
 struct Gate {
