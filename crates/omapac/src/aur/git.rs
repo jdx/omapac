@@ -211,8 +211,7 @@ impl Checkout {
 
 fn valid_pkgbase(pkgbase: &str) -> bool {
     !pkgbase.is_empty()
-        && pkgbase != "."
-        && pkgbase != ".."
+        && !pkgbase.starts_with('.')
         && pkgbase.bytes().all(|byte| {
             byte.is_ascii_alphanumeric() || matches!(byte, b'@' | b'.' | b'_' | b'+' | b'-')
         })
@@ -273,7 +272,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cache = dir.path().join("cache");
         let remote = Remote::aur();
-        for name in ["", "..", "../outside", "nested/package", "/tmp/package"] {
+        for name in [
+            "",
+            ".",
+            "..",
+            ".git",
+            ".hidden",
+            "../outside",
+            "nested/package",
+            "/tmp/package",
+        ] {
             assert!(Checkout::sync(&remote, &cache, name).is_err(), "{name:?}");
             assert!(Checkout::open(&cache, name).is_none(), "{name:?}");
         }
