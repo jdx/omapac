@@ -112,6 +112,47 @@ fn failed_retest_never_advances_past_a_manual_rc_rollback() {
 }
 
 #[test]
+fn passing_retest_does_not_retreat_a_held_rc_without_a_fallback() {
+    let t = Train::new();
+    let id = "2026-09-01T06";
+    assert_eq!(
+        t.run(
+            "2026-09-01T06:10:00Z",
+            &["cut", "--from", "mirror", "--id", id]
+        )
+        .0,
+        0
+    );
+    assert_eq!(
+        t.run(
+            "2026-09-01T06:20:00Z",
+            &["test", "--id", id, "--suite", "true"]
+        )
+        .0,
+        0
+    );
+    assert_eq!(
+        t.run(
+            "2026-09-01T06:30:00Z",
+            &["hold", "--id", id, "--reason", "investigating"]
+        )
+        .0,
+        0
+    );
+    assert_eq!(t.target("rc").as_deref(), Some(id));
+    assert_eq!(
+        t.run(
+            "2026-09-01T06:40:00Z",
+            &["test", "--id", id, "--suite", "true"]
+        )
+        .0,
+        0
+    );
+    assert_eq!(t.target("rc").as_deref(), Some(id));
+    assert!(t.release(id).promoted.rc.is_some());
+}
+
+#[test]
 fn cut_test_promote_hold_prune() {
     let t = Train::new();
 
