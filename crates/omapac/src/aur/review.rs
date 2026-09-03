@@ -33,6 +33,8 @@ pub struct Request<'a> {
     pub locked: Option<&'a AurEntry>,
     /// A commit to review instead of the remote head.
     pub commit: Option<&'a str>,
+    /// Whether selecting that commit is itself drift to report.
+    pub pinned: bool,
     /// Whether a human is present.
     pub interactive: bool,
     pub arch: &'a str,
@@ -163,7 +165,7 @@ fn gather(
             time: target_time,
         },
         approved,
-        pinned: request.commit.is_some(),
+        pinned: request.pinned,
         first_install: request.host.installed_package(name)?.is_none(),
         recipe: policy::Recipe {
             version: srcinfo.version(),
@@ -222,10 +224,13 @@ impl Reviewed {
     pub fn review_text(&self) -> Result<String> {
         let mut paths = vec!["PKGBUILD".to_string()];
         paths.extend(self.evidence.recipe.install_files.iter().cloned());
-        if let Some(approved) = &self.evidence.approved
-            && approved.commit != self.target
-            && self.checkout.has_commit(&approved.commit)
-        {
+        if let Some(approved) = &self.evidence.approved {
+            if approved.commit == self.target {
+                return Ok(String::new());
+            }
+            if !self.checkout.has_commit(&approved.commit) {
+                return self.full_review_text(&paths);
+            }
             for file in &approved.install_files {
                 if !paths.contains(file) {
                     paths.push(file.clone());
@@ -234,8 +239,12 @@ impl Reviewed {
             let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
             return self.checkout.diff(&approved.commit, &self.target, &paths);
         }
+        self.full_review_text(&paths)
+    }
+
+    fn full_review_text(&self, paths: &[String]) -> Result<String> {
         let mut text = String::new();
-        for path in &paths {
+        for path in paths {
             if let Some(content) = self.checkout.show(&self.target, path)? {
                 text.push_str(&format!("==> {path}\n{content}"));
                 if !content.ends_with('\n') {
