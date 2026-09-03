@@ -10,10 +10,10 @@ use eyre::{Result, bail};
 /// terminal, because a command that would block forever or silently take
 /// the default is worse than one that asks for `-y`.
 pub fn confirm(question: &str, default: bool) -> Result<bool> {
-    let stdin = std::io::stdin();
-    if !stdin.is_terminal() {
+    if !interactive() {
         bail!("{question}: no terminal to ask on; pass -y to proceed without asking");
     }
+    let stdin = std::io::stdin();
     let hint = if default { "[Y/n]" } else { "[y/N]" };
     loop {
         eprint!("{question} {hint} ");
