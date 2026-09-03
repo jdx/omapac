@@ -272,6 +272,9 @@ For each package, syncs the AUR checkout, reviews the remote head with the unatt
     flag --verdicts help="Append a static verdict per reviewed commit to this feed" {
         arg <VERDICTS>
     }
+    flag --advisories help="Advisory kill list to enforce while gating commits" {
+        arg <ADVISORIES>
+    }
     flag "-k --key" help="The feed signing key (with --verdicts)" {
         arg <KEY>
     }
@@ -283,6 +286,7 @@ For each package, syncs the AUR checkout, reviews the remote head with the unatt
     complete config type=path
     complete sysroot type=dir
     complete verdicts type=path
+    complete advisories type=path
     complete key type=path
 }
 cmd tool-channel help="Vet vendor tool releases and publish them for mise" subcommand_required=#true {
