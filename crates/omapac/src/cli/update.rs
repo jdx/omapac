@@ -328,14 +328,7 @@ impl RunWith<&App> for Update {
             .as_ref()
             .is_some_and(|(resolved, _)| resolved.is_empty());
         let converged_release = if repo_plan.is_some() && !self.no_refresh {
-            let release = app.active_release(&host, false);
-            match release {
-                Ok(release) => release,
-                Err(err) => {
-                    eprintln!("warning: could not cache the release manifest: {err:#}");
-                    None
-                }
-            }
+            release.clone()
         } else {
             None
         };
