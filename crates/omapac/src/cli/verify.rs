@@ -9,6 +9,17 @@ use crate::host::Host;
 use crate::resolve::Tier;
 use crate::trust::{self, Index};
 
+fn require_omapac_index(source: &crate::host::Source, target: &str) -> Result<()> {
+    if !matches!(source.tier, Tier::Opr | Tier::Custom(_)) {
+        bail!(
+            "{target} comes from [{}] ({}), which publishes no omapac index; pacman's signature check is its evidence",
+            source.name,
+            source.tier
+        );
+    }
+    Ok(())
+}
+
 /// Re-run the evidence chain for a package or a package file
 ///
 /// For a repository package, checks the file in pacman's cache against
@@ -95,54 +106,47 @@ impl RunWith<&App> for Verify {
     fn run_with(self, app: &App) -> Self::Output {
         let host = app.host()?;
         let path = Path::new(&self.target);
-        let (name, repo, filename, file): (String, String, String, Option<PathBuf>) = if path
-            .is_file()
-        {
-            let filename = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or_default()
-                .to_string();
-            // Find which repository's database lists this file name.
-            let mut found = None;
-            for source in &host.sources {
-                if let Some(db) = source.db()?
-                    && let Some(p) = db.packages.iter().find(|p| p.filename == filename)
-                {
-                    found = Some((p.name.clone(), source.name.clone()));
-                    break;
+        let (name, repo, filename, file): (String, String, String, Option<PathBuf>) =
+            if path.is_file() {
+                let filename = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or_default()
+                    .to_string();
+                // Find which repository's database lists this file name.
+                let mut found = None;
+                for source in &host.sources {
+                    if let Some(db) = source.db()?
+                        && let Some(p) = db.packages.iter().find(|p| p.filename == filename)
+                    {
+                        require_omapac_index(source, &filename)?;
+                        found = Some((p.name.clone(), source.name.clone()));
+                        break;
+                    }
                 }
-            }
-            let Some((name, repo)) = found else {
-                bail!("{filename} is in no sync database; cannot tell which index to check");
+                let Some((name, repo)) = found else {
+                    bail!("{filename} is in no sync database; cannot tell which index to check");
+                };
+                (name, repo, filename, Some(path.to_path_buf()))
+            } else {
+                let Some((source, package)) = host.find_sync(&self.target)? else {
+                    bail!("{} is in no sync database", self.target);
+                };
+                require_omapac_index(source, &self.target)?;
+                let cached = host
+                    .config
+                    .options
+                    .cache_dirs()
+                    .into_iter()
+                    .map(|dir| app.rooted(&dir).join(&package.filename))
+                    .find(|p| p.is_file());
+                (
+                    package.name.clone(),
+                    source.name.clone(),
+                    package.filename.clone(),
+                    cached,
+                )
             };
-            (name, repo, filename, Some(path.to_path_buf()))
-        } else {
-            let Some((source, package)) = host.find_sync(&self.target)? else {
-                bail!("{} is in no sync database", self.target);
-            };
-            if !matches!(source.tier, Tier::Opr) && !matches!(source.tier, Tier::Custom(_)) {
-                bail!(
-                    "{} comes from [{}] ({}), which publishes no omapac index; pacman's signature check is its evidence",
-                    self.target,
-                    source.name,
-                    source.tier
-                );
-            }
-            let cached = host
-                .config
-                .options
-                .cache_dirs()
-                .into_iter()
-                .map(|dir| app.rooted(&dir).join(&package.filename))
-                .find(|p| p.is_file());
-            (
-                package.name.clone(),
-                source.name.clone(),
-                package.filename.clone(),
-                cached,
-            )
-        };
         let fetched = app.index(&host, &repo, self.offline)?;
         let index = &fetched.value;
         let Some(entry) = index.package(&filename) else {
