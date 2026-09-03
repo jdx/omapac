@@ -18,6 +18,9 @@ pub struct Install {
     /// Package names, optionally as repo/name
     #[usage(required = true)]
     packages: Vec<String>,
+    /// Install from the AUR: review, approve, build in the jail, install
+    #[usage(short = 'a', long)]
+    aur: bool,
     /// Proceed without asking; refuses a plan with warnings
     #[usage(short = 'y', long)]
     yes: bool,
@@ -39,6 +42,9 @@ impl RunWith<&App> for Install {
     type Output = Result<()>;
 
     fn run_with(self, app: &App) -> Self::Output {
+        if self.aur {
+            return self.run_aur(app);
+        }
         let host = app.host()?;
         let targets = resolve_targets(&host, &self.packages)?;
         let engine = app.engine()?;
@@ -92,6 +98,58 @@ impl RunWith<&App> for Install {
                 )?
             };
             app.record(&patch)?;
+        }
+        Ok(())
+    }
+}
+
+impl Install {
+    /// The AUR path: one package at a time, each reviewed, approved,
+    /// built, and installed from its file.
+    fn run_aur(&self, app: &App) -> Result<()> {
+        for name in &self.packages {
+            let prepared = app.prepare_aur(name, None, true, self.yes)?;
+            if self.dry_run {
+                println!(
+                    "would build {name} at {} and install it",
+                    &prepared.reviewed.target[..12]
+                );
+                continue;
+            }
+            let files = app.build_aur(&prepared)?;
+            let engine = app.engine()?;
+            let install = crate::engine::FileInstall {
+                files: files.clone(),
+                as_deps: self.as_deps,
+                overwrite: Vec::new(),
+            };
+            crate::engine::Engine::install_files(
+                &engine,
+                &install,
+                crate::engine::ApplyOpts {
+                    dry_run: false,
+                    no_confirm: true,
+                },
+            )?;
+            let mut patch = crate::ledger::Patch::default();
+            patch.upsert.insert(
+                name.clone(),
+                crate::ledger::Entry {
+                    version: prepared.reviewed.srcinfo.version(),
+                    tier: crate::resolve::Tier::Aur,
+                    repo: None,
+                    aur_commit: Some(prepared.reviewed.target.clone()),
+                    explicit: !self.as_deps,
+                    by: "install".to_string(),
+                    at: crate::ledger::now(),
+                },
+            );
+            app.record(&patch)?;
+            println!(
+                "installed {name} {} from AUR commit {}",
+                prepared.reviewed.srcinfo.version(),
+                &prepared.reviewed.target[..12]
+            );
         }
         Ok(())
     }

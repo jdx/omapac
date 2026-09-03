@@ -19,8 +19,42 @@ pub struct Aur {
 #[usage(run_with)]
 enum AurCommands {
     Approve(Approve),
+    Build(Build),
     Diff(Diff),
     Review(Review),
+}
+
+/// Build an approved AUR package without installing it
+///
+/// Sources are fetched with network, then makepkg runs in the jail with
+/// writes limited to the build directory and no network unless the
+/// manifest grants it. Prints the package files it built.
+#[derive(Debug, usage_rs::Args)]
+pub struct Build {
+    /// The package name
+    package: String,
+    /// Build this commit instead of the approved one
+    #[usage(long)]
+    commit: Option<String>,
+    /// Print the files as JSON
+    #[usage(short = 'J', long)]
+    json: bool,
+}
+
+impl RunWith<&App> for Build {
+    type Output = Result<()>;
+
+    fn run_with(self, app: &App) -> Self::Output {
+        let prepared = app.prepare_aur(&self.package, self.commit.as_deref(), true, false)?;
+        let files = app.build_aur(&prepared)?;
+        if self.json {
+            return print_json(&files);
+        }
+        for file in files {
+            println!("{}", file.display());
+        }
+        Ok(())
+    }
 }
 
 impl RunWith<&App> for Aur {
@@ -84,7 +118,132 @@ pub struct Diff {
     commit: Option<String>,
 }
 
+/// A package that has been reviewed and is cleared for building.
+pub struct Prepared {
+    pub reviewed: Reviewed,
+    pub settings: crate::manifest::Settings,
+    pub arch: String,
+}
+
 impl App {
+    /// Review `name` and check it is approved at the target commit, or
+    /// approve it interactively. `yes` means unattended: an unapproved or
+    /// denied package is refused rather than asked about.
+    pub fn prepare_aur(
+        &self,
+        name: &str,
+        commit: Option<&str>,
+        _interactive_hint: bool,
+        yes: bool,
+    ) -> Result<Prepared> {
+        let interactive = !yes && crate::ui::interactive();
+        let (reviewed, mut lock) = self.review_aur(name, commit, interactive)?;
+        let manifest = self.manifest()?;
+        let settings = manifest.settings.clone();
+        let approved_here = lock
+            .aur
+            .get(name)
+            .is_some_and(|entry| entry.commit == reviewed.target);
+        if !approved_here {
+            if !interactive {
+                bail!(
+                    "{name} at {} is not approved; run `omapac aur review {name}` and `omapac aur approve {name}` first",
+                    &reviewed.target[..12]
+                );
+            }
+            print!("{}", render(&reviewed));
+            let text = reviewed.review_text()?;
+            if !text.is_empty() {
+                println!();
+                print!("{text}");
+            }
+            if reviewed.report.denied() {
+                eprintln!(
+                    "{} finding(s) deny this commit",
+                    reviewed.report.denials().count()
+                );
+            }
+            if !crate::ui::confirm(
+                &format!("Approve and build {name} at {}?", &reviewed.target[..12]),
+                false,
+            )? {
+                bail!("not approved");
+            }
+            lock.aur.insert(name.to_string(), reviewed.lock_entry());
+            lock.save(&self.lockfile_path())?;
+        }
+        if !reviewed.evidence.recipe.install_files.is_empty()
+            && settings.aur_install_scripts == crate::manifest::settings::InstallScripts::Deny
+        {
+            bail!(
+                "{name} carries install scriptlet(s) {} and policy says deny",
+                reviewed.evidence.recipe.install_files.join(", ")
+            );
+        }
+        let host = self.host()?;
+        let arch = host
+            .config
+            .options
+            .arch()
+            .unwrap_or_else(|| alpm_db::conf::host_arch().to_string());
+        Ok(Prepared {
+            reviewed,
+            settings,
+            arch,
+        })
+    }
+
+    /// Install missing repository dependencies, then build.
+    pub fn build_aur(&self, prepared: &Prepared) -> Result<Vec<std::path::PathBuf>> {
+        let host = self.host()?;
+        let missing = crate::aur::build::missing_deps(&host, &prepared.reviewed, &prepared.arch)?;
+        if !missing.other.is_empty() {
+            bail!(
+                "{}: dependencies not in any repository: {}; install them first (AUR dependencies are not resolved yet)",
+                prepared.reviewed.pkgname,
+                missing.other.join(", ")
+            );
+        }
+        if !missing.repo.is_empty() {
+            let engine = self.engine()?;
+            let mut tx = crate::engine::Transaction::install(missing.repo.clone());
+            if let crate::engine::Operation::Install { as_deps, .. } = &mut tx.operation {
+                *as_deps = true;
+            }
+            let resolved = crate::engine::Engine::plan(&engine, &tx)?;
+            let command = engine
+                .apply_invocation(
+                    &tx,
+                    crate::engine::ApplyOpts {
+                        dry_run: true,
+                        no_confirm: true,
+                    },
+                )
+                .display();
+            let plan = super::transaction::plan(&host, &resolved, command);
+            let performed = super::transaction::confirm_and_apply(
+                &engine,
+                &resolved,
+                &plan,
+                "install dependencies",
+                !crate::ui::interactive(),
+                false,
+            )?;
+            if performed {
+                let targets: Vec<String> = missing.repo.iter().map(|t| t.name.clone()).collect();
+                self.record(&super::transaction::ledger_patch(
+                    &plan, &targets, "install", false,
+                ))?;
+            }
+        }
+        let opts = crate::aur::build::BuildOpts::from_settings(
+            &prepared.settings,
+            &prepared.reviewed.pkgbase,
+            &crate::aur::cache_dir(),
+        )?;
+        crate::aur::build::build(&prepared.reviewed, &opts)
+    }
+
     /// Where AUR repositories are cloned from; `OMAPAC_AUR_GIT_BASE`
     /// points at a mirror or a test remote.
     pub fn aur_remote(&self) -> crate::aur::git::Remote {

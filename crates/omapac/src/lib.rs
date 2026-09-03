@@ -10,6 +10,7 @@ pub mod aur;
 pub mod cli;
 pub mod engine;
 pub mod host;
+pub mod jail;
 pub mod ledger;
 pub mod lockfile;
 pub mod manifest;

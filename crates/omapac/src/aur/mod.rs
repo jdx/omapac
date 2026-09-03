@@ -2,6 +2,7 @@
 //! and `.SRCINFO` parsing. Nothing here builds anything; see `PLAN.md`,
 //! "AUR is commit-bound".
 
+pub mod build;
 pub mod git;
 pub mod review;
 pub mod rpc;
