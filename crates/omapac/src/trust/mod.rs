@@ -10,7 +10,11 @@
 
 pub mod feeds;
 
-use std::path::{Path, PathBuf};
+use std::{
+    io::Write as _,
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use eyre::{Context as _, Result, bail};
 use packslip::minisign::{PublicKey, Sig};
@@ -120,6 +124,16 @@ impl Cache {
 
     /// The cached bytes and signature, if both exist.
     pub fn read(&self, name: &str) -> Option<(Vec<u8>, String, std::time::SystemTime)> {
+        let combined = self.path(&format!("{name}.cache"));
+        if let Ok(data) = std::fs::read(&combined)
+            && let Ok(cached) = serde_json::from_slice::<CachedFeed>(&data)
+        {
+            let fetched = std::fs::metadata(&combined)
+                .and_then(|m| m.modified())
+                .ok()?;
+            return Some((cached.bytes, cached.signature, fetched));
+        }
+        // Read the original two-file format for migration.
         let bytes = std::fs::read(self.path(name)).ok()?;
         let signature = std::fs::read_to_string(self.path(&format!("{name}.minisig"))).ok()?;
         let fetched = std::fs::metadata(self.path(name))
@@ -131,10 +145,43 @@ impl Cache {
     pub fn write(&self, name: &str, bytes: &[u8], signature: &str) -> Result<()> {
         std::fs::create_dir_all(&self.dir)
             .wrap_err_with(|| format!("creating {}", self.dir.display()))?;
-        std::fs::write(self.path(name), bytes)?;
-        std::fs::write(self.path(&format!("{name}.minisig")), signature)?;
+        let path = self.path(&format!("{name}.cache"));
+        let data = serde_json::to_vec(&CachedFeed {
+            bytes: bytes.to_vec(),
+            signature: signature.to_string(),
+        })?;
+        static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+        let (temp_path, mut temp) = loop {
+            let nonce = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
+            let temp_path = self
+                .dir
+                .join(format!(".{name}.cache.tmp-{}-{nonce}", std::process::id()));
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temp_path)
+            {
+                Ok(file) => break (temp_path, file),
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(err) => return Err(err.into()),
+            }
+        };
+        if let Err(err) = temp
+            .write_all(&data)
+            .and_then(|()| temp.sync_all())
+            .and_then(|()| std::fs::rename(&temp_path, &path))
+        {
+            let _ = std::fs::remove_file(&temp_path);
+            return Err(err.into());
+        }
         Ok(())
     }
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CachedFeed {
+    bytes: Vec<u8>,
+    signature: String,
 }
 
 /// A verified feed document with where it came from.
@@ -185,7 +232,9 @@ pub fn fetch<T: serde::de::DeserializeOwned>(
             {
                 bail!("{name} sequence is older than the cached copy");
             }
-            cache.write(name, &bytes, &signature)?;
+            if let Err(err) = cache.write(name, &bytes, &signature) {
+                eprintln!("warning: {name}: verified feed could not be cached: {err:#}");
+            }
             Ok(Fetched {
                 value,
                 fresh: true,
