@@ -131,6 +131,9 @@ impl App {
             );
         }
         let path = self.mirrorlist_path();
+        let original = std::fs::read_to_string(&path)
+            .wrap_err_with(|| format!("reading {}", path.display()))?;
+        let was_pinned = channel::current_pin(&path).is_some();
         channel::write_privileged(
             &path,
             &channel::pin_text(&base, id),
@@ -141,8 +144,24 @@ impl App {
             snapshot: Some(id.to_string()),
             ..Default::default()
         };
-        self.record(&patch)?;
+        if let Err(err) = self.record(&patch) {
+            restore_mirrorlist(self, &path, &original, was_pinned)?;
+            return Err(err.wrap_err("recording the snapshot pin"));
+        }
         Ok(release)
+    }
+}
+
+fn restore_mirrorlist(
+    app: &App,
+    path: &std::path::Path,
+    contents: &str,
+    was_pinned: bool,
+) -> Result<()> {
+    if was_pinned {
+        channel::write_privileged(path, contents, false, app.paths.sysroot.as_deref())
+    } else {
+        channel::restore_privileged(path, contents, app.paths.sysroot.as_deref())
     }
 }
 
@@ -318,10 +337,21 @@ impl RunWith<&App> for Rollback {
         let mirrorlist = app.mirrorlist_path();
         let original_mirrorlist = std::fs::read_to_string(&mirrorlist)
             .wrap_err_with(|| format!("reading {}", mirrorlist.display()))?;
+        let was_pinned = channel::current_pin(&mirrorlist).is_some();
         let previous_snapshot = app.ledger()?.snapshot.unwrap_or_default();
         let release = app.pin(&self.snapshot, self.force, false)?;
         println!("pinned to snapshot {} ({})", release.id, describe(&release));
-        let engine = app.engine()?;
+        let engine = match app.engine() {
+            Ok(engine) => engine,
+            Err(err) => {
+                restore_mirrorlist(app, &mirrorlist, &original_mirrorlist, was_pinned)?;
+                app.record(&crate::ledger::Patch {
+                    snapshot: Some(previous_snapshot),
+                    ..Default::default()
+                })?;
+                return Err(err);
+            }
+        };
         let mut applied = false;
         let result = (|| -> Result<()> {
             engine.refresh(
@@ -375,12 +405,7 @@ impl RunWith<&App> for Rollback {
                     "packages were rolled back; retaining the snapshot pin after a later bookkeeping failure",
                 ));
             }
-            channel::write_privileged(
-                &mirrorlist,
-                &original_mirrorlist,
-                false,
-                app.paths.sysroot.as_deref(),
-            )?;
+            restore_mirrorlist(app, &mirrorlist, &original_mirrorlist, was_pinned)?;
             app.record(&crate::ledger::Patch {
                 snapshot: Some(previous_snapshot),
                 ..Default::default()

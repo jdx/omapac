@@ -264,8 +264,32 @@ fn rollback_restores_the_pin_when_confirmation_fails() {
         std::fs::read_to_string(s.rig.root.join("etc/pacman.d/mirrorlist")).unwrap(),
         original
     );
+    assert!(
+        !s.rig
+            .root
+            .join("etc/pacman.d/mirrorlist.omapac-unpinned")
+            .exists()
+    );
     let ledger = std::fs::read_to_string(s.rig.root.join("var/lib/omapac/state.json")).unwrap();
     assert!(!ledger.contains("2026-09-01T06"), "{ledger}");
+}
+
+#[test]
+fn pin_restores_the_mirrorlist_when_recording_fails() {
+    let s = setup();
+    let mirrorlist = s.rig.root.join("etc/pacman.d/mirrorlist");
+    let original = std::fs::read_to_string(&mirrorlist).unwrap();
+    std::fs::create_dir_all(s.rig.root.join("var/lib/omapac/state.json")).unwrap();
+    let (code, _, err) = run(&s, &["channel", "pin", "2026-09-01T06"], "");
+    assert_ne!(code, 0);
+    assert!(err.contains("recording the snapshot pin"), "{err}");
+    assert_eq!(std::fs::read_to_string(mirrorlist).unwrap(), original);
+    assert!(
+        !s.rig
+            .root
+            .join("etc/pacman.d/mirrorlist.omapac-unpinned")
+            .exists()
+    );
 }
 
 #[test]
