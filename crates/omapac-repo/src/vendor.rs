@@ -454,6 +454,9 @@ fn pkgbase_of(pkgbuild: &str) -> Option<String> {
 /// `sha256sums=(...)` used when only one architecture is configured.
 pub fn rewrite_pkgbuild(pkgbuild: &str, report: &Report) -> Result<String> {
     validate_pkgver(&report.version)?;
+    for chosen in report.artifacts.values() {
+        validate_sha256(&chosen.sha256)?;
+    }
     let mut out = String::with_capacity(pkgbuild.len());
     let mut lines = pkgbuild.lines().peekable();
     let mut replaced_sums = Vec::new();
@@ -528,6 +531,17 @@ fn validate_pkgver(version: &str) -> Result<()> {
     Ok(())
 }
 
+fn validate_sha256(digest: &str) -> Result<()> {
+    if digest.len() != 64
+        || !digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        bail!("sha256 {digest:?} must be 64 lowercase hex characters");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -560,21 +574,27 @@ mod tests {
     #[test]
     fn rewrites_version_and_sums() {
         let pkgbuild = "pkgname=tool-bin\npkgver=1.0.0\npkgrel=3\nsource_x86_64=(\"https://x/tool-x86_64.tar.gz\")\nsha256sums_x86_64=('old')\nsha256sums_aarch64=(\n  'old2'\n)\npackage() { :; }\n";
+        let aa = "a".repeat(64);
+        let bb = "b".repeat(64);
         let out =
-            rewrite_pkgbuild(pkgbuild, &report(&[("x86_64", "aa"), ("aarch64", "bb")])).unwrap();
+            rewrite_pkgbuild(pkgbuild, &report(&[("x86_64", &aa), ("aarch64", &bb)])).unwrap();
         assert_eq!(
             out,
-            "pkgname=tool-bin\npkgver=2.0.0\npkgrel=1\nsource_x86_64=(\"https://x/tool-x86_64.tar.gz\")\nsha256sums_x86_64=('aa')\nsha256sums_aarch64=('bb')\npackage() { :; }\n"
+            format!(
+                "pkgname=tool-bin\npkgver=2.0.0\npkgrel=1\nsource_x86_64=(\"https://x/tool-x86_64.tar.gz\")\nsha256sums_x86_64=('{aa}')\nsha256sums_aarch64=('{bb}')\npackage() {{ :; }}\n"
+            )
         );
         let plain = "pkgver=1\npkgrel=1\nsha256sums=('old')\n";
-        let out = rewrite_pkgbuild(plain, &report(&[("x86_64", "cc")])).unwrap();
-        assert!(out.contains("sha256sums=('cc')"), "{out}");
-        assert!(rewrite_pkgbuild("pkgver=1\n", &report(&[("x86_64", "cc")])).is_err());
+        let cc = "c".repeat(64);
+        let out = rewrite_pkgbuild(plain, &report(&[("x86_64", &cc)])).unwrap();
+        assert!(out.contains(&format!("sha256sums=('{cc}')")), "{out}");
+        assert!(rewrite_pkgbuild("pkgver=1\n", &report(&[("x86_64", &cc)])).is_err());
     }
 
     #[test]
     fn rejects_unsafe_pkgver() {
         let pkgbuild = "pkgver=1\npkgrel=1\nsha256sums=('old')\n";
+        let checksum = "c".repeat(64);
         for version in [
             "",
             ".1",
@@ -583,13 +603,19 @@ mod tests {
             "$(touch /tmp/pwn)",
             "1;false",
         ] {
-            let mut report = report(&[("x86_64", "cc")]);
+            let mut report = report(&[("x86_64", &checksum)]);
             report.version = version.into();
             assert!(rewrite_pkgbuild(pkgbuild, &report).is_err(), "{version:?}");
         }
-        let mut report = report(&[("x86_64", "cc")]);
+        let mut report = report(&[("x86_64", &checksum)]);
         report.version = "v2.0_rc1+build.4".into();
         rewrite_pkgbuild(pkgbuild, &report).unwrap();
+    }
+
+    #[test]
+    fn rejects_unsafe_sha256_before_rewriting_pkgbuild() {
+        let report = report(&[("x86_64", "abc'); touch /tmp/pwn; echo '")]);
+        assert!(rewrite_pkgbuild("pkgver=1\npkgrel=1\nsha256sums=('old')\n", &report).is_err());
     }
 
     #[test]
