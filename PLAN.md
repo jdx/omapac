@@ -332,13 +332,14 @@ target commits. `omapac aur approve <pkg> [--commit]` records approval in the lo
 later unattended run proceeds.
 
 **Jailed builds.** makepkg runs as the invoking user, never root, in three phases so the
-jail can differ. The first phase, `makepkg --verifysource`, only downloads sources and
-verifies checksums with network allowed; it does not extract them or execute
-`prepare()`. The second phase runs `makepkg --nobuild` under Landlock plus seccomp,
-with the verified source cache mounted read-only and network denied, to extract sources
-and execute the untrusted `prepare()` function. The final `makepkg --noextract` phase
-uses the same jail for the build and package functions, with writes limited to the
-build directory and the environment scrubbed of tokens and agent sockets. Packages that
+jail can differ. The first phase runs `makepkg --verifysource` under Landlock plus
+seccomp with network allowed and writes limited to the source cache and build directory;
+this confines top-level PKGBUILD code while downloading sources and verifying checksums.
+The second phase runs `makepkg --nobuild` in a network-denied jail, with the verified
+source cache mounted read-only, to extract sources and execute the untrusted `prepare()`
+function. The final `makepkg --noextract` phase uses the same network-denied jail for the
+build and package functions, with writes limited to the build directory and the
+environment scrubbed of tokens and agent sockets. Packages that
 legitimately need network in `build()` get an explicit grant in
 `aur.allow_network_build`, or in the OPR package manifest for OPR-built packages. An
 AUR grant records the approved commit, becomes invalid when the candidate commit
@@ -606,10 +607,11 @@ snapshot and OPR index sequence it was built from, creation time, test suite res
 with logs, promotion times, and whether it was expedited or held. It also contains a
 map keyed by repository name with the SHA-256 digest of each exact sync database and a
 canonical package map keyed by `repo/name` whose value is the selected version and
-`tested` or `snapshot` label. The signed test result records each exact package output
-and selected version it exercised. `tested` is assigned only when both that output name
-and version match; unexercised siblings from a split PKGBUILD remain `snapshot`.
-Imported results are held to the same rule: their signed records name each exact
+`tested` or `snapshot` label. The signed test result records the repository-qualified
+`repo/name`, exact package output, and selected version it exercised. `tested` is
+assigned only when the repository, output name, and version all match; unexercised
+siblings from a split PKGBUILD remain `snapshot`. Imported results are held to the same
+rule: their signed records carry the same repository-qualified identity for each exact
 output and selected version exercised, and never expand a pkgbase result to sibling
 outputs. Keys are unique and sorted bytewise before signing, so
 clients can deterministically match a transaction package to its version and label.
