@@ -91,6 +91,20 @@ impl App {
             };
             match fetched {
                 Ok(index) => {
+                    if let Some(detail) = &index.fallback_error
+                        && (detail.contains("older than")
+                            || detail.contains("stale")
+                            || detail.contains("rolled-back"))
+                    {
+                        eprintln!(
+                            "warning: [{}] stale or rolled-back index; release-age floor blocks upgrades: {detail}",
+                            source.name
+                        );
+                        published
+                            .unsafe_repos
+                            .insert(source.name.clone(), detail.clone());
+                        continue;
+                    }
                     let times = index
                         .value
                         .packages
