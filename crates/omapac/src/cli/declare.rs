@@ -1,5 +1,7 @@
 //! The declarative commands: `plan`, `apply`, `status`, `add`, `drop`.
 
+use std::io::Write as _;
+
 use eyre::{Result, bail};
 use usage_rs::RunWith;
 
@@ -47,6 +49,7 @@ impl RunWith<&App> for Plan {
             print!("{}", diff.render());
         }
         if self.detailed_exitcode && diff.has_changes() {
+            std::io::stdout().flush()?;
             std::process::exit(2);
         }
         Ok(())
