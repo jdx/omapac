@@ -333,8 +333,12 @@ later unattended run proceeds.
 
 **Jailed builds.** makepkg runs as the invoking user, never root, in three phases so the
 jail can differ. The first phase runs `makepkg --verifysource` under Landlock plus
-seccomp with network allowed and writes limited to the source cache and build directory;
-this confines top-level PKGBUILD code while downloading sources and verifying checksums.
+seccomp with network allowed and writes limited to the source cache and a disposable
+verification workspace. That workspace is destroyed before later phases, so top-level
+PKGBUILD code cannot rewrite the reviewed recipe or plant build inputs. Every phase,
+including this network-enabled phase, receives a minimal environment with tokens,
+credentials, agent sockets, and the invoking user's home removed. This confines
+top-level PKGBUILD code while downloading sources and verifying checksums.
 The second phase runs `makepkg --nobuild` in a network-denied jail, with the verified
 source cache mounted read-only, to extract sources and execute the untrusted `prepare()`
 function. The final `makepkg --noextract` phase uses the same network-denied jail for the
