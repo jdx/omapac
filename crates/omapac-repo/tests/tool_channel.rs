@@ -128,6 +128,13 @@ fn publish_promote_hold_and_immutability() {
     );
     write_config(&rig, &base, &vendor_key, "min_release_age = \"24h\"");
 
+    // Debris from an interrupted, not-yet-indexed publish is replaced.
+    let incomplete = rig
+        .path()
+        .join("store/tools/tool/1.0.0/tool-1.0.0-linux-x64.tar.gz");
+    std::fs::create_dir_all(incomplete.parent().unwrap()).unwrap();
+    std::fs::write(&incomplete, b"truncated").unwrap();
+
     let (code, out, err) = tc(&rig, &["publish", "--config", "tool/tool.toml"]);
     assert_eq!(code, 0, "{err}\n{out}");
     assert!(

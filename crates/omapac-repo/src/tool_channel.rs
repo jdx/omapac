@@ -282,15 +282,13 @@ fn publish_release(
             );
         };
         let target = out_dir.join(&chosen.name);
-        if target.exists() {
+        let complete = if target.exists() {
             let (existing, _) = packslip::digest_file(&target)?;
-            if existing != chosen.sha256 {
-                bail!(
-                    "{} exists with a different digest; published files are immutable",
-                    target.display()
-                );
-            }
+            existing == chosen.sha256
         } else {
+            false
+        };
+        if !complete {
             let bytes = crate::vendor::fetch_limited(url, chosen.size)?;
             let sha256 = crate::rekor::sha256_hex(&bytes);
             if sha256 != chosen.sha256 {
@@ -308,8 +306,7 @@ fn publish_release(
                     chosen.size
                 );
             }
-            std::fs::write(&target, &bytes)
-                .wrap_err_with(|| format!("writing {}", target.display()))?;
+            crate::feed::write_atomic(&target, &bytes)?;
         }
         let mut sidecars = Vec::new();
         let vendor_path = format!("{}.vendor.json", chosen.name);
