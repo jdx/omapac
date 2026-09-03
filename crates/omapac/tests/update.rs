@@ -161,7 +161,8 @@ fn aur_upgrade_is_reviewed_built_and_installed_when_clean() {
     );
     let log = s.rig.log();
     assert!(
-        log.iter().any(|l| l.starts_with("makepkg --noextract")),
+        log.iter()
+            .any(|line| line.as_str() == "makepkg --noconfirm --force"),
         "{log:?}"
     );
     assert!(
