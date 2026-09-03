@@ -247,15 +247,26 @@ impl RunWith<()> for SyncAur {
                 issued_at: now.clone(),
                 verdicts: Vec::new(),
             });
-            feed.sequence += 1;
-            feed.issued_at = now.clone();
-            feed.verdicts.extend(verdicts);
-            crate::feed::write_signed(
-                feed_path,
-                &feed,
-                &key,
-                &format!("verdicts sequence {}", feed.sequence),
-            )?;
+            verdicts.retain(|new| {
+                !feed.verdicts.iter().any(|old| {
+                    old.subject == new.subject
+                        && old.reviewer == new.reviewer
+                        && old.verdict == new.verdict
+                        && old.summary == new.summary
+                        && old.findings == new.findings
+                })
+            });
+            if !verdicts.is_empty() {
+                feed.sequence += 1;
+                feed.issued_at = now.clone();
+                feed.verdicts.extend(verdicts);
+                crate::feed::write_signed(
+                    feed_path,
+                    &feed,
+                    &key,
+                    &format!("verdicts sequence {}", feed.sequence),
+                )?;
+            }
         }
         if self.write {
             crate::feed::write_atomic(&self.state, &serde_json::to_vec_pretty(&state)?)?;
@@ -381,6 +392,18 @@ pub fn decide(
         result.outcome = Outcome::Unchanged;
         return result;
     }
+    let Some(previous) = previous else {
+        result
+            .reasons
+            .push("new package: a human must approve the first commit".into());
+        return result;
+    };
+    let Some(maintainer) = maintainer else {
+        result
+            .reasons
+            .push("orphaned: no maintainer to trust".into());
+        return result;
+    };
     if report.denied() {
         result.outcome = Outcome::Blocked;
         for judged in report.denials() {
@@ -398,18 +421,6 @@ pub fn decide(
         }
         return result;
     }
-    let Some(previous) = previous else {
-        result
-            .reasons
-            .push("new package: a human must approve the first commit".into());
-        return result;
-    };
-    let Some(maintainer) = maintainer else {
-        result
-            .reasons
-            .push("orphaned: no maintainer to trust".into());
-        return result;
-    };
     if !trusted.iter().any(|t| t == &maintainer) {
         result.reasons.push(format!(
             "maintainer {maintainer} is not on the trusted list"
