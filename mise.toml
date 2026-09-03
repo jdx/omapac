@@ -1,0 +1,44 @@
+[env]
+_.path = ["./target/debug"]
+
+[tools]
+cargo-insta = "latest"
+hk = "latest"
+shellcheck = "latest"
+shfmt = "latest"
+taplo = "latest"
+usage = "latest"
+
+[tasks.build]
+alias = "b"
+description = "Build every crate"
+run = "cargo build --workspace --all-features"
+
+[tasks.test]
+alias = "t"
+description = "Run unit tests"
+depends = ["test:unit"]
+
+[tasks."test:unit"]
+description = "Run unit tests"
+run = "cargo test --workspace --all-features"
+
+[tasks.clippy]
+description = "Run clippy with warnings denied"
+run = "cargo clippy --workspace --all-features --all-targets -- -D warnings"
+
+[tasks.lint]
+description = "Run every check"
+run = "hk run check --all"
+
+[tasks.lint-fix]
+description = "Run every check and fix what can be fixed"
+run = "hk run fix --all"
+
+[tasks.snapshots]
+description = "Update insta snapshots"
+run = "cargo insta test --accept --workspace --all-features"
+
+[tasks.ci]
+description = "What CI runs"
+depends = ["lint", "build", "test"]

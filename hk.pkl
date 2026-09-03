@@ -1,0 +1,79 @@
+amends "package://github.com/jdx/hk/releases/download/v1.55.0/hk@1.55.0#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v1.55.0/hk@1.55.0#/Builtins.pkl"
+
+local bash_glob = List("*.sh", "e2e/**")
+local bash_exclude = List("**/.*", "**/*.md", "**/*.toml")
+local linters = new Mapping<String, Step> {
+    ["cargo-fmt"] {
+      glob = List("**/*.rs")
+      check = new CommandSpec {
+        command = "cargo fmt --all -- --check"
+        effect = "read"
+      }
+      fix = new CommandSpec {
+        command = "cargo fmt --all"
+        effect = "write"
+      }
+    }
+    ["cargo-clippy"] {
+      glob = List("**/*.rs", "**/Cargo.toml")
+      check = new CommandSpec {
+        command = "cargo clippy --workspace --all-features --all-targets -- -D warnings"
+        effect = "read"
+      }
+      fix = new CommandSpec {
+        command = "cargo clippy --workspace --all-features --all-targets --fix --allow-dirty --allow-staged -- -D warnings"
+        effect = "write"
+      }
+    }
+    ["taplo"] {
+      glob = List("**/*.toml")
+      check = new CommandSpec {
+        command = "taplo fmt --check {{ files }}"
+        effect = "read"
+      }
+      fix = new CommandSpec {
+        command = "taplo fmt {{ files }}"
+        effect = "write"
+      }
+    }
+    ["shellcheck"] = (Builtins.shellcheck) {
+      match_any = null
+      glob = bash_glob
+      exclude = bash_exclude
+      batch = true
+      check = new CommandSpec {
+        command = "shellcheck -x {{ files }}"
+        effect = "read"
+      }
+    }
+    ["shfmt"] = (Builtins.shfmt) {
+      match_any = null
+      glob = bash_glob
+      exclude = bash_exclude
+      check_list_files = new CommandSpec {
+        command = """
+files=$(shfmt -l -s {{ files }})
+if [ -n "$files" ]; then
+  echo "$files"
+  exit 1
+fi
+"""
+        effect = "read"
+      }
+      fix = new CommandSpec {
+        command = "shfmt -w -s {{ files }}"
+        effect = "write"
+      }
+    }
+}
+
+hooks {
+    ["fix"] {
+        fix = true
+        steps = linters
+    }
+    ["check"] {
+        steps = linters
+    }
+}

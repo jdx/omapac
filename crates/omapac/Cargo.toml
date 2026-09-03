@@ -1,0 +1,29 @@
+[package]
+name = "omapac"
+description = "The system package manager for Omarchy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "omapac"
+path = "src/main.rs"
+
+[dependencies]
+alpm-db.workspace = true
+color-eyre.workspace = true
+eyre.workspace = true
+omapac-cli-support.workspace = true
+omapac-policy.workspace = true
+packslip.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+usage_rs.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+tempfile.workspace = true
