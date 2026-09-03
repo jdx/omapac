@@ -367,12 +367,14 @@ impl RunWith<&App> for Rollback {
                 self.yes,
                 false,
             )?;
-            if performed {
+            let mut patch = if performed {
                 applied = true;
-                let mut patch = super::transaction::ledger_patch(&plan, &[], "rollback", false);
-                patch.snapshot = Some(release.id.clone());
-                app.record(&patch)?;
-            }
+                super::transaction::ledger_patch(&plan, &[], "rollback", false)
+            } else {
+                crate::ledger::Patch::default()
+            };
+            patch.snapshot = Some(release.id.clone());
+            app.record(&patch)?;
             Ok(())
         })();
         if let Err(err) = result {

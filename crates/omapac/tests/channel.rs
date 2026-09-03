@@ -273,6 +273,19 @@ fn rollback_pins_refreshes_and_syncs_with_downgrades() {
 }
 
 #[test]
+fn no_op_rollback_records_the_converged_snapshot() {
+    let s = setup();
+    let (code, out, err) = run(&s, &["rollback", "--snapshot", "2026-09-01T06", "-y"], "");
+    assert_eq!(code, 0, "{err}\n{out}");
+    assert!(out.contains("nothing to roll back"), "{out}");
+    let ledger = std::fs::read_to_string(s.rig.root.join("var/lib/omapac/state.json")).unwrap();
+    assert!(
+        ledger.contains("\"snapshot\": \"2026-09-01T06\""),
+        "{ledger}"
+    );
+}
+
+#[test]
 fn rollback_dry_run_prints_the_downgrade_plan_and_command() {
     let s = setup();
     let plan = "pacman\\t7.0.0-1\\tcore\\thttps://m/pacman.pkg\\t1000\\n";
