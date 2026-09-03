@@ -18,6 +18,7 @@ blake2 = "0.10"
 ed25519-dalek = "2"
 getrandom = "0.3"
 omapac-cli-support = { path = "crates/cli-support" }
+omapac = { path = "crates/omapac" }
 omapac-policy = { path = "crates/omapac-policy" }
 packslip = { path = "crates/packslip" }
 
