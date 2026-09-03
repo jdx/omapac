@@ -147,6 +147,22 @@ fn update_refreshes_plans_with_holds_and_applies() {
 }
 
 #[test]
+fn unattended_update_refuses_holdpkg_removals() {
+    let s = setup(INFO.to_string());
+    let plan = format!("{UPGRADE}glibc\\t2.42+r17+g4bc0e1e3-1\\tlocal\\tglibc-old\\t(null)\\n");
+    let (code, out, err) = run(&s, &["update", "-y"], &plan);
+    assert_ne!(code, 0, "{out}");
+    assert!(out.contains("warning: HoldPkg: glibc"), "{out}");
+    assert!(err.contains("refusing to upgrade unattended"), "{err}");
+    assert!(
+        s.rig
+            .log()
+            .iter()
+            .all(|line| !line.contains("-Su --noconfirm") || line.contains("--print"))
+    );
+}
+
+#[test]
 fn dry_run_and_json_run_nothing() {
     let s = setup(INFO.to_string());
     let (code, out, _) = run(&s, &["update", "-n"], UPGRADE);

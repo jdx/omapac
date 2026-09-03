@@ -111,19 +111,15 @@ pub fn plan_with_custom_repos(
             }
         }
     }
-    // pacman asks before removing a HoldPkg package; upgrades are fine.
-    if matches!(
-        resolved.transaction.operation,
-        crate::engine::Operation::Remove { .. }
-    ) {
-        let hold: Vec<&str> = changes
-            .iter()
-            .filter(|c| host.config.options.hold_pkg.contains(&c.name))
-            .map(|c| c.name.as_str())
-            .collect();
-        if !hold.is_empty() {
-            warnings.push(format!("HoldPkg: {}", hold.join(", ")));
-        }
+    // Pacman asks before removing HoldPkg entries, including removals caused
+    // by replacements or conflicts during an upgrade.
+    let hold: Vec<&str> = changes
+        .iter()
+        .filter(|change| change.removal && host.config.options.hold_pkg.contains(&change.name))
+        .map(|change| change.name.as_str())
+        .collect();
+    if !hold.is_empty() {
+        warnings.push(format!("HoldPkg: {}", hold.join(", ")));
     }
     Plan {
         download_size: changes.iter().filter_map(|c| c.download_size).sum(),
