@@ -159,9 +159,12 @@ impl PacmanCli {
         Invocation::new(&self.pacman, args)
     }
 
-    fn refresh_invocation(&self, opts: RefreshOpts) -> Invocation {
+    fn refresh_invocation(&self, refresh: RefreshOpts, opts: ApplyOpts) -> Invocation {
         let mut args = self.base_args();
-        args.push(if opts.force { "-Syy" } else { "-Sy" }.to_string());
+        args.push(if refresh.force { "-Syy" } else { "-Sy" }.to_string());
+        if opts.no_confirm {
+            args.push("--noconfirm".to_string());
+        }
         Invocation::new(&self.pacman, args)
     }
 
@@ -270,7 +273,7 @@ impl Engine for PacmanCli {
     }
 
     fn refresh(&self, refresh: RefreshOpts, opts: ApplyOpts) -> Result<Report> {
-        self.perform(self.refresh_invocation(refresh), opts)
+        self.perform(self.refresh_invocation(refresh, opts), opts)
     }
 
     fn plan(&self, tx: &Transaction) -> Result<ResolvedTx> {
@@ -404,9 +407,15 @@ mod tests {
         engine.sysroot = Some(PathBuf::from("/mnt"));
         assert_eq!(
             engine
-                .refresh_invocation(RefreshOpts { force: true })
+                .refresh_invocation(
+                    RefreshOpts { force: true },
+                    ApplyOpts {
+                        dry_run: false,
+                        no_confirm: true,
+                    },
+                )
                 .display(),
-            "/usr/bin/pacman --config /tmp/pacman.conf --sysroot /mnt -Syy"
+            "/usr/bin/pacman --config /tmp/pacman.conf --sysroot /mnt -Syy --noconfirm"
         );
         let install = FileInstall {
             files: vec![PathBuf::from(
