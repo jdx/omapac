@@ -121,7 +121,7 @@ fn install_dry_run_shows_plan_and_command_without_running_pacman_for_real() {
     let log = rig.log();
     assert_eq!(log.len(), 1, "only the --print call: {log:?}");
     assert!(log[0].contains("--print --print-format"), "{log:?}");
-    assert!(log[0].contains("-S --print"), "{log:?}");
+    assert!(log[0].contains("-S --noconfirm --print"), "{log:?}");
     assert!(log[0].ends_with("--needed -- pacman"), "{log:?}");
 }
 
@@ -231,7 +231,11 @@ fn remove_plans_with_hold_warning_and_applies() {
     assert!(!out.contains("outside Arch and Omarchy review"), "{out}");
     assert!(!out.contains("does not check package signatures"), "{out}");
     assert!(out.contains("would run:"), "{out}");
-    assert!(rig.log()[0].contains("-R --print"), "{:?}", rig.log());
+    assert!(
+        rig.log()[0].contains("-R --noconfirm --print"),
+        "{:?}",
+        rig.log()
+    );
 
     let plan = "pacman\\t7.1.0-2\\tlocal\\tpacman-7.1.0-2\\t(null)\\n";
     let (code, out, err) = rig.run(&["remove", "-y", "--keep-deps", "pacman"], plan, 0);
