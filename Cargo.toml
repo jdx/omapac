@@ -26,7 +26,7 @@ ratatui = "0.30"
 color-eyre = "0.6"
 eyre = "0.6"
 indexmap = { version = "2", features = ["serde"] }
-nix = { version = "0.31", features = ["user"] }
+nix = { version = "0.31", features = ["fs", "user"] }
 schemars = "1"
 insta = { version = "1", features = ["filters", "json"] }
 jiff = "0.2"

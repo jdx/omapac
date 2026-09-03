@@ -579,3 +579,72 @@ fn age_floor_prefers_the_index_publish_time() {
         "{out}"
     );
 }
+
+#[test]
+fn only_one_update_runs_at_a_time() {
+    let s = setup(INFO.to_string());
+    // The rig's state directory is writable by the test user, so the
+    // lock lives beside the ledger as it does for root.
+    let lock = s.rig.root.join("var/lib/omapac/update.lock");
+    std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
+    // flock forks the sleeper, which inherits the lock; kill the group.
+    use std::os::unix::process::CommandExt as _;
+    let mut holder = Command::new("flock")
+        .arg(&lock)
+        .args(["sleep", "30"])
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    // Give flock a moment to take the lock.
+    for _ in 0..50 {
+        let probe = Command::new("flock")
+            .args(["-n", lock.to_str().unwrap(), "true"])
+            .status()
+            .unwrap();
+        if !probe.success() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let (code, _, err) = run(&s, &["update", "-n", "--no-aur"], UPGRADE);
+    assert_ne!(code, 0);
+    assert!(err.contains("another omapac update is running"), "{err}");
+    assert!(err.contains("pass --wait to queue"), "{err}");
+    Command::new("kill")
+        .arg("--")
+        .arg(format!("-{}", holder.id()))
+        .status()
+        .unwrap();
+    holder.wait().unwrap();
+    for _ in 0..100 {
+        let probe = Command::new("flock")
+            .args(["-n", lock.to_str().unwrap(), "true"])
+            .status()
+            .unwrap();
+        if probe.success() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    // Free again: the run proceeds and writes its pid into the lock.
+    let (code, out, err) = run(&s, &["update", "-n", "--no-aur"], UPGRADE);
+    assert_eq!(code, 0, "{err}\n{out}");
+    let pid: u32 = std::fs::read_to_string(&lock)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert!(pid > 0);
+
+    // --wait queues behind a short hold.
+    let mut holder = Command::new("flock")
+        .arg(&lock)
+        .args(["sleep", "1"])
+        .spawn()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let (code, out, err) = run(&s, &["update", "-n", "--no-aur", "--wait"], UPGRADE);
+    assert_eq!(code, 0, "{err}\n{out}");
+    holder.wait().unwrap();
+}
