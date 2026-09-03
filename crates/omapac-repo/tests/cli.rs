@@ -161,6 +161,29 @@ fn attest_then_index_round_trip() {
     assert_eq!(index["db"]["sha256"], db_sha);
     let a_published = a["published_at"].as_str().unwrap().to_string();
 
+    // The previous index is state, so it must be authenticated before its
+    // sequence, publish times, or embedded build keys are reused.
+    std::fs::write(
+        repo.join("omapac-index.json"),
+        String::from_utf8_lossy(&index_bytes).replace("\"sequence\": 1", "\"sequence\": 99"),
+    )
+    .unwrap();
+    let (code, _, err) = repo_cmd(
+        d,
+        &[
+            "index",
+            "--repo",
+            "omarchy",
+            "--dir",
+            "repo",
+            "--key",
+            "index.key",
+        ],
+    );
+    assert_ne!(code, 0);
+    assert!(err.contains("previous index signature"), "{err}");
+    std::fs::write(repo.join("omapac-index.json"), &index_bytes).unwrap();
+
     // Second index: the sequence advances, publish times carry over for
     // unchanged files, a changed file gets a new time, a new file appears.
     std::fs::write(repo.join("b-1-1-x86_64.pkg.tar.zst"), "package b v2").unwrap();

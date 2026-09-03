@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use eyre::{Context as _, Result, bail};
-use packslip::minisign::{PublicKey, SecretKey};
+use packslip::minisign::{PublicKey, SecretKey, Sig};
 use serde::{Deserialize, Serialize};
 use usage_rs::RunWith;
 
@@ -91,7 +91,7 @@ impl RunWith<()> for IndexCmd {
         let key_text = std::fs::read_to_string(&self.key)
             .wrap_err_with(|| format!("reading {}", self.key.display()))?;
         let key = SecretKey::parse(&key_text)?;
-        let previous = read_previous(&self.dir)?;
+        let previous = read_previous(&self.dir, &key.public_key())?;
         let mut build_keys = Vec::new();
         let key_texts: Vec<(String, String)> = if self.build_key.is_empty() {
             previous
@@ -165,43 +165,72 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// Stage both members before publishing either one, and restore the old
-/// index if publishing the signature fails. This avoids leaving a mixed
-/// pair after an ordinary I/O error.
+fn read_optional(path: &Path) -> Result<Option<Vec<u8>>> {
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err).wrap_err_with(|| format!("reading {}", path.display())),
+    }
+}
+
+/// Stage both members before publishing either one. The signature is
+/// published first and restored if the final index rename fails, so the
+/// previous index itself never needs a fallible rollback.
 fn write_signed_pair(path: &Path, bytes: &[u8], signature: &[u8]) -> Result<()> {
     let signature_path = sig_path(path);
     let index_temp = path.with_extension("json.pair-tmp");
     let signature_temp = signature_path.with_extension("minisig.pair-tmp");
+    let previous_signature = read_optional(&signature_path)?;
     std::fs::write(&index_temp, bytes)
         .wrap_err_with(|| format!("writing {}", index_temp.display()))?;
     if let Err(err) = std::fs::write(&signature_temp, signature) {
         let _ = std::fs::remove_file(&index_temp);
         return Err(err).wrap_err_with(|| format!("writing {}", signature_temp.display()));
     }
-    let previous = std::fs::read(path).ok();
-    std::fs::rename(&index_temp, path)
-        .wrap_err_with(|| format!("publishing {}", path.display()))?;
     if let Err(err) = std::fs::rename(&signature_temp, &signature_path) {
-        match previous {
-            Some(previous) => write_atomic(path, &previous)?,
-            None => {
-                let _ = std::fs::remove_file(path);
-            }
-        }
+        let _ = std::fs::remove_file(&index_temp);
         return Err(err).wrap_err_with(|| format!("publishing {}", signature_path.display()));
+    }
+    if let Err(publish_err) = std::fs::rename(&index_temp, path) {
+        let _ = std::fs::remove_file(&index_temp);
+        let restore = match previous_signature {
+            Some(previous) => write_atomic(&signature_path, &previous),
+            None => std::fs::remove_file(&signature_path)
+                .or_else(|err| {
+                    (err.kind() == std::io::ErrorKind::NotFound)
+                        .then_some(())
+                        .ok_or(err)
+                })
+                .wrap_err_with(|| format!("removing {}", signature_path.display())),
+        };
+        if let Err(restore_err) = restore {
+            return Err(eyre::eyre!(
+                "publishing {}: {publish_err}; restoring {}: {restore_err:#}",
+                path.display(),
+                signature_path.display()
+            ));
+        }
+        return Err(publish_err).wrap_err_with(|| format!("publishing {}", path.display()));
     }
     Ok(())
 }
 
-/// The previous index in the directory, if any.
-pub fn read_previous(dir: &Path) -> Result<Option<Index>> {
-    match std::fs::read(dir.join(INDEX_FILE)) {
-        Ok(bytes) => Ok(Some(
-            serde_json::from_slice(&bytes).wrap_err("parsing the previous index")?,
-        )),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(err) => Err(err).wrap_err("reading the previous index"),
-    }
+/// The previous index in the directory, if any, after authenticating it with
+/// the same key that will sign its successor.
+pub fn read_previous(dir: &Path, key: &PublicKey) -> Result<Option<Index>> {
+    let path = dir.join(INDEX_FILE);
+    let Some(bytes) = read_optional(&path)? else {
+        return Ok(None);
+    };
+    let signature_path = sig_path(&path);
+    let signature = std::fs::read_to_string(&signature_path)
+        .wrap_err_with(|| format!("reading {}", signature_path.display()))?;
+    let signature = Sig::parse(&signature).wrap_err("parsing the previous index signature")?;
+    key.verify(&bytes, &signature)
+        .wrap_err("verifying the previous index signature")?;
+    Ok(Some(
+        serde_json::from_slice(&bytes).wrap_err("parsing the previous index")?,
+    ))
 }
 
 /// Sidecar suffixes the index lists, in the order they are reported.
