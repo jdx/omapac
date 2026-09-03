@@ -178,7 +178,7 @@ fn diff_and_json() {
         .iter()
         .map(|f| f["id"].as_str().unwrap())
         .collect();
-    assert!(ids.contains(&"recent-commit"), "{ids:?}");
+    assert!(ids.contains(&"checksum-skip"), "{ids:?}");
     assert!(json["diff"].as_str().unwrap().contains("evil.example"));
 }
 
