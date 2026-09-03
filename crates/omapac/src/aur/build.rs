@@ -73,6 +73,14 @@ pub fn missing_deps(host: &Host, reviewed: &Reviewed, arch: &str) -> Result<Miss
     }
     let mut missing = MissingDeps::default();
     for dep in deps {
+        let version = reviewed.srcinfo.version();
+        let sibling_satisfies = reviewed.srcinfo.pkgnames().iter().any(|pkgname| {
+            let provides = reviewed.srcinfo.provides(pkgname, arch);
+            dep.satisfied_by(pkgname, &version, &provides)
+        });
+        if sibling_satisfies {
+            continue;
+        }
         if host.is_satisfied(&dep)? {
             continue;
         }

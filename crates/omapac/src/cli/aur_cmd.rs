@@ -226,13 +226,15 @@ impl App {
                 &resolved,
                 &plan,
                 "install dependencies",
-                yes || !crate::ui::interactive(),
+                yes,
                 false,
             )?;
             if performed {
-                let targets: Vec<String> = missing.repo.iter().map(|t| t.name.clone()).collect();
                 self.record(&super::transaction::ledger_patch(
-                    &plan, &targets, "install", false,
+                    &plan,
+                    &[],
+                    "install",
+                    false,
                 ))?;
             }
         }

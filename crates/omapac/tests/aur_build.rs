@@ -85,6 +85,13 @@ fn no_jail(s: &Setup) {
 fn build_runs_both_phases_with_a_scrubbed_environment() {
     let s = setup();
     no_jail(&s);
+    let split = format!("{YAY_SRCINFO}\npkgname = yay-docs\n\tdepends = yay\n");
+    s.aur.commit(
+        "yay",
+        &[(".SRCINFO", &split)],
+        "add sibling package",
+        "2026-01-02T00:00:00Z",
+    );
     run(&s, &["aur", "approve", "-y", "yay"], "");
     let (code, out, err) = run(&s, &["aur", "build", "yay"], "");
     assert_eq!(code, 0, "{err}");
@@ -120,6 +127,17 @@ fn build_requires_approval_unattended() {
     assert_ne!(code, 0);
     assert!(err.contains("not approved"), "{err}");
     assert!(s.rig.log().iter().all(|l| !l.starts_with("makepkg")));
+}
+
+#[test]
+fn install_without_yes_requires_a_terminal_confirmation() {
+    let s = setup();
+    no_jail(&s);
+    run(&s, &["aur", "approve", "-y", "yay"], "");
+    let (code, _, err) = run(&s, &["install", "--aur", "yay"], "");
+    assert_ne!(code, 0);
+    assert!(err.contains("no terminal to ask on; pass -y"), "{err}");
+    assert!(s.rig.log().iter().all(|line| !line.contains("-U")));
 }
 
 #[test]
@@ -174,6 +192,11 @@ fn install_aur_installs_missing_repo_dependencies_first() {
         deps_at < makepkg_at,
         "dependencies before the build: {log:?}"
     );
+    let ledger: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(s.rig.root.join("var/lib/omapac/state.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(ledger["packages"]["curl"]["explicit"], false);
 }
 
 #[test]
