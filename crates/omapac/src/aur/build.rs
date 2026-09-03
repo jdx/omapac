@@ -122,7 +122,7 @@ pub fn build(reviewed: &Reviewed, opts: &BuildOpts) -> Result<Vec<PathBuf>> {
     // Phase 1 only downloads and verifies sources. Unlike --nobuild,
     // --verifysource does not run prepare() or pkgver() outside the jail.
     let verify_args = ["--verifysource", "--noconfirm", "--force"];
-    let status = run_makepkg(opts, &verify_args, true, &verifydir)
+    let status = run_makepkg(opts, &verify_args, true, true, &verifydir)
         .wrap_err("running makepkg --verifysource")?;
     std::fs::remove_dir_all(&verifydir)
         .wrap_err_with(|| format!("removing {}", verifydir.display()))?;
@@ -137,20 +137,8 @@ pub fn build(reviewed: &Reviewed, opts: &BuildOpts) -> Result<Vec<PathBuf>> {
     // Phase 2 extracts, prepares, builds, and packages inside the jail.
     // --holdver prevents makepkg from updating VCS sources a second time;
     // phase 1 already fetched and verified the exact source state.
-    let vcs = reviewed
-        .evidence
-        .recipe
-        .sources
-        .iter()
-        .any(|source| source.is_vcs);
-    let mut args = vec!["--noconfirm", "--force"];
-    if !vcs {
-        args.push("--holdver");
-    }
-    // VCS pkgver() must observe the freshly fetched checkout. makepkg cannot
-    // update it separately from the build, so approved VCS recipes retain
-    // network for this invocation; their VCS finding makes that risk explicit.
-    let status = run_makepkg(opts, &args, opts.network || vcs, &opts.builddir)
+    let args = ["--noconfirm", "--force", "--holdver"];
+    let status = run_makepkg(opts, &args, opts.network, false, &opts.builddir)
         .wrap_err("running makepkg")?;
     if !status.success() {
         bail!(
@@ -161,7 +149,7 @@ pub fn build(reviewed: &Reviewed, opts: &BuildOpts) -> Result<Vec<PathBuf>> {
     }
 
     // What was built: makepkg knows the file names.
-    let output = run_makepkg_output(opts, &["--packagelist"], false, &opts.builddir)
+    let output = run_makepkg_output(opts, &["--packagelist"], false, false, &opts.builddir)
         .wrap_err("running makepkg --packagelist")?;
     let files: Vec<PathBuf> = String::from_utf8_lossy(&output.stdout)
         .lines()
@@ -181,6 +169,7 @@ fn run_makepkg(
     opts: &BuildOpts,
     args: &[&str],
     network: bool,
+    source_writable: bool,
     builddir: &Path,
 ) -> Result<std::process::ExitStatus> {
     if !opts.jail {
@@ -198,15 +187,18 @@ fn run_makepkg(
         return command.status().wrap_err("starting makepkg");
     }
 
+    let mut writable = vec![
+        opts.pkgdest.clone(),
+        builddir.to_path_buf(),
+        opts.logdest.clone(),
+    ];
+    if source_writable {
+        writable.push(opts.srcdest.clone());
+    }
     let spec = Spec {
         // makepkg needs to lock and sometimes update PKGBUILD, so it runs in
         // a disposable checkout copy contained by this writable build root.
-        writable: vec![
-            opts.pkgdest.clone(),
-            opts.srcdest.clone(),
-            builddir.to_path_buf(),
-            opts.logdest.clone(),
-        ],
+        writable,
         network,
         program: opts.makepkg.clone(),
         args: args.iter().map(|arg| (*arg).to_string()).collect(),
@@ -229,6 +221,7 @@ fn run_makepkg_output(
     opts: &BuildOpts,
     args: &[&str],
     network: bool,
+    source_writable: bool,
     builddir: &Path,
 ) -> Result<std::process::Output> {
     if !opts.jail {
@@ -245,13 +238,16 @@ fn run_makepkg_output(
         set_private_home(&mut command, builddir)?;
         return command.output().wrap_err("starting makepkg");
     }
+    let mut writable = vec![
+        opts.pkgdest.clone(),
+        builddir.to_path_buf(),
+        opts.logdest.clone(),
+    ];
+    if source_writable {
+        writable.push(opts.srcdest.clone());
+    }
     let spec = Spec {
-        writable: vec![
-            opts.pkgdest.clone(),
-            opts.srcdest.clone(),
-            builddir.to_path_buf(),
-            opts.logdest.clone(),
-        ],
+        writable,
         network,
         program: opts.makepkg.clone(),
         args: args.iter().map(|arg| (*arg).to_string()).collect(),
