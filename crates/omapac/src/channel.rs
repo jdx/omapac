@@ -138,7 +138,7 @@ pub fn write_privileged(
         contents: contents.to_string(),
         backup,
     };
-    match request.apply() {
+    match request.apply(sysroot) {
         Ok(()) => Ok(()),
         Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
             let exe = std::env::current_exe().wrap_err("locating omapac")?;
@@ -184,9 +184,19 @@ impl WriteRequest {
     /// Perform the write. Only paths under `/etc/pacman.d` (under any
     /// sysroot) are accepted, so the elevated helper cannot be turned into
     /// a general root file writer.
-    pub fn apply(&self) -> std::io::Result<()> {
-        let allowed = self.path.to_string_lossy().contains("/etc/pacman.d/");
-        if !allowed {
+    pub fn apply(&self, sysroot: Option<&Path>) -> std::io::Result<()> {
+        let allowed = sysroot
+            .map(|root| root.join("etc/pacman.d"))
+            .unwrap_or_else(|| PathBuf::from("/etc/pacman.d"));
+        let allowed = std::fs::canonicalize(&allowed)?;
+        let parent = self
+            .path
+            .parent()
+            .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::PermissionDenied))?;
+        let parent = std::fs::canonicalize(parent)?;
+        let target_is_symlink = std::fs::symlink_metadata(&self.path)
+            .is_ok_and(|metadata| metadata.file_type().is_symlink());
+        if !parent.starts_with(&allowed) || target_is_symlink {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
                 format!("{} is outside /etc/pacman.d", self.path.display()),
@@ -241,7 +251,7 @@ mod tests {
             contents: text.clone(),
             backup: true,
         }
-        .apply()
+        .apply(Some(dir.path()))
         .unwrap();
         assert_eq!(current_pin(&mirrorlist).as_deref(), Some("2026-09-03T06"));
         assert_eq!(
@@ -254,7 +264,7 @@ mod tests {
             contents: pin_text("https://m", "2026-09-04T06"),
             backup: true,
         }
-        .apply()
+        .apply(Some(dir.path()))
         .unwrap();
         assert!(
             std::fs::read_to_string(backup_path(&mirrorlist))
@@ -266,7 +276,7 @@ mod tests {
             contents: String::new(),
             backup: false,
         };
-        assert!(outside.apply().is_err());
+        assert!(outside.apply(Some(dir.path())).is_err());
     }
 
     #[test]

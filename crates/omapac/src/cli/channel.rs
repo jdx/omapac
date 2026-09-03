@@ -263,20 +263,45 @@ impl RunWith<&App> for Rollback {
     type Output = Result<()>;
 
     fn run_with(self, app: &App) -> Self::Output {
+        let manifest = app.manifest()?;
+        let Some(base) = manifest.settings.channel_snapshot_base.clone() else {
+            bail!("no snapshot store configured; set [channel] snapshot_base in the manifest");
+        };
+        let release = app.snapshot_release(&base, &self.snapshot)?;
+        if !release.was_promoted() && !self.force {
+            bail!(
+                "snapshot {} never reached rc or stable; pass --force",
+                release.id
+            );
+        }
+        if self.dry_run {
+            println!(
+                "would pin to snapshot {} ({})",
+                release.id,
+                describe(&release)
+            );
+            println!("would refresh databases and plan a downgrade transaction");
+            return Ok(());
+        }
+        if !self.yes
+            && !crate::ui::confirm(
+                &format!("Pin to {}, refresh databases, and roll back?", release.id),
+                false,
+            )?
+        {
+            bail!("cancelled");
+        }
         let release = app.pin(&self.snapshot, self.force)?;
         println!("pinned to snapshot {} ({})", release.id, describe(&release));
         let host = app.host()?;
         let engine = app.engine()?;
-        if !self.dry_run {
-            engine.refresh(
-                crate::engine::RefreshOpts { force: true },
-                ApplyOpts {
-                    dry_run: false,
-                    no_confirm: true,
-                },
-            )?;
-        }
-        let manifest = app.manifest()?;
+        engine.refresh(
+            crate::engine::RefreshOpts { force: true },
+            ApplyOpts {
+                dry_run: false,
+                no_confirm: true,
+            },
+        )?;
         let tx = Transaction::new(Operation::Upgrade {
             allow_downgrade: true,
         })
@@ -298,8 +323,8 @@ impl RunWith<&App> for Rollback {
             &resolved,
             &plan,
             "roll back",
-            self.yes,
-            self.dry_run,
+            true,
+            false,
         )?;
         if performed {
             app.record(&super::transaction::ledger_patch(
@@ -321,7 +346,7 @@ pub struct WriteExec {}
 impl RunWith<&App> for WriteExec {
     type Output = Result<()>;
 
-    fn run_with(self, _app: &App) -> Self::Output {
+    fn run_with(self, app: &App) -> Self::Output {
         let mut json = String::new();
         std::io::stdin()
             .read_to_string(&mut json)
@@ -329,7 +354,7 @@ impl RunWith<&App> for WriteExec {
         let request: WriteRequest =
             serde_json::from_str(&json).wrap_err("parsing the write request")?;
         request
-            .apply()
+            .apply(app.paths.sysroot.as_deref())
             .wrap_err_with(|| format!("writing {}", request.path.display()))?;
         Ok(())
     }
