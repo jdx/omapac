@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod audit;
 pub mod aur;
 pub mod channel;
 pub mod cli;
