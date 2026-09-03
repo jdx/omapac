@@ -23,6 +23,9 @@ pub struct BuildOpts {
     pub network: bool,
     /// Where built packages go.
     pub pkgdest: PathBuf,
+    pub srcdest: PathBuf,
+    pub builddir: PathBuf,
+    pub logdest: PathBuf,
     /// The makepkg binary.
     pub makepkg: PathBuf,
 }
@@ -43,6 +46,9 @@ impl BuildOpts {
                 .iter()
                 .any(|p| p == pkgbase),
             pkgdest: cache_dir.join("pkgs").join(pkgbase),
+            srcdest: cache_dir.join("sources").join(pkgbase),
+            builddir: cache_dir.join("build").join(pkgbase),
+            logdest: cache_dir.join("logs").join(pkgbase),
             makepkg,
         })
     }
@@ -62,7 +68,9 @@ pub struct MissingDeps {
 pub fn missing_deps(host: &Host, reviewed: &Reviewed, arch: &str) -> Result<MissingDeps> {
     let mut deps: Vec<Dependency> = reviewed.srcinfo.makedepends(arch);
     deps.extend(reviewed.srcinfo.checkdepends(arch));
-    deps.extend(reviewed.srcinfo.depends(&reviewed.pkgname, arch));
+    for pkgname in reviewed.srcinfo.pkgnames() {
+        deps.extend(reviewed.srcinfo.depends(pkgname, arch));
+    }
     let mut missing = MissingDeps::default();
     for dep in deps {
         if host.is_satisfied(&dep)? {
@@ -90,6 +98,9 @@ pub fn build(reviewed: &Reviewed, opts: &BuildOpts) -> Result<Vec<PathBuf>> {
     checkout.checkout(&reviewed.target)?;
     std::fs::create_dir_all(&opts.pkgdest)
         .wrap_err_with(|| format!("creating {}", opts.pkgdest.display()))?;
+    for dir in [&opts.srcdest, &opts.builddir, &opts.logdest] {
+        std::fs::create_dir_all(dir).wrap_err_with(|| format!("creating {}", dir.display()))?;
+    }
 
     // Phase 1: fetch and verify sources, extract. Network allowed.
     let status = Command::new(&opts.makepkg)
@@ -98,6 +109,9 @@ pub fn build(reviewed: &Reviewed, opts: &BuildOpts) -> Result<Vec<PathBuf>> {
         .env_clear()
         .envs(crate::jail::scrubbed_env())
         .env("PKGDEST", &opts.pkgdest)
+        .env("SRCDEST", &opts.srcdest)
+        .env("BUILDDIR", &opts.builddir)
+        .env("LOGDEST", &opts.logdest)
         .status()
         .wrap_err("running makepkg --nobuild")?;
     if !status.success() {
@@ -119,6 +133,9 @@ pub fn build(reviewed: &Reviewed, opts: &BuildOpts) -> Result<Vec<PathBuf>> {
             writable: vec![
                 checkout.dir.clone(),
                 opts.pkgdest.clone(),
+                opts.srcdest.clone(),
+                opts.builddir.clone(),
+                opts.logdest.clone(),
                 PathBuf::from("/tmp"),
                 PathBuf::from("/var/tmp"),
                 PathBuf::from("/dev/shm"),
@@ -131,6 +148,9 @@ pub fn build(reviewed: &Reviewed, opts: &BuildOpts) -> Result<Vec<PathBuf>> {
         // The helper inherits a scrubbed environment; PKGDEST rides along.
         let mut command = spec.command()?;
         command.env("PKGDEST", &opts.pkgdest);
+        command.env("SRCDEST", &opts.srcdest);
+        command.env("BUILDDIR", &opts.builddir);
+        command.env("LOGDEST", &opts.logdest);
         let mut child = command.spawn().wrap_err("starting the build jail")?;
         if let Some(mut stdin) = child.stdin.take() {
             serde_json::to_writer(&mut stdin, &spec).wrap_err("sending the jail spec")?;
@@ -143,6 +163,9 @@ pub fn build(reviewed: &Reviewed, opts: &BuildOpts) -> Result<Vec<PathBuf>> {
             .env_clear()
             .envs(crate::jail::scrubbed_env())
             .env("PKGDEST", &opts.pkgdest)
+            .env("SRCDEST", &opts.srcdest)
+            .env("BUILDDIR", &opts.builddir)
+            .env("LOGDEST", &opts.logdest)
             .status()
             .wrap_err("running makepkg")?
     };
@@ -161,6 +184,9 @@ pub fn build(reviewed: &Reviewed, opts: &BuildOpts) -> Result<Vec<PathBuf>> {
         .env_clear()
         .envs(crate::jail::scrubbed_env())
         .env("PKGDEST", &opts.pkgdest)
+        .env("SRCDEST", &opts.srcdest)
+        .env("BUILDDIR", &opts.builddir)
+        .env("LOGDEST", &opts.logdest)
         .output()
         .wrap_err("running makepkg --packagelist")?;
     let files: Vec<PathBuf> = String::from_utf8_lossy(&output.stdout)
@@ -175,4 +201,44 @@ pub fn build(reviewed: &Reviewed, opts: &BuildOpts) -> Result<Vec<PathBuf>> {
         );
     }
     Ok(files)
+}
+
+/// Identity recorded inside a built package archive.
+pub struct BuiltPackage {
+    pub name: String,
+    pub version: String,
+}
+
+/// Read the authoritative package names and versions emitted by makepkg.
+pub fn built_packages(files: &[PathBuf]) -> Result<Vec<BuiltPackage>> {
+    files
+        .iter()
+        .map(|file| {
+            let output = Command::new("bsdtar")
+                .args(["-xOf"])
+                .arg(file)
+                .arg(".PKGINFO")
+                .output()
+                .wrap_err_with(|| format!("reading metadata from {}", file.display()))?;
+            if !output.status.success() {
+                bail!("cannot read .PKGINFO from {}", file.display());
+            }
+            let text = String::from_utf8_lossy(&output.stdout);
+            let value = |key: &str| {
+                text.lines().find_map(|line| {
+                    line.split_once(" = ")
+                        .filter(|(k, _)| *k == key)
+                        .map(|(_, v)| v)
+                })
+            };
+            Ok(BuiltPackage {
+                name: value("pkgname")
+                    .ok_or_else(|| eyre::eyre!("{} has no pkgname", file.display()))?
+                    .to_string(),
+                version: value("pkgver")
+                    .ok_or_else(|| eyre::eyre!("{} has no pkgver", file.display()))?
+                    .to_string(),
+            })
+        })
+        .collect()
 }

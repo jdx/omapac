@@ -46,7 +46,7 @@ impl RunWith<&App> for Build {
 
     fn run_with(self, app: &App) -> Self::Output {
         let prepared = app.prepare_aur(&self.package, self.commit.as_deref(), true, false)?;
-        let files = app.build_aur(&prepared)?;
+        let files = app.build_aur(&prepared, false)?;
         if self.json {
             return print_json(&files);
         }
@@ -194,7 +194,7 @@ impl App {
     }
 
     /// Install missing repository dependencies, then build.
-    pub fn build_aur(&self, prepared: &Prepared) -> Result<Vec<std::path::PathBuf>> {
+    pub fn build_aur(&self, prepared: &Prepared, yes: bool) -> Result<Vec<std::path::PathBuf>> {
         let host = self.host()?;
         let missing = crate::aur::build::missing_deps(&host, &prepared.reviewed, &prepared.arch)?;
         if !missing.other.is_empty() {
@@ -226,7 +226,7 @@ impl App {
                 &resolved,
                 &plan,
                 "install dependencies",
-                !crate::ui::interactive(),
+                yes || !crate::ui::interactive(),
                 false,
             )?;
             if performed {

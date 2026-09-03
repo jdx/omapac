@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "$1" != "-xOf" ] || [ "$3" != ".PKGINFO" ]; then
+  exit 2
+fi
+exec sed -n 'p' "$2.PKGINFO"
