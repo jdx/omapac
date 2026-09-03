@@ -545,7 +545,11 @@ impl Loader for FsLoader {
     fn expand(&self, pattern: &str) -> Vec<PathBuf> {
         let rooted = self.rooted(Path::new(pattern));
         let rooted = rooted.to_string_lossy();
-        let mut matches: Vec<PathBuf> = match glob::glob(&rooted) {
+        let options = glob::MatchOptions {
+            require_literal_leading_dot: true,
+            ..glob::MatchOptions::new()
+        };
+        let mut matches: Vec<PathBuf> = match glob::glob_with(&rooted, options) {
             Ok(paths) => paths.filter_map(Result::ok).collect(),
             Err(_) => Vec::new(),
         };
@@ -603,6 +607,7 @@ impl Loader for MemoryLoader {
                     path,
                     glob::MatchOptions {
                         require_literal_separator: true,
+                        require_literal_leading_dot: true,
                         ..glob::MatchOptions::new()
                     },
                 )
@@ -1078,6 +1083,10 @@ mod tests {
                 "[options]\nArchitecture = x86_64\n[core]\nInclude = /mirrors/*.list\n",
             )
             .with("/mirrors/a.list", "Server = https://a/$repo/$arch\n")
+            .with(
+                "/mirrors/.backup.list",
+                "Server = https://hidden/$repo/$arch\n",
+            )
             .with(
                 "/mirrors/nested/b.list",
                 "Server = https://nested/$repo/$arch\n",
