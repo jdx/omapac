@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # A stand-in for makepkg: records every invocation, "builds" a package
-# file into PKGDEST on --noextract, and lists it on --packagelist.
+# file into PKGDEST on a build invocation, and lists it on --packagelist.
 #   FAKE_PACMAN_LOG   file every argv is appended to (shared with pacman)
-#   FAKE_MAKEPKG_FAIL when set, --noextract fails with this status
+#   FAKE_MAKEPKG_FAIL when set, the build fails with this status
 set -euo pipefail
 printf 'makepkg %s\n' "$*" >>"${FAKE_PACMAN_LOG:?}"
 pkgname=$(sed -n 's/^pkgname=//p' PKGBUILD | tr -d '"'"'")
@@ -13,7 +13,9 @@ case " $* " in
   *" --packagelist "*)
     printf '%s\n' "$file"
     ;;
-  *" --noextract "*)
+  *" --verifysource "*)
+    ;;
+  *)
     if [ -n "${FAKE_MAKEPKG_FAIL:-}" ]; then exit "$FAKE_MAKEPKG_FAIL"; fi
     printf 'fake package %s\n' "$pkgname" >"$file"
     printf 'pkgname = %s\npkgver = %s-%s\n' "$pkgname" "$pkgver" "$pkgrel" >"$file.PKGINFO"

@@ -110,9 +110,10 @@ pub fn build(reviewed: &Reviewed, opts: &BuildOpts) -> Result<Vec<PathBuf>> {
         std::fs::create_dir_all(dir).wrap_err_with(|| format!("creating {}", dir.display()))?;
     }
 
-    // Phase 1: fetch and verify sources, extract. Network allowed.
+    // Phase 1 only downloads and verifies sources. Unlike --nobuild,
+    // --verifysource does not run prepare() or pkgver() outside the jail.
     let status = Command::new(&opts.makepkg)
-        .args(["--nobuild", "--noconfirm", "--force"])
+        .args(["--verifysource", "--noconfirm", "--force"])
         .current_dir(&checkout.dir)
         .env_clear()
         .envs(crate::jail::scrubbed_env())
@@ -121,21 +122,17 @@ pub fn build(reviewed: &Reviewed, opts: &BuildOpts) -> Result<Vec<PathBuf>> {
         .env("BUILDDIR", &opts.builddir)
         .env("LOGDEST", &opts.logdest)
         .status()
-        .wrap_err("running makepkg --nobuild")?;
+        .wrap_err("running makepkg --verifysource")?;
     if !status.success() {
         bail!(
-            "makepkg --nobuild failed for {} with status {}",
+            "makepkg --verifysource failed for {} with status {}",
             reviewed.pkgbase,
             status.code().unwrap_or(-1)
         );
     }
 
-    // Phase 2: build and package from the extracted sources.
-    let args = vec![
-        "--noextract".to_string(),
-        "--noconfirm".to_string(),
-        "--force".to_string(),
-    ];
+    // Phase 2 extracts, prepares, builds, and packages inside the jail.
+    let args = vec!["--noconfirm".to_string(), "--force".to_string()];
     let status = if opts.jail {
         let spec = Spec {
             writable: vec![
