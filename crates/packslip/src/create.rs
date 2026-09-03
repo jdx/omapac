@@ -62,7 +62,15 @@ pub type Platform = (
 /// Infer `(os, arch, libc, format)` from a release file name.
 pub fn infer_platform(name: &str) -> Platform {
     let lower = name.to_ascii_lowercase();
-    let os = if lower.contains("linux")
+    let os = if lower.contains("freebsd") {
+        Some("freebsd")
+    } else if lower.contains("windows")
+        || lower.contains("win64")
+        || lower.ends_with(".exe")
+        || lower.ends_with(".msi")
+    {
+        Some("windows")
+    } else if lower.contains("linux")
         || lower.ends_with(".deb")
         || lower.ends_with(".rpm")
         || lower.ends_with(".appimage")
@@ -75,14 +83,6 @@ pub fn infer_platform(name: &str) -> Platform {
         || lower.ends_with(".pkg")
     {
         Some("darwin")
-    } else if lower.contains("windows")
-        || lower.contains("win64")
-        || lower.ends_with(".exe")
-        || lower.ends_with(".msi")
-    {
-        Some("windows")
-    } else if lower.contains("freebsd") {
-        Some("freebsd")
     } else {
         None
     };
@@ -232,6 +232,14 @@ mod tests {
         assert_eq!(
             infer_platform("tool-linux-x86-64.tar.gz"),
             (Some("linux"), Some("x86_64"), Some("gnu"), Some("tar.gz"))
+        );
+        assert_eq!(
+            infer_platform("tool-freebsd-amd64.pkg"),
+            (Some("freebsd"), Some("x86_64"), None, Some("pkg"))
+        );
+        assert_eq!(
+            infer_platform("pineapple-windows-x64.exe"),
+            (Some("windows"), Some("x86_64"), None, Some("exe"))
         );
     }
 
