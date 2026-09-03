@@ -44,8 +44,9 @@ pub fn plan(host: &Host, resolved: &ResolvedTx, command: String) -> Plan {
         .iter()
         .map(|change| tiered(host, change))
         .collect();
-    for change in &changes {
-        if let Tier::Custom(repo) = &change.tier
+    for (resolved_change, change) in resolved.changes.iter().zip(&changes) {
+        if resolved_change.repo.as_deref() != Some("local")
+            && let Tier::Custom(repo) = &change.tier
             && let Some(source) = host.sources.iter().find(|s| &s.name == repo)
         {
             let level = source.repo.sig_level;
@@ -62,9 +63,12 @@ pub fn plan(host: &Host, resolved: &ResolvedTx, command: String) -> Plan {
             }
         }
     }
-    let hold: Vec<&str> = changes
+    let hold: Vec<&str> = resolved
+        .changes
         .iter()
-        .filter(|c| host.config.options.hold_pkg.contains(&c.name))
+        .filter(|c| {
+            c.repo.as_deref() == Some("local") && host.config.options.hold_pkg.contains(&c.name)
+        })
         .map(|c| c.name.as_str())
         .collect();
     if !hold.is_empty() {
