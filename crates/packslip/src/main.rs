@@ -59,8 +59,19 @@ impl RunWith<BinInfo> for Keygen {
     fn run_with(self, _: BinInfo) -> Self::Output {
         use std::io::Write as _;
         use std::os::unix::fs::OpenOptionsExt as _;
-        if self.out.exists() {
-            bail!("{} exists; not overwriting a key", self.out.display());
+        let pubkey = self.out.with_extension("pub");
+        if self.out == pubkey {
+            bail!(
+                "secret and public key paths both resolve to {}",
+                self.out.display()
+            );
+        }
+        if self.out.exists() || pubkey.exists() {
+            bail!(
+                "{} or {} exists; not overwriting a key",
+                self.out.display(),
+                pubkey.display()
+            );
         }
         let key = SecretKey::generate();
         let mut file = std::fs::OpenOptions::new()
@@ -70,9 +81,15 @@ impl RunWith<BinInfo> for Keygen {
             .open(&self.out)
             .wrap_err_with(|| format!("creating {}", self.out.display()))?;
         file.write_all(key.to_file().as_bytes())?;
-        let pubkey = self.out.with_extension("pub");
-        std::fs::write(&pubkey, key.public_key().to_file())
-            .wrap_err_with(|| format!("writing {}", pubkey.display()))?;
+        let public_result = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&pubkey)
+            .and_then(|mut public| public.write_all(key.public_key().to_file().as_bytes()));
+        if let Err(err) = public_result {
+            let _ = std::fs::remove_file(&self.out);
+            return Err(err).wrap_err_with(|| format!("writing {}", pubkey.display()));
+        }
         println!(
             "wrote {} and {} (key id {})",
             self.out.display(),
