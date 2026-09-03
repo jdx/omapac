@@ -160,7 +160,7 @@ fn cut_test_promote_hold_prune() {
     let (code, out, err) = t.run("2026-09-01T06:10:00Z", &["cut", "--from", "mirror"]);
     assert_eq!(code, 0, "{err}");
     assert!(
-        out.contains("cut snapshot 2026-09-01T06 (2 repositories), edge -> 2026-09-01T06"),
+        out.contains("cut snapshot 2026-09-01T06 (2 databases), edge -> 2026-09-01T06"),
         "{out}"
     );
     let r1 = t.release("2026-09-01T06");
@@ -407,8 +407,14 @@ fn cut_test_promote_hold_prune() {
 #[test]
 fn check_catches_a_tampered_database() {
     let t = Train::new();
+    let second_arch = t.rig.path().join("mirror/core/os/aarch64");
+    std::fs::create_dir_all(&second_arch).unwrap();
+    std::fs::copy(fixtures().join("sync/core.db"), second_arch.join("core.db")).unwrap();
     let (code, _, err) = t.run("2026-09-01T06:00:00Z", &["cut", "--from", "mirror"]);
     assert_eq!(code, 0, "{err}");
+    let release = t.release("2026-09-01T06");
+    assert!(release.db_digests.contains_key("core/os/x86_64/core.db"));
+    assert!(release.db_digests.contains_key("core/os/aarch64/core.db"));
     let (code, out, err) = t.run(
         "2026-09-01T07:00:00Z",
         &["check", "--id", "2026-09-01T06", "--allow-missing"],
@@ -426,7 +432,10 @@ fn check_catches_a_tampered_database() {
         &["check", "--id", "2026-09-01T06", "--allow-missing"],
     );
     assert_ne!(code, 0);
-    assert!(err.contains("omarchy: database digest"), "{err}");
+    assert!(
+        err.contains("omarchy/os/x86_64/omarchy.db: database digest"),
+        "{err}"
+    );
     assert!(err.contains("is inconsistent"), "{err}");
 }
 
