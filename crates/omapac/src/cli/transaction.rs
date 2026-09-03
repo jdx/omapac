@@ -172,11 +172,16 @@ pub fn confirm_and_apply(
     } else if !ui::confirm("Proceed?", true)? {
         bail!("cancelled");
     }
+    let hold_override = !yes
+        && plan
+            .warnings
+            .iter()
+            .any(|warning| warning.starts_with("HoldPkg:"));
     engine.apply(
         resolved,
         ApplyOpts {
             dry_run: false,
-            no_confirm: true,
+            no_confirm: !hold_override,
         },
     )?;
     Ok(())
