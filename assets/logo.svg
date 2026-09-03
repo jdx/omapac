@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" >
+<path d="M 26.0 50.0 C 44.0 104.0 10.0 168.0 18.0 238.0 Q 52.0 222.0 84.0 240.0 Q 124.0 222.0 164.0 240.0 Q 196.0 222.0 230.0 238.0 C 238.0 168.0 204.0 104.0 222.0 50.0 Q 200.0 70.0 176.0 96.0 L 124.0 78.0 L 72.0 96.0 Q 48.0 70.0 26.0 50.0 Z" fill="#3A2A66" stroke="#221838" stroke-width="6.0" stroke-linejoin="round"/>
+<path d="M 40.0 64.0 C 50.0 104.0 40.0 150.0 70.0 182.0 L 178.0 182.0 C 208.0 150.0 198.0 104.0 208.0 64.0 Q 194.0 82.0 172.0 102.0 L 124.0 88.0 L 76.0 102.0 Q 54.0 82.0 40.0 64.0 Z" fill="#E5405E"/>
+<path d="M 124.0 136.0 L 202.0 87.2 A 92.0 92.0 0 1 0 202.0 184.8 Z" fill="#B993FF"/>
+<clipPath id="pv-body"><path d="M 124.0 136.0 L 202.0 87.2 A 92.0 92.0 0 1 0 202.0 184.8 Z"/></clipPath><ellipse clip-path="url(#pv-body)" cx="124.0" cy="232.6" rx="105.8" ry="57.0" fill="#9A6FF0" opacity="0.55"/>
+<path d="M 124.0 136.0 L 202.0 87.2 A 92.0 92.0 0 1 0 202.0 184.8 Z" fill="none" stroke="#2B1D4D" stroke-width="6.0" stroke-linejoin="round"/>
+<path d="M 155.7 114.1 L 168.4 106.1 L 175.7 132.0 Z" fill="#FFFFFF" stroke="#2B1D4D" stroke-width="3.0" stroke-linejoin="round"/>
+<path d="M 176.0 101.4 L 188.7 93.4 L 196.0 119.3 Z" fill="#FFFFFF" stroke="#2B1D4D" stroke-width="3.0" stroke-linejoin="round"/>
+<ellipse cx="104.0" cy="128.0" rx="13.0" ry="8.0" fill="#FF8FB3" opacity="0.75"/>
+<ellipse cx="150.0" cy="90.0" rx="17.0" ry="19.0" fill="#fff" stroke="#2B1D4D" stroke-width="4.0"/>
+<circle cx="153.0" cy="93.0" r="9.5" fill="#2B1D4D"/>
+<circle cx="156.5" cy="88.5" r="3.5" fill="#fff"/>
+</svg>

@@ -22,3 +22,6 @@ flamegraph.svg
 
 # local agent settings
 .claude/settings.local.json
+
+# brand asset generator downloads this on first run
+/assets/Fredoka.ttf
