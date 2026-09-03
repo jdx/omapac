@@ -46,6 +46,7 @@ pub struct Picker {
     filter: String,
     /// Position within the visible (filtered) list.
     cursor: usize,
+    list_state: ListState,
     selected: BTreeSet<usize>,
     multi: bool,
 }
@@ -57,6 +58,7 @@ impl Picker {
             items,
             filter: String::new(),
             cursor: 0,
+            list_state: ListState::default(),
             selected: BTreeSet::new(),
             multi,
         }
@@ -121,17 +123,19 @@ impl Picker {
             KeyCode::Backspace => {
                 self.filter.pop();
                 self.cursor = 0;
+                *self.list_state.offset_mut() = 0;
             }
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.filter.push(c);
                 self.cursor = 0;
+                *self.list_state.offset_mut() = 0;
             }
             _ => {}
         }
         None
     }
 
-    pub fn render(&self, frame: &mut Frame<'_>) {
+    pub fn render(&mut self, frame: &mut Frame<'_>) {
         let [list_area, filter_area, help_area] = Layout::vertical([
             Constraint::Min(3),
             Constraint::Length(3),
@@ -186,11 +190,13 @@ impl Picker {
             .block(Block::default().borders(Borders::ALL).title(count))
             .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
             .highlight_symbol("> ");
-        let mut state = ListState::default();
         if !visible.is_empty() {
-            state.select(Some(self.cursor.min(visible.len() - 1)));
+            self.list_state
+                .select(Some(self.cursor.min(visible.len() - 1)));
+        } else {
+            self.list_state.select(None);
         }
-        frame.render_stateful_widget(list, list_area, &mut state);
+        frame.render_stateful_widget(list, list_area, &mut self.list_state);
         frame.render_widget(
             Paragraph::new(self.filter.as_str())
                 .block(Block::default().borders(Borders::ALL).title(" filter ")),
@@ -226,7 +232,7 @@ mod tests {
         ]
     }
 
-    fn screen(picker: &Picker) -> String {
+    fn screen(picker: &mut Picker) -> String {
         let backend = TestBackend::new(70, 12);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|f| picker.render(f)).unwrap();
@@ -266,7 +272,7 @@ mod tests {
         p.handle(key(KeyCode::Up));
         p.handle(key(KeyCode::Char(' ')));
         assert_eq!(p.selected(), vec![2]);
-        let text = screen(&p);
+        let text = screen(&mut p);
         assert!(text.contains("Install (3 shown, 1 selected)"), "{text}");
         assert!(text.contains("* yay"), "{text}");
         assert!(text.contains("[opr, installed]"), "{text}");
@@ -295,8 +301,25 @@ mod tests {
             p.handle(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
             Some(Outcome::Cancel)
         );
-        let text = screen(&p);
+        let text = screen(&mut p);
         assert!(text.contains("Remove (0 shown)"), "{text}");
         assert!(text.contains("enter choose"), "{text}");
+    }
+
+    #[test]
+    fn scrolling_state_survives_each_render() {
+        let items = (0..12)
+            .map(|index| Item::new(format!("item-{index:02}"), "", ""))
+            .collect();
+        let mut picker = Picker::new("Long", items, false);
+        picker.handle(key(KeyCode::End));
+        screen(&mut picker);
+        let bottom_offset = picker.list_state.offset();
+        assert!(bottom_offset > 0);
+
+        picker.handle(key(KeyCode::Up));
+        screen(&mut picker);
+        assert_eq!(picker.list_state.offset(), bottom_offset);
+        assert_eq!(picker.list_state.selected(), Some(10));
     }
 }
