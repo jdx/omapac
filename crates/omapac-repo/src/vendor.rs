@@ -200,7 +200,7 @@ impl RunWith<()> for Vendor {
             let updated = rewrite_pkgbuild(&pkgbuild, &report)?;
             let pkgbase = pkgbase_of(&pkgbuild).unwrap_or_else(|| "package".to_string());
             let sidecar_path = self.pkgdir.join(format!("{pkgbase}.vendor.json"));
-            let sidecar = sidecar(&resolved, now);
+            let sidecar = sidecar(&resolved, now)?;
             let lock = VendorLock {
                 version: resolved.chosen.version.clone(),
                 level: resolved.verified.level,
@@ -249,14 +249,15 @@ pub fn load_config(path: &Path) -> Result<VendorToml> {
 }
 
 /// The sidecar for a resolved release.
-pub fn sidecar(resolved: &Resolved, now: jiff::Timestamp) -> VendorSidecar {
-    VendorSidecar {
-        document: String::from_utf8_lossy(&resolved.document).into_owned(),
+pub fn sidecar(resolved: &Resolved, now: jiff::Timestamp) -> Result<VendorSidecar> {
+    Ok(VendorSidecar {
+        document: String::from_utf8(resolved.document.clone())
+            .wrap_err("signed packslip document is not UTF-8")?,
         signature: resolved.signature.clone(),
         level: resolved.verified.level,
         key_id: resolved.verified.key_id.clone(),
         verified_at: now.to_string(),
-    }
+    })
 }
 
 /// Fetch the release list and the chosen release's packslip, verify both
@@ -853,5 +854,31 @@ mod tests {
         assert_eq!(parse_age("0").unwrap(), Duration::ZERO);
         assert_eq!(parse_age("36h").unwrap(), Duration::from_secs(36 * 3600));
         assert!(parse_age("3x").is_err());
+    }
+
+    #[test]
+    fn sidecars_reject_non_utf8_signed_documents() {
+        let resolved = Resolved {
+            chosen: ReleaseRef {
+                version: "1".into(),
+                published_at: "2026-09-01T00:00:00Z".into(),
+                packslip: "https://example.test/packslip.json".into(),
+            },
+            document: vec![0xff],
+            signature: "signature".into(),
+            verified: Verified {
+                project: "pkg:generic/tool".into(),
+                version: "1".into(),
+                published_at: "2026-09-01T00:00:00Z".into(),
+                key_id: "key".into(),
+                level: Level::L2,
+                checked_artifacts: Vec::new(),
+                artifact_count: 0,
+            },
+            skipped: Vec::new(),
+            artifacts: BTreeMap::new(),
+        };
+        let now = jiff::Timestamp::from_str("2026-09-03T00:00:00Z").unwrap();
+        assert!(sidecar(&resolved, now).is_err());
     }
 }

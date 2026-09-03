@@ -277,7 +277,7 @@ fn publish_release(
     let out_dir = store.join(&rel_dir);
     std::fs::create_dir_all(&out_dir)
         .wrap_err_with(|| format!("creating {}", out_dir.display()))?;
-    let sidecar = crate::vendor::sidecar(&resolved, now);
+    let sidecar = crate::vendor::sidecar(&resolved, now)?;
     let mut artifacts = BTreeMap::new();
     for (platform, chosen) in &resolved.artifacts {
         safe_component(&chosen.name)?;
