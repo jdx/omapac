@@ -1,8 +1,9 @@
 //! `omapac-repo snapshot`: the snapshot store and channel pointers. See
 //! `docs/spec/snapshot-store.md`.
 
+use std::io::{BufRead as _, BufReader, Write as _};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::str::FromStr as _;
 
 use alpm_db::sync::SyncDb;
@@ -671,25 +672,31 @@ fn run_suite(store: &Store, test: &Test) -> Result<(TestResult, Vec<String>)> {
             Ok((result, outcome.verified))
         }
         Some(command) => {
-            let output = Command::new("sh")
+            let mut child = Command::new("sh")
                 .arg("-c")
                 .arg(command)
                 .env("OMAPAC_SNAPSHOT_ID", &test.id)
                 .env("OMAPAC_SNAPSHOT_DIR", store.snapshot_dir(&test.id))
-                .output()
+                .stdout(Stdio::piped())
+                .stderr(Stdio::inherit())
+                .spawn()
                 .wrap_err("running the suite")?;
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let mut tested: Vec<String> = stdout
-                .lines()
-                .filter_map(|l| l.strip_prefix("tested:").map(|s| s.trim().to_string()))
-                .filter(|s| !s.is_empty())
-                .collect();
+            let stdout = child.stdout.take().expect("suite stdout was piped");
+            let mut tested = Vec::new();
+            for line in BufReader::new(stdout).lines() {
+                let line = line.wrap_err("reading suite output")?;
+                println!("{line}");
+                std::io::stdout().flush()?;
+                if let Some(pkgbase) = line.strip_prefix("tested:").map(str::trim)
+                    && !pkgbase.is_empty()
+                {
+                    tested.push(pkgbase.to_string());
+                }
+            }
             tested.sort();
             tested.dedup();
-            if !output.status.success() {
-                eprint!("{}", String::from_utf8_lossy(&output.stderr));
-            }
-            let result = if output.status.success() {
+            let status = child.wait().wrap_err("waiting for the suite")?;
+            let result = if status.success() {
                 TestResult::Pass
             } else {
                 TestResult::Fail
