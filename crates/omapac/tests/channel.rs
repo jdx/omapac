@@ -437,4 +437,17 @@ fn info_and_update_carry_the_release_train_labels() {
     let (_, out, _) = run(&fresh, &["update", "-n", "--no-aur", "--json"], "");
     let plan: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(plan["snapshot"], "2026-09-03T06");
+
+    // Once pinned, both commands describe the snapshot actually in use,
+    // rather than the channel's newer current release.
+    let (code, _, err) = run(&fresh, &["channel", "pin", "2026-09-01T06"], "");
+    assert_eq!(code, 0, "{err}");
+    let (_, out, _) = run(&fresh, &["info", "pacman"], "");
+    assert!(
+        out.contains("Release Train    tested in snapshot 2026-09-01T06"),
+        "{out}"
+    );
+    let (code, out, err) = run(&fresh, &["update", "-n", "--no-aur", "--no-refresh"], "");
+    assert_eq!(code, 0, "{err}\n{out}");
+    assert!(out.contains("snapshot: 2026-09-01T06"), "{out}");
 }

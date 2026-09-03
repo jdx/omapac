@@ -177,7 +177,7 @@ impl RunWith<&App> for Update {
         let now = crate::ledger::now();
         // The channel's release manifest, fetched now so the tested label
         // and the recorded snapshot are current; absent is fine.
-        let release = match app.release(&host, false) {
+        let release = match app.active_release(&host, false) {
             Ok(release) => release,
             Err(err) => {
                 eprintln!("note: release manifest unavailable: {err:#}");
@@ -328,15 +328,7 @@ impl RunWith<&App> for Update {
             .as_ref()
             .is_some_and(|(resolved, _)| resolved.is_empty());
         let converged_release = if repo_plan.is_some() && !self.no_refresh {
-            let release = match crate::channel::current_pin(&app.mirrorlist_path()) {
-                Some(id) => match settings.channel_snapshot_base.as_deref() {
-                    Some(base) => app.snapshot_release(base, &id, false).map(Some),
-                    None => Err(eyre::eyre!(
-                        "mirrorlist is pinned to {id}, but channel.snapshot_base is not configured"
-                    )),
-                },
-                None => app.release(&host, false),
-            };
+            let release = app.active_release(&host, false);
             match release {
                 Ok(release) => release,
                 Err(err) => {
