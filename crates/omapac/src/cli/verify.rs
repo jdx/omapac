@@ -67,7 +67,7 @@ impl App {
             bail!("[{repo}] index says it is for [{}]", fetched.value.repo);
         }
         let ledger = self.ledger()?;
-        if let Some(seen) = ledger.index_sequence
+        if let Some(seen) = ledger.index_sequences.get(repo).copied()
             && fetched.value.sequence < seen
         {
             bail!(
@@ -76,13 +76,14 @@ impl App {
                 seen
             );
         }
-        if fetched.fresh && ledger.index_sequence != Some(fetched.value.sequence) {
-            let patch = crate::ledger::Patch {
-                index_sequence: Some(fetched.value.sequence),
-                ..Default::default()
-            };
-            // Recording is best effort here; the check above is what matters.
-            let _ = self.record(&patch);
+        if fetched.fresh
+            && ledger.index_sequences.get(repo).copied() != Some(fetched.value.sequence)
+        {
+            let mut patch = crate::ledger::Patch::default();
+            patch
+                .index_sequences
+                .insert(repo.to_string(), fetched.value.sequence);
+            self.record(&patch)?;
         }
         Ok(fetched)
     }
@@ -185,12 +186,17 @@ impl RunWith<&App> for Verify {
                 "{} from [{}] as {} (index sequence {}, signed by {})",
                 report.name, report.repo, report.filename, report.index_sequence, report.index_key
             );
-            match (report.digest_ok, report.size_ok) {
-                (Some(true), Some(true)) => println!("digest: ok"),
-                (Some(_), _) => println!("digest: MISMATCH"),
-                (None, _) => {
+            match report.digest_ok {
+                Some(true) => println!("digest: ok"),
+                Some(false) => println!("digest: MISMATCH"),
+                None => {
                     println!("digest: not checked (no local file; pass a path or install first)")
                 }
+            }
+            match report.size_ok {
+                Some(true) => println!("size: ok"),
+                Some(false) => println!("size: MISMATCH"),
+                None => println!("size: not checked"),
             }
             println!(
                 "sidecars: {}",

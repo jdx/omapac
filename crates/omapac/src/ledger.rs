@@ -49,6 +49,9 @@ pub struct Ledger {
     /// The newest signed index sequence seen, for rollback detection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub index_sequence: Option<u64>,
+    /// Newest signed index sequence seen for each repository.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub index_sequences: BTreeMap<String, u64>,
     /// The snapshot id the machine last converged to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snapshot: Option<String>,
@@ -78,6 +81,8 @@ pub struct Patch {
     pub remove: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub index_sequence: Option<u64>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub index_sequences: BTreeMap<String, u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snapshot: Option<String>,
 }
@@ -87,6 +92,7 @@ impl Patch {
         self.upsert.is_empty()
             && self.remove.is_empty()
             && self.index_sequence.is_none()
+            && self.index_sequences.is_empty()
             && self.snapshot.is_none()
     }
 }
@@ -142,6 +148,10 @@ impl Ledger {
         }
         if let Some(sequence) = patch.index_sequence {
             self.index_sequence = Some(self.index_sequence.unwrap_or(0).max(sequence));
+        }
+        for (repo, sequence) in &patch.index_sequences {
+            let seen = self.index_sequences.entry(repo.clone()).or_default();
+            *seen = (*seen).max(*sequence);
         }
         if let Some(snapshot) = &patch.snapshot {
             self.snapshot = Some(snapshot.clone());

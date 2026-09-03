@@ -166,43 +166,80 @@ pub fn fetch<T: serde::de::DeserializeOwned>(
                 .join(" or ")
         );
     }
-    let network = if offline {
-        None
-    } else {
-        match (
-            http_get(&source.url(name)),
-            http_get(&source.url(&format!("{name}.minisig"))),
-        ) {
-            (Ok(bytes), Ok(signature)) => {
-                Some((bytes, String::from_utf8_lossy(&signature).into_owned()))
+    let cached = cache.read(name);
+    if !offline {
+        let network = (|| -> Result<(Vec<u8>, String)> {
+            let bytes = http_get(&source.url(name))?;
+            let signature = http_get(&source.url(&format!("{name}.minisig")))?;
+            Ok((bytes, String::from_utf8_lossy(&signature).into_owned()))
+        })();
+        match network.and_then(|(bytes, signature)| {
+            let (value, key_id, sequence, repo) = decode::<T>(name, &bytes, &signature, keyring)?;
+            if repo.as_deref().is_some_and(|repo| repo != source.repo) {
+                bail!("{name} says it is for a different repository");
             }
-            (Err(err), _) | (_, Err(err)) => {
-                if cache.read(name).is_none() {
-                    return Err(err.wrap_err(format!("fetching {name} from {}", source.base)));
-                }
+            if let Some((cached_bytes, cached_signature, _)) = &cached
+                && let Ok((_, _, Some(cached_sequence), _)) =
+                    decode::<serde_json::Value>(name, cached_bytes, cached_signature, keyring)
+                && sequence.is_some_and(|sequence| sequence < cached_sequence)
+            {
+                bail!("{name} sequence is older than the cached copy");
+            }
+            cache.write(name, &bytes, &signature)?;
+            Ok(Fetched {
+                value,
+                fresh: true,
+                fetched_at: std::time::SystemTime::now(),
+                key_id,
+            })
+        }) {
+            Ok(fetched) => return Ok(fetched),
+            Err(err)
+                if cached.is_some()
+                    && !err.to_string().contains("sequence is older")
+                    && !err.to_string().contains("different repository") =>
+            {
                 eprintln!("warning: {name}: {err:#}; using the cached copy");
-                None
             }
+            Err(err) => return Err(err.wrap_err(format!("fetching {name} from {}", source.base))),
         }
+    }
+    let Some((bytes, signature, fetched_at)) = cached else {
+        bail!("{name}: not cached and offline");
     };
-    let (bytes, signature, fresh, fetched_at) = match network {
-        Some((bytes, signature)) => (bytes, signature, true, std::time::SystemTime::now()),
-        None => match cache.read(name) {
-            Some((bytes, signature, fetched)) => (bytes, signature, false, fetched),
-            None => bail!("{name}: not cached and offline"),
-        },
-    };
-    let key = keyring.verify(&bytes, &signature)?;
-    let value: T = serde_json::from_slice(&bytes).wrap_err_with(|| format!("parsing {name}"))?;
-    if fresh {
-        cache.write(name, &bytes, &signature)?;
+    let (value, key_id, _, repo) = decode(name, &bytes, &signature, keyring)?;
+    if repo.as_deref().is_some_and(|repo| repo != source.repo) {
+        bail!("cached {name} says it is for a different repository");
     }
     Ok(Fetched {
         value,
-        fresh,
+        fresh: false,
         fetched_at,
-        key_id: packslip::minisign::key_id_hex(&key.key_id),
+        key_id,
     })
+}
+
+fn decode<T: serde::de::DeserializeOwned>(
+    name: &str,
+    bytes: &[u8],
+    signature: &str,
+    keyring: &Keyring,
+) -> Result<(T, String, Option<u64>, Option<String>)> {
+    let key = keyring.verify(bytes, signature)?;
+    let document: serde_json::Value =
+        serde_json::from_slice(bytes).wrap_err_with(|| format!("parsing {name}"))?;
+    let sequence = document.get("sequence").and_then(serde_json::Value::as_u64);
+    let repo = document
+        .get("repo")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string);
+    let value = serde_json::from_value(document).wrap_err_with(|| format!("parsing {name}"))?;
+    Ok((
+        value,
+        packslip::minisign::key_id_hex(&key.key_id),
+        sequence,
+        repo,
+    ))
 }
 
 fn http_get(url: &str) -> Result<Vec<u8>> {
