@@ -317,6 +317,16 @@ enum AurOutcome {
 /// skips it and a clean report approves it; otherwise the user decides.
 fn update_aur_package(app: &App, name: &str, yes: bool) -> Result<AurOutcome> {
     let (reviewed, mut lock) = app.review_aur(name, None, !yes && crate::ui::interactive())?;
+    if yes
+        && !reviewed.evidence.recipe.install_files.is_empty()
+        && app.manifest()?.settings.aur_install_scripts
+            == crate::manifest::settings::InstallScripts::Deny
+    {
+        return Ok(AurOutcome::Skipped(format!(
+            "install scriptlet(s) {} denied by policy",
+            reviewed.evidence.recipe.install_files.join(", ")
+        )));
+    }
     let approved_here = lock
         .aur
         .get(&reviewed.pkgbase)

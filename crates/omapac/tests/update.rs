@@ -291,6 +291,38 @@ fn aur_upgrade_with_denials_is_skipped_unattended() {
 }
 
 #[test]
+fn aur_upgrade_with_denied_install_script_is_skipped_unattended() {
+    let s = setup(rpc_with_newer_yay());
+    let pkgbuild = YAY_PKGBUILD.replace("pkgrel=1", "pkgrel=2\ninstall=yay.install");
+    let srcinfo = YAY_SRCINFO.replace("\tpkgrel = 1", "\tpkgrel = 2\n\tinstall = yay.install");
+    s.aur.commit(
+        "yay",
+        &[
+            ("PKGBUILD", &pkgbuild),
+            (".SRCINFO", &srcinfo),
+            ("yay.install", "post_install() { :; }\n"),
+        ],
+        "add scriptlet",
+        "2026-09-03T00:00:00Z",
+    );
+    std::fs::write(
+        s.rig.home.join(".config/omapac/omapac.toml"),
+        "[policy]\naur.jail = false\naur.install_scripts = \"deny\"\n",
+    )
+    .unwrap();
+
+    let (code, out, err) = run(&s, &["update", "-y", "--aur-only"], "");
+    assert_eq!(code, 0, "a skipped package does not fail the update: {err}");
+    assert!(err.contains("skipped yay: install scriptlet"), "{err}");
+    assert!(err.contains("1 AUR package(s) skipped: yay"), "{err}");
+    assert!(!out.contains("updated yay"), "{out}");
+    assert!(
+        s.rig.log().iter().all(|line| !line.starts_with("makepkg")),
+        "nothing built"
+    );
+}
+
+#[test]
 fn prune_orphans_and_pacnew_command() {
     let s = setup(INFO.to_string());
     let remove = "yay\\t13.0.1-1\\tlocal\\tyay-13.0.1-1\\t(null)\\n";
