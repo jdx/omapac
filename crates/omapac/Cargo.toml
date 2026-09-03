@@ -27,6 +27,7 @@ required-features = ["test-pacman"]
 
 [dependencies]
 alpm-db.workspace = true
+base64.workspace = true
 color-eyre.workspace = true
 eyre.workspace = true
 indexmap.workspace = true
