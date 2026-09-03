@@ -67,6 +67,7 @@ fn run(s: &Setup, args: &[&str], print: &str) -> (i32, String, String) {
     let output = Command::new(env!("CARGO_BIN_EXE_omapac"))
         .env("PATH", format!("{}:/usr/bin:/bin", s.rig.bin.display()))
         .env("HOME", &s.rig.home)
+        .env_remove("XDG_CONFIG_HOME")
         .env("XDG_CACHE_HOME", s.rig.dir.path().join("cache"))
         .env("FAKE_PACMAN_LOG", &s.rig.log)
         .env("FAKE_PACMAN_PRINT", print)
