@@ -39,8 +39,8 @@ expect() {
 	}
 }
 
-# Real databases: refresh through pacman itself.
-run "pacman -Sy --noconfirm >/dev/null"
+# Bring the rolling image fully current before any real package installs.
+run "pacman -Syu --noconfirm >/dev/null"
 
 # Read-only commands against the real local and sync databases.
 expect '^omapac ' "omapac version"
