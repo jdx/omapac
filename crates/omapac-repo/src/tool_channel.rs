@@ -137,7 +137,10 @@ impl RunWith<()> for ToolChannel {
             }
             ToolChannelCommands::Publish(publish) => {
                 let key = key()?;
-                let line = publish_release(store, &mut index, publish, now, &key)?;
+                let Some(line) = publish_release(store, &mut index, publish, now, &key)? else {
+                    println!("tool channel already up to date");
+                    return Ok(());
+                };
                 println!("{line}");
             }
             ToolChannelCommands::Promote(promote) => {
@@ -204,7 +207,7 @@ fn publish_release(
     publish: &Publish,
     now: jiff::Timestamp,
     key: &SecretKey,
-) -> Result<String> {
+) -> Result<Option<String>> {
     let config = crate::vendor::load_config(&publish.config)?;
     let dir = publish
         .config
@@ -247,6 +250,9 @@ fn publish_release(
         .get(&tool)
         .is_some_and(|e| e.versions.contains_key(&version))
     {
+        if publish.version.is_none() {
+            return Ok(None);
+        }
         bail!("{tool} {version} is already published; versions are immutable");
     }
 
@@ -370,7 +376,7 @@ fn publish_release(
             artifacts,
         },
     );
-    Ok(format!(
+    Ok(Some(format!(
         "published {tool} {version} to edge (evidence {}, {} artifact(s){})",
         resolved.verified.level,
         resolved.artifacts.len(),
@@ -379,7 +385,7 @@ fn publish_release(
         } else {
             format!("; skipped {}", resolved.skipped.join(", "))
         }
-    ))
+    )))
 }
 
 fn safe_component(value: &str) -> Result<()> {
