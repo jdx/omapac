@@ -60,19 +60,21 @@ impl Pager {
         let [text_area, help_area] =
             Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(frame.area());
         self.height = text_area.height.saturating_sub(2) as usize;
+        self.scroll = self.scroll.min(self.max_scroll());
         let lines: Vec<Line<'_>> = self
             .lines
             .iter()
             .skip(self.scroll)
             .take(self.height)
             .map(|line| {
+                let trimmed = line.trim_start();
                 let style = if line.starts_with('+') && !line.starts_with("+++") {
                     Style::default().fg(Color::Green)
                 } else if line.starts_with('-') && !line.starts_with("---") {
                     Style::default().fg(Color::Red)
                 } else if line.starts_with("@@") || line.starts_with("==>") {
                     Style::default().fg(Color::Cyan)
-                } else if line.starts_with("DENY") || line.contains(" deny ") {
+                } else if trimmed.starts_with("DENY") || line.contains(" deny ") {
                     Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
                 } else if line.starts_with("WARN") || line.contains(" warn ") {
                     Style::default().fg(Color::Yellow)
