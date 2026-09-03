@@ -144,6 +144,12 @@ impl RunWith<()> for Vendor {
                 .wrap_err_with(|| format!("reading {}", config_path.display()))?,
         )
         .wrap_err_with(|| format!("parsing {}", config_path.display()))?;
+        if config.artifacts.is_empty() {
+            bail!(
+                "{} must declare at least one [artifacts] selector",
+                config_path.display()
+            );
+        }
         let pubkey = load_pubkey(&self.pkgdir, &config.upstream.pubkey)?;
         let now = now()?;
         let min_age = match &config.upstream.min_release_age {
