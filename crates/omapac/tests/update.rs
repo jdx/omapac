@@ -1,0 +1,233 @@
+//! `omapac update` through the fake pacman, makepkg, AUR remote, and RPC.
+
+mod common;
+
+use std::path::Path;
+use std::process::Command;
+
+use common::Rig;
+use common::aur::{FakeAur, YAY_PKGBUILD, YAY_SRCINFO};
+
+const INFO: &str = include_str!("../fixtures/aur/info.json");
+
+struct Setup {
+    rig: Rig,
+    aur: FakeAur,
+    rpc: String,
+}
+
+/// An RPC fixture where yay is at 13.0.2, newer than the installed 13.0.1.
+fn rpc_with_newer_yay() -> String {
+    INFO.replace("\"Version\":\"13.0.1-1\"", "\"Version\":\"13.0.2-1\"")
+}
+
+fn setup(rpc_body: String) -> Setup {
+    let rig = Rig::new();
+    let makepkg = rig.bin.join("makepkg");
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fakes/makepkg"),
+        &makepkg,
+    )
+    .unwrap();
+    let mut perms = std::fs::metadata(&makepkg).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+    std::fs::set_permissions(&makepkg, perms).unwrap();
+    let aur = FakeAur::new(rig.dir.path());
+    aur.create(
+        "yay",
+        &[("PKGBUILD", YAY_PKGBUILD), (".SRCINFO", YAY_SRCINFO)],
+        "2026-01-01T00:00:00Z",
+    );
+    let rpc = common::http::serve(vec![("/rpc/v5/info", rpc_body)]);
+    // Without the OPR database yay is foreign, so it is an AUR candidate
+    // rather than a repository upgrade.
+    std::fs::remove_file(rig.root.join("var/lib/pacman/sync/omarchy.db")).unwrap();
+    std::fs::create_dir_all(rig.home.join(".config/omapac")).unwrap();
+    std::fs::write(
+        rig.home.join(".config/omapac/omapac.toml"),
+        "[policy]\naur.jail = false\n",
+    )
+    .unwrap();
+    Setup { rig, aur, rpc }
+}
+
+fn run(s: &Setup, args: &[&str], print: &str) -> (i32, String, String) {
+    let output = Command::new(env!("CARGO_BIN_EXE_omapac"))
+        .env("PATH", format!("{}:/usr/bin:/bin", s.rig.bin.display()))
+        .env("HOME", &s.rig.home)
+        .env("XDG_CACHE_HOME", s.rig.dir.path().join("cache"))
+        .env("OMAPAC_AUR_RPC_BASE", &s.rpc)
+        .env("OMAPAC_AUR_GIT_BASE", s.aur.base())
+        .env("FAKE_PACMAN_LOG", &s.rig.log)
+        .env("FAKE_PACMAN_PRINT", print)
+        .arg("--sysroot")
+        .arg(&s.rig.root)
+        .args(args)
+        .output()
+        .unwrap();
+    (
+        output.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+const UPGRADE: &str = "pacman\\t7.1.0.r9.g54d9411-2\\tcore\\thttps://m/pacman.pkg\\t991730\\n";
+
+#[test]
+fn update_refreshes_plans_with_holds_and_applies() {
+    let s = setup(INFO.to_string());
+    // A manifest hold and a release-age floor that catches core's pacman
+    // (built 2026-05, younger than a year).
+    s.rig.write_root(
+        "/etc/omapac/conf.d/10-omarchy.toml",
+        "[packages]\nglibc = { hold = true }\n[policy]\nrepo.min_release_age.arch = \"365d\"\n[update]\noverwrite = [\"/usr/share/omarchy/*\"]\npre_hooks = [\"echo hook-pre >> $FAKE_PACMAN_LOG\"]\npost_hooks = [\"echo hook-post >> $FAKE_PACMAN_LOG\"]\n",
+    );
+    s.rig.write_root("/etc/pacman.conf.pacnew", "");
+    let (code, out, err) = run(&s, &["update", "-y"], UPGRADE);
+    assert_eq!(code, 0, "{err}\n{out}");
+    assert!(out.contains("hold: glibc: held by"), "{out}");
+    assert!(
+        out.contains("hold: pacman: core 7.1.0.r9.g54d9411-2 was built"),
+        "{out}"
+    );
+    assert!(out.contains("aur: nothing newer"), "{out}");
+    assert!(
+        out.contains("orphans: yay (pass --prune-orphans to remove)"),
+        "{out}"
+    );
+    assert!(
+        out.contains("pacnew: ") && out.contains("pacman.conf.pacnew"),
+        "{out}"
+    );
+    let log = s.rig.log();
+    assert_eq!(log[0], "hook-pre", "{log:?}");
+    assert!(log[1].ends_with("-Sy"), "refresh first: {log:?}");
+    let plan = log.iter().find(|l| l.contains("-Su --print")).unwrap();
+    assert!(plan.contains("--ignore glibc,pacman"), "{plan}");
+    assert!(plan.contains("--overwrite /usr/share/omarchy/*"), "{plan}");
+    let apply = log.iter().find(|l| l.contains("-Su --noconfirm")).unwrap();
+    assert!(
+        apply.starts_with("sudo -n env OMARCHY_UPDATE_PACMAN=1"),
+        "the guard variable: {apply}"
+    );
+    assert_eq!(log.last().unwrap(), "hook-post", "{log:?}");
+}
+
+#[test]
+fn dry_run_and_json_run_nothing() {
+    let s = setup(INFO.to_string());
+    let (code, out, _) = run(&s, &["update", "-n"], UPGRADE);
+    assert_eq!(code, 0);
+    assert!(out.contains("would run:"), "{out}");
+    let log = s.rig.log();
+    assert!(
+        log.iter().all(|l| l.contains("--print")),
+        "only planning: {log:?}"
+    );
+    let (_, out, _) = run(&s, &["update", "--json"], UPGRADE);
+    let json: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(json["repo"]["changes"][0]["name"], "pacman");
+    assert_eq!(json["orphans"][0], "yay");
+}
+
+#[test]
+fn aur_upgrade_is_reviewed_built_and_installed_when_clean() {
+    let s = setup(rpc_with_newer_yay());
+    // A benign bump committed long ago, same host, no scriptlets.
+    let pkgbuild = YAY_PKGBUILD.replace("pkgver=13.0.1", "pkgver=13.0.2");
+    let srcinfo = YAY_SRCINFO.replace("pkgver = 13.0.1", "pkgver = 13.0.2");
+    s.aur.commit(
+        "yay",
+        &[("PKGBUILD", &pkgbuild), (".SRCINFO", &srcinfo)],
+        "bump to 13.0.2",
+        "2026-02-01T00:00:00Z",
+    );
+    let (code, out, err) = run(&s, &["update", "-y", "--aur-only"], "");
+    assert_eq!(code, 0, "{err}\n{out}");
+    assert!(
+        out.contains("aur: 1 package(s) have a newer commit:"),
+        "{out}"
+    );
+    assert!(out.contains("yay  13.0.1-1 -> 13.0.2-1"), "{out}");
+    assert!(
+        out.contains("updated yay to 13.0.2-1 from AUR commit"),
+        "{out}"
+    );
+    let log = s.rig.log();
+    assert!(
+        log.iter().any(|l| l.starts_with("makepkg --noextract")),
+        "{log:?}"
+    );
+    assert!(
+        log.iter()
+            .any(|l| l.contains("-U --noconfirm -- ") && l.contains("yay-13.0.2-1")),
+        "{log:?}"
+    );
+    let lock = std::fs::read_to_string(s.rig.home.join(".config/omapac/omapac.lock")).unwrap();
+    assert!(
+        lock.contains("pkgver = \"13.0.2-1\""),
+        "auto-approved: {lock}"
+    );
+}
+
+#[test]
+fn aur_upgrade_with_denials_is_skipped_unattended() {
+    let s = setup(rpc_with_newer_yay());
+    use common::aur::{EVIL_INSTALL, EVIL_PKGBUILD, EVIL_SRCINFO};
+    s.aur.commit(
+        "yay",
+        &[
+            ("PKGBUILD", EVIL_PKGBUILD),
+            (".SRCINFO", EVIL_SRCINFO),
+            ("yay.install", EVIL_INSTALL),
+        ],
+        "bump",
+        "2026-09-03T00:00:00Z",
+    );
+    let (code, out, err) = run(&s, &["update", "-y", "--aur-only"], "");
+    assert_eq!(code, 0, "a skipped package does not fail the update: {err}");
+    assert!(err.contains("skipped yay: "), "{err}");
+    assert!(err.contains("checksum-skip"), "{err}");
+    assert!(err.contains("1 AUR package(s) skipped: yay"), "{err}");
+    assert!(!out.contains("updated yay"), "{out}");
+    assert!(
+        s.rig.log().iter().all(|l| !l.starts_with("makepkg")),
+        "nothing built"
+    );
+}
+
+#[test]
+fn prune_orphans_and_pacnew_command() {
+    let s = setup(INFO.to_string());
+    let remove = "yay\\t13.0.1-1\\tlocal\\tyay-13.0.1-1\\t(null)\\n";
+    let (code, out, err) = run(
+        &s,
+        &[
+            "update",
+            "-y",
+            "--no-aur",
+            "--no-refresh",
+            "--prune-orphans",
+        ],
+        remove,
+    );
+    assert_eq!(code, 0, "{err}\n{out}");
+    assert!(out.contains("orphans: yay (will be removed)"), "{out}");
+    let log = s.rig.log();
+    assert!(
+        log.iter().any(|l| l.ends_with("-R --noconfirm -s -- yay")),
+        "{log:?}"
+    );
+    assert!(
+        log.iter().all(|l| !l.ends_with("-Sy")),
+        "--no-refresh: {log:?}"
+    );
+
+    s.rig.write_root("/etc/pacman.conf", "a\n");
+    s.rig.write_root("/etc/pacman.conf.pacnew", "b\n");
+    let (code, out, _) = run(&s, &["pacnew", "--diff"], "");
+    assert_eq!(code, 0);
+    assert!(out.contains("pacman.conf.pacnew"), "{out}");
+    assert!(out.contains("-a\n+b"), "{out}");
+}
