@@ -311,7 +311,7 @@ fn fetch_artifact(
         .wrap_err_with(|| format!("creating {}", fetch.dest.display()))?;
     let path = fetch.dest.join(&artifact.name);
     let url = format!("{}/{}", channel.base, artifact.path);
-    let bytes = download(&url)?;
+    let bytes = download(&url, artifact.size)?;
     let sha256 = crate::trust::sha256_bytes(&bytes);
     if sha256 != artifact.sha256 {
         bail!(
@@ -346,11 +346,14 @@ fn fetch_artifact(
     if !artifact.sidecars.iter().any(|s| s == &vendor_sidecar) {
         bail!("{vendor_sidecar}: required sidecar is absent from the index");
     } else {
-        let sidecar: serde_json::Value = serde_json::from_slice(&download(&format!(
-            "{}/{}",
-            channel.base,
-            sidecar_path(&artifact.path, ".vendor.json")
-        ))?)?;
+        let sidecar: serde_json::Value = serde_json::from_slice(&download(
+            &format!(
+                "{}/{}",
+                channel.base,
+                sidecar_path(&artifact.path, ".vendor.json")
+            ),
+            64 * 1024 * 1024,
+        )?)?;
         let document = sidecar["document"]
             .as_str()
             .ok_or_else(|| eyre::eyre!("{vendor_sidecar}: no document"))?;
@@ -374,11 +377,14 @@ fn fetch_artifact(
     if !artifact.sidecars.iter().any(|s| s == &provenance_sidecar) {
         bail!("{provenance_sidecar}: required sidecar is absent from the index");
     } else {
-        let envelope: packslip::dsse::Envelope = serde_json::from_slice(&download(&format!(
-            "{}/{}",
-            channel.base,
-            sidecar_path(&artifact.path, ".provenance.json")
-        ))?)?;
+        let envelope: packslip::dsse::Envelope = serde_json::from_slice(&download(
+            &format!(
+                "{}/{}",
+                channel.base,
+                sidecar_path(&artifact.path, ".provenance.json")
+            ),
+            64 * 1024 * 1024,
+        )?)?;
         let keys: Vec<&packslip::minisign::PublicKey> =
             channel.keyring.keys.iter().map(|(_, k)| k).collect();
         let Some((payload, _)) = envelope.verify_any(keys) else {
@@ -422,14 +428,18 @@ fn sidecar_path(artifact_path: &str, suffix: &str) -> String {
     format!("{artifact_path}{suffix}")
 }
 
-fn download(url: &str) -> Result<Vec<u8>> {
+fn download(url: &str, max_size: u64) -> Result<Vec<u8>> {
     let mut response = ureq::get(url)
         .call()
         .wrap_err_with(|| format!("fetching {url}"))?;
-    response
+    let bytes = response
         .body_mut()
         .with_config()
-        .limit(4 * 1024 * 1024 * 1024)
+        .limit(max_size.saturating_add(1))
         .read_to_vec()
-        .wrap_err_with(|| format!("reading {url}"))
+        .wrap_err_with(|| format!("reading {url}"))?;
+    if bytes.len() as u64 > max_size {
+        bail!("{url}: response exceeds the {max_size}-byte limit");
+    }
+    Ok(bytes)
 }

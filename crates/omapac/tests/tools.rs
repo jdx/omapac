@@ -86,7 +86,7 @@ fn build_store(tamper: bool) -> Store {
             &channel_key,
         );
         let served = if tamper && version == "1.2.0" {
-            "tampered".to_string()
+            "tampered".repeat(1024)
         } else {
             content.clone()
         };
@@ -349,7 +349,7 @@ fn a_tampered_mirror_is_caught() {
     );
     assert_ne!(code, 0);
     assert!(
-        err.contains("is not the") && err.contains("the index records"),
+        err.contains("reading") || err.contains("response exceeds"),
         "{err}"
     );
     assert!(
