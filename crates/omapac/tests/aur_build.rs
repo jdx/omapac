@@ -269,8 +269,8 @@ fn install_scripts_can_be_denied_by_policy() {
 
 /// yay depending on an AUR-only library, and the library as its own
 /// recipe; the RPC answers for both.
-const YAY_NEEDS_LIB_PKGBUILD: &str = "# Maintainer: jguer\npkgname=yay\npkgver=13.0.1\npkgrel=1\ndepends=('zorbqlib>=1.0')\nsource=(\"yay-13.0.1.tar.gz::https://github.com/Jguer/yay/archive/v13.0.1.tar.gz\")\nsha256sums=('b77454bce87110180a1b6664c2d260de78124c9894b71101610ba84f551eb0d0')\nbuild() {\n  make build\n}\npackage() {\n  make DESTDIR=\"$pkgdir\" install\n}\n";
-const YAY_NEEDS_LIB_SRCINFO: &str = "pkgbase = yay\n\tpkgver = 13.0.1\n\tpkgrel = 1\n\tarch = x86_64\n\tdepends = zorbqlib>=1.0\n\tsource = yay-13.0.1.tar.gz::https://github.com/Jguer/yay/archive/v13.0.1.tar.gz\n\tsha256sums = b77454bce87110180a1b6664c2d260de78124c9894b71101610ba84f551eb0d0\n\npkgname = yay\n";
+const YAY_NEEDS_LIB_PKGBUILD: &str = "# Maintainer: jguer\npkgname=yay\npkgver=13.0.1\npkgrel=1\ndepends=('zorbqlib>=1.0')\nmakedepends=('zorbqlib>=1.0')\nsource=(\"yay-13.0.1.tar.gz::https://github.com/Jguer/yay/archive/v13.0.1.tar.gz\")\nsha256sums=('b77454bce87110180a1b6664c2d260de78124c9894b71101610ba84f551eb0d0')\nbuild() {\n  make build\n}\npackage() {\n  make DESTDIR=\"$pkgdir\" install\n}\n";
+const YAY_NEEDS_LIB_SRCINFO: &str = "pkgbase = yay\n\tpkgver = 13.0.1\n\tpkgrel = 1\n\tarch = x86_64\n\tmakedepends = zorbqlib>=1.0\n\tdepends = zorbqlib>=1.0\n\tsource = yay-13.0.1.tar.gz::https://github.com/Jguer/yay/archive/v13.0.1.tar.gz\n\tsha256sums = b77454bce87110180a1b6664c2d260de78124c9894b71101610ba84f551eb0d0\n\npkgname = yay\n";
 const ZORBQLIB_PKGBUILD: &str = "# Maintainer: jguer\npkgname=zorbqlib\npkgver=1.2\npkgrel=1\nsource=(\"https://github.com/example/zorbqlib/archive/v1.2.tar.gz\")\nsha256sums=('0000000000000000000000000000000000000000000000000000000000000000')\npackage() {\n  :\n}\n";
 const ZORBQLIB_SRCINFO: &str = "pkgbase = zorbqlib\n\tpkgver = 1.2\n\tpkgrel = 1\n\tarch = x86_64\n\tsource = https://github.com/example/zorbqlib/archive/v1.2.tar.gz\n\tsha256sums = 0000000000000000000000000000000000000000000000000000000000000000\n\npkgname = zorbqlib\n";
 const ZORBQLIB_NEEDS_YAY_SRCINFO: &str = "pkgbase = zorbqlib\n\tpkgver = 1.2\n\tpkgrel = 1\n\tarch = x86_64\n\tdepends = yay>13.5\n\tsource = https://github.com/example/zorbqlib/archive/v1.2.tar.gz\n\tsha256sums = 0000000000000000000000000000000000000000000000000000000000000000\n\npkgname = zorbqlib\n";
@@ -377,6 +377,36 @@ fn aur_dependencies_are_built_first_and_installed_as_deps() {
     .unwrap();
     assert_eq!(ledger["packages"]["zorbqlib"]["explicit"], false);
     assert_eq!(ledger["packages"]["yay"]["explicit"], true);
+}
+
+#[test]
+fn upgrading_an_explicit_aur_dependency_keeps_it_explicit() {
+    let s = setup_with_zorbqlib(ZORBQLIB_SRCINFO);
+    no_jail(&s);
+    s.rig.write_root(
+        "/var/lib/pacman/local/zorbqlib-0.9-1/desc",
+        "%NAME%\nzorbqlib\n\n%VERSION%\n0.9-1\n\n%REASON%\n0\n",
+    );
+    run(&s, &["aur", "approve", "-y", "yay"], "");
+    run(&s, &["aur", "approve", "-y", "zorbqlib"], "");
+    let (code, out, err) = run(&s, &["install", "--aur", "-y", "yay"], "");
+    assert_eq!(code, 0, "{err}\n{out}");
+    let installs: Vec<String> = s
+        .rig
+        .log()
+        .into_iter()
+        .filter(|line| line.starts_with("--sysroot") && line.contains("-U"))
+        .collect();
+    assert_eq!(installs.len(), 2, "{installs:?}");
+    assert!(
+        installs[0].contains("zorbqlib-1.2-1") && !installs[0].contains("--asdeps"),
+        "{installs:?}"
+    );
+    let ledger: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(s.rig.root.join("var/lib/omapac/state.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(ledger["packages"]["zorbqlib"]["explicit"], true);
 }
 
 #[test]
