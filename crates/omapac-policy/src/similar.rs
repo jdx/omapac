@@ -46,13 +46,31 @@ pub fn similar<'a>(
         if candidate == name || candidate.chars().count() < 4 {
             continue;
         }
-        if distance(name, candidate) <= max {
+        if distance(name, candidate) <= max || has_padded_suffix(name, candidate) {
             found.push(candidate.to_string());
         }
     }
     found.sort();
     found.dedup();
     found
+}
+
+/// Detect an inserted component before a candidate's final suffix:
+/// `firefox-patch-bin` is shaped like `firefox-bin`, while an ordinary
+/// extension such as `python-requests` does not match plain `python`.
+fn has_padded_suffix(name: &str, candidate: &str) -> bool {
+    let Some((stem, suffix)) = candidate.rsplit_once('-') else {
+        return false;
+    };
+    let Some(middle) = name
+        .strip_prefix(stem)
+        .and_then(|rest| rest.strip_prefix('-'))
+        .and_then(|rest| rest.strip_suffix(suffix))
+        .and_then(|rest| rest.strip_suffix('-'))
+    else {
+        return false;
+    };
+    !middle.is_empty() && !middle.contains('/')
 }
 
 #[cfg(test)]
@@ -74,7 +92,7 @@ mod tests {
         let known = ["firefox", "firefox-bin", "helix", "python", "yay", "bat"];
         assert!(similar("firefox-bin", known, 2).is_empty());
         assert!(similar("python-requests", known, 2).is_empty());
-        assert!(similar("firefox-patch-bin", known, 2).is_empty());
+        assert_eq!(similar("firefox-patch-bin", known, 2), ["firefox-bin"]);
         assert_eq!(similar("firefx-bin", known, 2), ["firefox-bin"]);
         assert_eq!(similar("hellix", known, 2), ["helix"]);
         assert_eq!(

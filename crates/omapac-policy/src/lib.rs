@@ -20,7 +20,9 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-pub use evidence::{Advisory, Approved, Commit, Diff, Evidence, Recipe, Rpc, Source, Verdict};
+pub use evidence::{
+    Advisory, Approved, Commit, Diff, Evidence, Recipe, Rpc, Source, Verdict, VerdictKind,
+};
 pub use finding::{Finding, FindingId, Severity};
 
 /// What to do about a finding.
