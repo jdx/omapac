@@ -225,6 +225,9 @@ fn aur_upgrade_is_reviewed_built_and_installed_when_clean() {
         lock.contains("pkgver = \"13.0.2-1\""),
         "auto-approved: {lock}"
     );
+    let ledger = std::fs::read_to_string(s.rig.root.join("var/lib/omapac/state.json")).unwrap();
+    let ledger: serde_json::Value = serde_json::from_str(&ledger).unwrap();
+    assert_eq!(ledger["packages"]["yay"]["explicit"], false);
 }
 
 #[test]
