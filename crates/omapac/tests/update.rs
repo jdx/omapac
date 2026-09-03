@@ -144,6 +144,10 @@ fn aur_upgrade_is_reviewed_built_and_installed_when_clean() {
         "bump to 13.0.2",
         "2026-02-01T00:00:00Z",
     );
+    let (code, _, err) = run(&s, &["update", "--aur-only"], "");
+    assert_ne!(code, 0);
+    assert!(err.contains("no terminal to ask on; pass -y"), "{err}");
+    assert!(s.rig.log().iter().all(|line| !line.starts_with("makepkg")));
     let (code, out, err) = run(&s, &["update", "-y", "--aur-only"], "");
     assert_eq!(code, 0, "{err}\n{out}");
     assert!(
@@ -169,6 +173,26 @@ fn aur_upgrade_is_reviewed_built_and_installed_when_clean() {
     assert!(
         lock.contains("pkgver = \"13.0.2-1\""),
         "auto-approved: {lock}"
+    );
+}
+
+#[test]
+fn unattended_update_allows_signed_custom_repo_warnings() {
+    let s = setup(INFO.to_string());
+    let conf =
+        common::DEFAULT_CONF.replace("SigLevel = Never", "SigLevel = Required DatabaseOptional");
+    s.rig.write_root("/etc/pacman.conf", &conf);
+    let plan = "foo\\t2-1\\tchaotic-aur\\thttps://x/foo.pkg\\t1\\n";
+    let (code, out, err) = run(&s, &["update", "-y", "--no-aur", "--no-refresh"], plan);
+    assert_eq!(code, 0, "{err}\n{out}");
+    assert!(out.contains("outside Arch and Omarchy review"), "{out}");
+    assert!(
+        s.rig
+            .log()
+            .iter()
+            .any(|line| line.contains("-Su --noconfirm")),
+        "{:?}",
+        s.rig.log()
     );
 }
 
