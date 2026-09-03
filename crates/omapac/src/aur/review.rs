@@ -163,7 +163,7 @@ fn gather(
             time: target_time,
         },
         approved,
-        pinned: request.locked.is_some(),
+        pinned: request.commit.is_some(),
         first_install: request.host.installed_package(name)?.is_none(),
         recipe: policy::Recipe {
             version: srcinfo.version(),

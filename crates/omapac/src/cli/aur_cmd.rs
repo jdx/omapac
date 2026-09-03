@@ -194,8 +194,9 @@ impl RunWith<&App> for Review {
     fn run_with(self, app: &App) -> Self::Output {
         let interactive = !self.unattended && crate::ui::interactive();
         let (reviewed, _) = app.review_aur(&self.package, self.commit.as_deref(), interactive)?;
+        let denied = reviewed.report.denied();
         if self.json {
-            return print_json(&serde_json::json!({
+            print_json(&serde_json::json!({
                 "pkgbase": reviewed.pkgbase,
                 "pkgname": reviewed.pkgname,
                 "commit": reviewed.target,
@@ -203,7 +204,11 @@ impl RunWith<&App> for Review {
                 "approved": reviewed.evidence.approved.as_ref().map(|a| a.commit.clone()),
                 "report": reviewed.report,
                 "diff": if self.no_diff { None } else { Some(reviewed.review_text()?) },
-            }));
+            }))?;
+            if denied {
+                std::process::exit(1);
+            }
+            return Ok(());
         }
         print!("{}", render(&reviewed));
         if !self.no_diff {
@@ -213,7 +218,7 @@ impl RunWith<&App> for Review {
                 print!("{text}");
             }
         }
-        if reviewed.report.denied() {
+        if denied {
             std::process::exit(1);
         }
         Ok(())
