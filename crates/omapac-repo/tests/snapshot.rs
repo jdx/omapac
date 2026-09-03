@@ -153,6 +153,47 @@ fn fallback_skips_a_former_rc_whose_latest_test_failed() {
 }
 
 #[test]
+fn automatic_stable_promotion_never_moves_backward() {
+    let t = Train::new();
+    for (id, promote_at) in [
+        ("2026-09-01T06", "2026-09-05T07:00:00Z"),
+        ("2026-09-02T06", "2026-09-06T07:00:00Z"),
+    ] {
+        assert_eq!(
+            t.run(
+                &format!("{id}:10:00Z"),
+                &["cut", "--from", "mirror", "--id", id]
+            )
+            .0,
+            0
+        );
+        assert_eq!(
+            t.run(
+                &format!("{id}:20:00Z"),
+                &["test", "--id", id, "--suite", "true"]
+            )
+            .0,
+            0
+        );
+        assert_eq!(t.run(promote_at, &["promote", "--channel", "stable"]).0, 0);
+    }
+    assert_eq!(t.target("stable").as_deref(), Some("2026-09-02T06"));
+
+    assert_eq!(
+        t.run(
+            "2026-09-06T08:00:00Z",
+            &["promote", "--channel", "rc", "--id", "2026-09-01T06"]
+        )
+        .0,
+        0
+    );
+    let (code, _, err) = t.run("2026-09-06T09:00:00Z", &["promote", "--channel", "stable"]);
+    assert_ne!(code, 0);
+    assert!(err.contains("refusing to move stable backward"), "{err}");
+    assert_eq!(t.target("stable").as_deref(), Some("2026-09-02T06"));
+}
+
+#[test]
 fn passing_retest_does_not_retreat_a_held_rc_without_a_fallback() {
     let t = Train::new();
     let id = "2026-09-01T06";
