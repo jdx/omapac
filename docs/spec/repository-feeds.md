@@ -125,6 +125,14 @@ the repository's `Server` line in `pacman.conf`. pacman ignores them.
   review popular AUR packages proactively and the feed doubles as an AUR
   review cache for `omapac aur review`.
 
+## Producing the feeds
+
+`omapac-repo index` writes the index; `omapac-repo verdict` and
+`omapac-repo sync-aur --verdicts` append to the verdict feed;
+`omapac-repo advisories add|remove` maintains the advisory feed. Every
+write advances the sequence, sets `issued_at`, and re-signs the file with
+the feed key. See `sync-gate.md`.
+
 ## Client behaviour
 
 1. Load trust keys. With none, feeds cannot be verified and `trust.*`
