@@ -106,8 +106,9 @@ impl RunWith<&App> for Verify {
     fn run_with(self, app: &App) -> Self::Output {
         let host = app.host()?;
         let path = Path::new(&self.target);
+        let explicit_path = path.components().count() > 1 || self.target.contains(".pkg.tar.");
         let (name, repo, filename, file): (String, String, String, Option<PathBuf>) =
-            if path.is_file() {
+            if explicit_path && path.is_file() {
                 let filename = path
                     .file_name()
                     .and_then(|n| n.to_str())
