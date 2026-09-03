@@ -243,9 +243,6 @@ fn yes_no(b: bool) -> &'static str {
 impl App {
     /// A path under the sysroot, when one is set.
     pub fn rooted(&self, path: &Path) -> PathBuf {
-        match &self.paths.sysroot {
-            Some(root) => root.join(path.strip_prefix("/").unwrap_or(path)),
-            None => path.to_path_buf(),
-        }
+        self.paths.rooted(path)
     }
 }

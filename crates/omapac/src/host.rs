@@ -21,7 +21,7 @@ pub struct HostPaths {
 }
 
 impl HostPaths {
-    fn rooted(&self, path: &Path) -> PathBuf {
+    pub(crate) fn rooted(&self, path: &Path) -> PathBuf {
         match &self.sysroot {
             Some(root) => root.join(path.strip_prefix("/").unwrap_or(path)),
             None => path.to_path_buf(),
