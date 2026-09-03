@@ -1,0 +1,177 @@
+//! What `install`, `remove`, and later `update` share: rendering a resolved
+//! transaction by trust tier, the policy checks that apply to any
+//! transaction, and the confirm-then-apply step.
+
+use std::fmt::Write as _;
+
+use alpm_db::Check;
+use eyre::{Result, bail};
+use serde::Serialize;
+
+use super::format_size;
+use crate::engine::{ApplyOpts, Change, Engine, ResolvedTx};
+use crate::host::Host;
+use crate::resolve::Tier;
+use crate::ui;
+
+/// One change with the trust tier of where it comes from.
+#[derive(Debug, Serialize)]
+pub struct TieredChange {
+    pub name: String,
+    pub version: String,
+    pub repo: Option<String>,
+    pub tier: Tier,
+    pub download_size: Option<u64>,
+}
+
+/// A resolved transaction annotated for display and policy.
+#[derive(Debug, Serialize)]
+pub struct Plan {
+    pub changes: Vec<TieredChange>,
+    pub download_size: u64,
+    /// Problems that stop an unattended run and are shown to a human.
+    pub warnings: Vec<String>,
+    /// The command that would apply the transaction.
+    pub command: String,
+}
+
+/// Annotate `resolved` with tiers and policy warnings.
+pub fn plan(host: &Host, resolved: &ResolvedTx, command: String) -> Plan {
+    let mut warnings = Vec::new();
+    let changes: Vec<TieredChange> = resolved
+        .changes
+        .iter()
+        .map(|change| tiered(host, change))
+        .collect();
+    for change in &changes {
+        if let Tier::Custom(repo) = &change.tier
+            && let Some(source) = host.sources.iter().find(|s| &s.name == repo)
+        {
+            let level = source.repo.sig_level;
+            if level.package() == Check::Never {
+                warnings.push(format!(
+                    "{}: repository [{repo}] does not check package signatures",
+                    change.name
+                ));
+            } else {
+                warnings.push(format!(
+                    "{}: repository [{repo}] is outside Arch and Omarchy review",
+                    change.name
+                ));
+            }
+        }
+    }
+    let hold: Vec<&str> = changes
+        .iter()
+        .filter(|c| host.config.options.hold_pkg.contains(&c.name))
+        .map(|c| c.name.as_str())
+        .collect();
+    if !hold.is_empty() {
+        warnings.push(format!("HoldPkg: {}", hold.join(", ")));
+    }
+    Plan {
+        download_size: changes.iter().filter_map(|c| c.download_size).sum(),
+        changes,
+        warnings,
+        command,
+    }
+}
+
+fn tiered(host: &Host, change: &Change) -> TieredChange {
+    let tier = match change.repo.as_deref() {
+        Some("local") | None => host
+            .find_sync(&change.name)
+            .ok()
+            .flatten()
+            .map(|(source, _)| source.tier.clone())
+            .unwrap_or(Tier::Foreign),
+        Some(repo) => Tier::of_repo(repo),
+    };
+    TieredChange {
+        name: change.name.clone(),
+        version: change.version.clone(),
+        repo: change.repo.clone().filter(|r| r != "local"),
+        tier,
+        download_size: change.download_size,
+    }
+}
+
+/// Render a plan for a human.
+pub fn render(verb: &str, plan: &Plan) -> String {
+    let mut out = String::new();
+    if plan.changes.is_empty() {
+        let _ = writeln!(out, "nothing to {verb}");
+        return out;
+    }
+    let _ = writeln!(out, "{verb} {} package(s):", plan.changes.len());
+    let name_width = plan
+        .changes
+        .iter()
+        .map(|c| c.name.len() + c.repo.as_ref().map_or(0, |r| r.len() + 1))
+        .max()
+        .unwrap_or(0);
+    let version_width = plan
+        .changes
+        .iter()
+        .map(|c| c.version.len())
+        .max()
+        .unwrap_or(0);
+    for change in &plan.changes {
+        let qualified = match &change.repo {
+            Some(repo) => format!("{repo}/{}", change.name),
+            None => change.name.clone(),
+        };
+        let _ = writeln!(
+            out,
+            "  {qualified:<name_width$}  {:<version_width$}  [{}]",
+            change.version, change.tier
+        );
+    }
+    if plan.download_size > 0 {
+        let _ = writeln!(out, "download size: {}", format_size(plan.download_size));
+    }
+    for warning in &plan.warnings {
+        let _ = writeln!(out, "warning: {warning}");
+    }
+    out
+}
+
+/// Show the plan, then confirm and apply it unless this is a dry run.
+///
+/// Unattended runs (`yes`) refuse a plan with warnings: what a human is
+/// warned about, automation is denied. See `PLAN.md`, principle 5.
+pub fn confirm_and_apply(
+    engine: &dyn Engine,
+    resolved: &ResolvedTx,
+    plan: &Plan,
+    verb: &str,
+    yes: bool,
+    dry_run: bool,
+) -> Result<()> {
+    print!("{}", render(verb, plan));
+    if plan.changes.is_empty() {
+        return Ok(());
+    }
+    if dry_run {
+        println!("would run: {}", plan.command);
+        return Ok(());
+    }
+    if yes {
+        if !plan.warnings.is_empty() {
+            bail!(
+                "refusing to {verb} unattended with {} warning(s); run interactively to decide",
+                plan.warnings.len()
+            );
+        }
+    } else if !ui::confirm("Proceed?", true)? {
+        bail!("cancelled");
+    }
+    engine.apply(
+        resolved,
+        ApplyOpts {
+            dry_run: false,
+            no_confirm: true,
+        },
+    )?;
+    Ok(())
+}

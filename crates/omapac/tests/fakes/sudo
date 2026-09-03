@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# A stand-in for sudo: drops -n, runs `env K=V cmd` or `cmd` as given, and
+# records that it was used.
+set -euo pipefail
+printf 'sudo %s\n' "$*" >>"${FAKE_PACMAN_LOG:?}"
+if [ "${1:-}" = "-n" ]; then shift; fi
+exec "$@"
