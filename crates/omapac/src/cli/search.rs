@@ -96,7 +96,7 @@ impl RunWith<&App> for Search {
 
 /// Open the picker over `hits` and install what was chosen.
 fn pick_and_install(app: &App, hits: &[Hit], aur: bool) -> Result<()> {
-    crate::tui::require_terminal("search --pick")?;
+    crate::tui::require_terminal("search --pick", "run without --pick")?;
     if hits.is_empty() {
         eprintln!("nothing matched");
         return Ok(());
