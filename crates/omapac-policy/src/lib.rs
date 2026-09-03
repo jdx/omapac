@@ -172,18 +172,15 @@ pub fn evaluate(evidence: &Evidence, policy: &Policy) -> Report {
                 "no maintainer".to_string(),
             ));
         }
-        let previous_maintainer = evidence
-            .approved
-            .as_ref()
-            .and_then(|a| a.maintainer.as_deref());
-        if let Some(previous) = previous_maintainer
-            && rpc.maintainer.as_deref() != Some(previous)
+        if let Some(approved) = &evidence.approved
+            && rpc.maintainer != approved.maintainer
         {
             findings.push(Finding::new(
                 FindingId::MaintainerChanged,
                 Severity::High,
                 format!(
-                    "maintainer was {previous} at the approved commit, now {}",
+                    "maintainer was {} at the approved commit, now {}",
+                    approved.maintainer.as_deref().unwrap_or("nobody"),
                     rpc.maintainer.as_deref().unwrap_or("nobody")
                 ),
             ));
@@ -312,7 +309,13 @@ pub fn evaluate(evidence: &Evidence, policy: &Policy) -> Report {
             d.changed_files
                 .iter()
                 .map(String::as_str)
-                .filter(|f| f.ends_with(".install") && !new_scripts.contains(f))
+                .filter(|f| {
+                    (recipe.install_files.iter().any(|script| script == f)
+                        || evidence.approved.as_ref().is_some_and(|approved| {
+                            approved.install_files.iter().any(|script| script == f)
+                        }))
+                        && !new_scripts.contains(f)
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -557,6 +560,40 @@ mod tests {
         let ids = evaluate(&e, &Policy::unattended()).ids();
         assert!(!ids.contains(&FindingId::LowReputation));
         assert!(!ids.contains(&FindingId::MaintainerChanged));
+    }
+
+    #[test]
+    fn adopting_an_approved_orphan_is_a_maintainer_change() {
+        let mut e = evidence();
+        let mut previous = approved(&["github.com"]);
+        previous.maintainer = None;
+        e.approved = Some(previous);
+
+        assert!(
+            evaluate(&e, &Policy::unattended())
+                .ids()
+                .contains(&FindingId::MaintainerChanged)
+        );
+    }
+
+    #[test]
+    fn changed_nonstandard_install_script_is_reported() {
+        let mut e = evidence();
+        let mut previous = approved(&["github.com"]);
+        previous.install_files = vec!["setup-hooks".into()];
+        e.approved = Some(previous);
+        e.recipe.install_files = vec!["setup-hooks".into()];
+        e.diff = Some(Diff {
+            lines_changed: 1,
+            changed_files: vec!["setup-hooks".into()],
+            quiet_secs_before: None,
+        });
+
+        assert!(
+            evaluate(&e, &Policy::unattended())
+                .ids()
+                .contains(&FindingId::InstallScript)
+        );
     }
 
     #[test]
