@@ -36,6 +36,9 @@ pub struct Build {
     /// Build this commit instead of the approved one
     #[usage(long)]
     commit: Option<String>,
+    /// Install missing repository dependencies without asking
+    #[usage(short = 'y', long)]
+    yes: bool,
     /// Print the files as JSON
     #[usage(short = 'J', long)]
     json: bool,
@@ -45,8 +48,8 @@ impl RunWith<&App> for Build {
     type Output = Result<()>;
 
     fn run_with(self, app: &App) -> Self::Output {
-        let prepared = app.prepare_aur(&self.package, self.commit.as_deref(), true, false)?;
-        let files = app.build_aur(&prepared, false)?;
+        let prepared = app.prepare_aur(&self.package, self.commit.as_deref(), true, self.yes)?;
+        let files = app.build_aur(&prepared, self.yes)?;
         if self.json {
             return print_json(&files);
         }

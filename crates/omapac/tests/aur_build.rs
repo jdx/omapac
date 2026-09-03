@@ -99,13 +99,10 @@ fn build_runs_both_phases_with_a_scrubbed_environment() {
     let log = s.rig.log();
     let makepkg: Vec<&String> = log.iter().filter(|l| l.starts_with("makepkg")).collect();
     assert_eq!(
-        makepkg[0], "makepkg --nobuild --noconfirm --force",
+        makepkg[0], "makepkg --verifysource --noconfirm --force",
         "{log:?}"
     );
-    assert_eq!(
-        makepkg[1], "makepkg --noextract --noconfirm --force",
-        "{log:?}"
-    );
+    assert_eq!(makepkg[1], "makepkg --noconfirm --force", "{log:?}");
     assert_eq!(makepkg[2], "makepkg --packagelist", "{log:?}");
     assert!(
         log.contains(&"env GITHUB_TOKEN=unset".to_string()),
