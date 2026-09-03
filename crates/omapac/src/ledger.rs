@@ -177,7 +177,6 @@ pub fn merge_into(path: &Path, patch: &Patch) -> Result<Ledger> {
 }
 
 struct LedgerLock {
-    path: PathBuf,
     _file: std::fs::File,
 }
 
@@ -189,28 +188,17 @@ impl LedgerLock {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)?;
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         loop {
-            match std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&path)
-            {
-                Ok(mut file) => {
-                    writeln!(file, "{}", std::process::id())?;
-                    return Ok(LedgerLock { path, _file: file });
-                }
-                Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
-                    // A process that died while holding the lock cannot clean
-                    // it up. On Linux, its /proc entry is authoritative.
-                    let stale = std::fs::read_to_string(&path)
-                        .ok()
-                        .and_then(|text| text.trim().parse::<u32>().ok())
-                        .is_some_and(|pid| !Path::new(&format!("/proc/{pid}")).exists());
-                    if stale {
-                        let _ = std::fs::remove_file(&path);
-                        continue;
-                    }
+            match file.try_lock() {
+                Ok(()) => return Ok(LedgerLock { _file: file }),
+                Err(std::fs::TryLockError::WouldBlock) => {
                     if std::time::Instant::now() >= deadline {
                         return Err(io::Error::new(
                             io::ErrorKind::TimedOut,
@@ -219,15 +207,9 @@ impl LedgerLock {
                     }
                     std::thread::sleep(std::time::Duration::from_millis(10));
                 }
-                Err(err) => return Err(err),
+                Err(std::fs::TryLockError::Error(err)) => return Err(err),
             }
         }
-    }
-}
-
-impl Drop for LedgerLock {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
     }
 }
 
@@ -337,7 +319,10 @@ mod tests {
         assert!(
             std::fs::read_dir(path.parent().unwrap())
                 .unwrap()
-                .all(|e| e.unwrap().file_name() == "state.json"),
+                .all(|e| matches!(
+                    e.unwrap().file_name().to_str(),
+                    Some("state.json" | "state.json.lock")
+                )),
             "no temp files left"
         );
     }
@@ -386,6 +371,17 @@ mod tests {
         let ledger = Ledger::load(&path).unwrap();
         assert_eq!(ledger.packages.len(), 12);
         assert_eq!(ledger.index_sequence, Some(11));
+    }
+
+    #[test]
+    fn an_empty_lock_file_left_by_a_crash_does_not_block() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        std::fs::write(dir.path().join("state.json.lock"), []).unwrap();
+        let mut patch = Patch::default();
+        patch.upsert.insert("curl".into(), entry("8.0-1"));
+        merge_into(&path, &patch).unwrap();
+        assert!(Ledger::load(&path).unwrap().packages.contains_key("curl"));
     }
 
     #[test]
