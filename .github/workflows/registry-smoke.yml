@@ -1,0 +1,45 @@
+name: registry smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/registry-smoke.yml
+      - deploy/registry/**
+
+permissions:
+  contents: read
+
+jobs:
+  install-canary:
+    runs-on: ubuntu-latest
+    container: archlinux:base
+    timeout-minutes: 10
+    steps:
+      - name: Trust repository and install canary
+        shell: bash
+        run: |
+          set -euo pipefail
+          pacman -Syu --noconfirm ca-certificates curl gnupg
+          pacman-key --init
+          curl --fail --show-error --silent \
+            https://repo.pacvamp.com/keys/repository.asc \
+            -o /tmp/pacvamp-repository.asc
+
+          fingerprint="$(gpg --show-keys --with-colons \
+            /tmp/pacvamp-repository.asc |
+            awk -F: "\$1 == \"fpr\" { print \$10; exit }")"
+          test -n "$fingerprint"
+          pacman-key --add /tmp/pacvamp-repository.asc
+          pacman-key --lsign-key "$fingerprint"
+
+          {
+            printf '\n[pacvamp]\n'
+            printf 'SigLevel = Required DatabaseRequired\n'
+            printf "Server = https://repo.pacvamp.com/channels/stable/pacvamp/os/\$arch\n"
+          } >>/etc/pacman.conf
+
+          pacman -Syu --noconfirm pacvamp-registry-canary
+          pacman -Q pacvamp-registry-canary
+          test "$(cat /usr/share/pacvamp/registry-canary)" = \
+            'pacvamp registry canary 0.0.1-1'
