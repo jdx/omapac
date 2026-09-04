@@ -162,6 +162,216 @@ pub fn read(path: &Path) -> Result<Option<Entry>> {
     }
 }
 
+/// An inclusion proof as the log returns it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct InclusionProof {
+    #[serde(rename = "logIndex")]
+    pub log_index: u64,
+    #[serde(rename = "treeSize")]
+    pub tree_size: u64,
+    /// Hex.
+    #[serde(rename = "rootHash")]
+    pub root_hash: String,
+    /// Hex sibling hashes, leaf to root.
+    #[serde(default)]
+    pub hashes: Vec<String>,
+    /// The signed checkpoint (a signed note) the proof leads to.
+    #[serde(default)]
+    pub checkpoint: Option<String>,
+}
+
+/// RFC 6962 leaf hash: `SHA256(0x00 || leaf)`.
+pub fn leaf_hash(leaf: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update([0u8]);
+    hasher.update(leaf);
+    hasher.finalize().into()
+}
+
+fn node_hash(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update([1u8]);
+    hasher.update(left);
+    hasher.update(right);
+    hasher.finalize().into()
+}
+
+/// The root a leaf at `index` in a tree of `size` reaches through
+/// `proof`, per RFC 6962 as transparency-dev computes it.
+pub fn root_from_inclusion(
+    index: u64,
+    size: u64,
+    leaf: [u8; 32],
+    proof: &[[u8; 32]],
+) -> Result<[u8; 32]> {
+    if index >= size {
+        bail!("leaf index {index} is outside a tree of size {size}");
+    }
+    let inner = 64 - (index ^ (size - 1)).leading_zeros() as usize;
+    let border = index.checked_shr(inner as u32).unwrap_or(0).count_ones() as usize;
+    if proof.len() != inner + border {
+        bail!(
+            "inclusion proof has {} hashes, expected {}",
+            proof.len(),
+            inner + border
+        );
+    }
+    let mut hash = leaf;
+    for (i, sibling) in proof[..inner].iter().enumerate() {
+        hash = if (index >> i) & 1 == 0 {
+            node_hash(&hash, sibling)
+        } else {
+            node_hash(sibling, &hash)
+        };
+    }
+    for sibling in &proof[inner..] {
+        hash = node_hash(sibling, &hash);
+    }
+    Ok(hash)
+}
+
+/// A parsed checkpoint: the signed note's origin, size, root, and the
+/// signature lines.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Checkpoint {
+    pub origin: String,
+    pub size: u64,
+    pub root: [u8; 32],
+    /// The text the signatures cover.
+    pub body: String,
+    /// `(name, key hint, DER signature)`.
+    pub signatures: Vec<(String, [u8; 4], Vec<u8>)>,
+}
+
+impl Checkpoint {
+    pub fn parse(text: &str) -> Result<Checkpoint> {
+        let Some((body, sigs)) = text.split_once("\n\n") else {
+            bail!("checkpoint has no signature section");
+        };
+        let mut lines = body.lines();
+        let origin = lines.next().unwrap_or_default().to_string();
+        let size: u64 = lines
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .parse()
+            .wrap_err("checkpoint tree size")?;
+        let root = BASE64
+            .decode(lines.next().unwrap_or_default().trim())
+            .ok()
+            .and_then(|b| <[u8; 32]>::try_from(b).ok())
+            .ok_or_else(|| eyre::eyre!("checkpoint root hash is not 32 base64 bytes"))?;
+        let mut signatures = Vec::new();
+        for line in sigs.lines() {
+            let Some(rest) = line.strip_prefix("\u{2014} ") else {
+                continue;
+            };
+            let Some((name, sig)) = rest.split_once(' ') else {
+                continue;
+            };
+            let bytes = BASE64.decode(sig.trim()).wrap_err("checkpoint signature")?;
+            if bytes.len() < 5 {
+                bail!("checkpoint signature is too short");
+            }
+            let mut hint = [0u8; 4];
+            hint.copy_from_slice(&bytes[..4]);
+            signatures.push((name.to_string(), hint, bytes[4..].to_vec()));
+        }
+        Ok(Checkpoint {
+            origin,
+            size,
+            root,
+            body: format!("{body}\n"),
+            signatures,
+        })
+    }
+
+    /// Verify a signature line with the log's ECDSA P-256 key.
+    pub fn verify(&self, key: &p256::ecdsa::VerifyingKey) -> Result<()> {
+        use p256::ecdsa::signature::Verifier as _;
+        if self.signatures.is_empty() {
+            bail!("checkpoint carries no signature");
+        }
+        for (_, _, der) in &self.signatures {
+            if let Ok(sig) = p256::ecdsa::Signature::from_der(der)
+                && key.verify(self.body.as_bytes(), &sig).is_ok()
+            {
+                return Ok(());
+            }
+        }
+        bail!("no checkpoint signature verifies with the log key")
+    }
+}
+
+/// Parse a log's public key from SPKI PEM.
+pub fn log_key(pem: &str) -> Result<p256::ecdsa::VerifyingKey> {
+    use p256::pkcs8::DecodePublicKey as _;
+    p256::ecdsa::VerifyingKey::from_public_key_pem(pem).map_err(|e| eyre::eyre!("log key: {e}"))
+}
+
+/// Verify the entry's inclusion proof: the leaf is the entry body, the
+/// proof reaches the stated root, the checkpoint (when present) commits
+/// to that root and size, and, with `key`, the checkpoint is signed by
+/// the log.
+pub fn verify_inclusion(entry: &Entry, key: Option<&p256::ecdsa::VerifyingKey>) -> Result<()> {
+    let Some(raw) = &entry.inclusion_proof else {
+        bail!("entry has no inclusion proof");
+    };
+    let proof: InclusionProof = serde_json::from_value(raw.clone()).wrap_err("inclusion proof")?;
+    let body = BASE64
+        .decode(&entry.body)
+        .wrap_err("entry body is not base64")?;
+    let mut hashes = Vec::new();
+    for h in &proof.hashes {
+        let bytes = decode_hash(h)?;
+        hashes.push(bytes);
+    }
+    let root = root_from_inclusion(proof.log_index, proof.tree_size, leaf_hash(&body), &hashes)?;
+    let root_hex: String = root.iter().map(|b| format!("{b:02x}")).collect();
+    if !root_hex.eq_ignore_ascii_case(&proof.root_hash) {
+        bail!(
+            "inclusion proof reaches root {root_hex}, not the stated {}",
+            proof.root_hash
+        );
+    }
+    match &proof.checkpoint {
+        Some(text) => {
+            let checkpoint = Checkpoint::parse(text)?;
+            if checkpoint.size != proof.tree_size {
+                bail!(
+                    "checkpoint is for tree size {}, proof for {}",
+                    checkpoint.size,
+                    proof.tree_size
+                );
+            }
+            if checkpoint.root != root {
+                bail!("checkpoint root does not match the proof's root");
+            }
+            if let Some(key) = key {
+                checkpoint.verify(key)?;
+            }
+        }
+        None => {
+            if key.is_some() {
+                bail!("entry has no checkpoint to verify the log signature on");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn decode_hash(hex: &str) -> Result<[u8; 32]> {
+    if hex.len() != 64 || !hex.is_ascii() {
+        bail!("inclusion proof hash is not 32 hex bytes");
+    }
+    let mut bytes = [0u8; 32];
+    for (index, byte) in bytes.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16)
+            .map_err(|_| eyre::eyre!("inclusion proof hash is not 32 hex bytes"))?;
+    }
+    Ok(bytes)
+}
+
 /// Check that a stored entry is about `envelope`: its body is a `dsse`
 /// entry whose payload hash is the envelope's payload, and it carries an
 /// inclusion proof.
@@ -193,6 +403,133 @@ mod tests {
     use super::*;
     use std::io::{BufRead as _, BufReader, Read as _, Write as _};
     use std::net::TcpListener;
+
+    /// RFC 6962 reference: MTH and PATH by recursive splitting.
+    fn mth(leaves: &[Vec<u8>]) -> [u8; 32] {
+        match leaves.len() {
+            0 => Sha256::digest(b"").into(),
+            1 => leaf_hash(&leaves[0]),
+            n => {
+                let k = (n - 1).next_power_of_two().max(1);
+                let k = if k >= n { k / 2 } else { k };
+                node_hash(&mth(&leaves[..k]), &mth(&leaves[k..]))
+            }
+        }
+    }
+
+    fn path(m: usize, leaves: &[Vec<u8>]) -> Vec<[u8; 32]> {
+        let n = leaves.len();
+        if n <= 1 {
+            return Vec::new();
+        }
+        let k = (n - 1).next_power_of_two().max(1);
+        let k = if k >= n { k / 2 } else { k };
+        if m < k {
+            let mut p = path(m, &leaves[..k]);
+            p.push(mth(&leaves[k..]));
+            p
+        } else {
+            let mut p = path(m - k, &leaves[k..]);
+            p.push(mth(&leaves[..k]));
+            p
+        }
+    }
+
+    #[test]
+    fn inclusion_proofs_reach_the_reference_root() {
+        for size in 1..=17u64 {
+            let leaves: Vec<Vec<u8>> = (0..size)
+                .map(|i| format!("leaf {i}").into_bytes())
+                .collect();
+            let root = mth(&leaves);
+            for index in 0..size {
+                let proof = path(index as usize, &leaves);
+                let got =
+                    root_from_inclusion(index, size, leaf_hash(&leaves[index as usize]), &proof)
+                        .unwrap();
+                assert_eq!(got, root, "size {size} index {index}");
+                if !proof.is_empty() {
+                    let mut wrong = proof.clone();
+                    wrong[0][0] ^= 1;
+                    assert_ne!(
+                        root_from_inclusion(
+                            index,
+                            size,
+                            leaf_hash(&leaves[index as usize]),
+                            &wrong
+                        )
+                        .unwrap(),
+                        root
+                    );
+                }
+            }
+        }
+        assert!(root_from_inclusion(3, 3, [0; 32], &[]).is_err());
+        assert!(
+            root_from_inclusion(0, 2, [0; 32], &[]).is_err(),
+            "proof length is checked"
+        );
+    }
+
+    #[test]
+    fn full_width_proof_depth_does_not_overflow_the_shift() {
+        let err = root_from_inclusion(0, u64::MAX, leaf_hash(b"leaf"), &[]).unwrap_err();
+        assert!(err.to_string().contains("expected 64"), "{err}");
+    }
+
+    #[test]
+    fn inclusion_proof_parses_rekor_hex_siblings() {
+        let leaves = [b"left".to_vec(), b"right".to_vec()];
+        let sibling = leaf_hash(&leaves[1]);
+        let root = node_hash(&leaf_hash(&leaves[0]), &sibling);
+        let hex = |hash: [u8; 32]| {
+            hash.iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        };
+        let entry = Entry {
+            log_url: "http://log".into(),
+            uuid: "u".into(),
+            log_index: 0,
+            log_id: "l".into(),
+            integrated_time: 1,
+            body: BASE64.encode(&leaves[0]),
+            inclusion_proof: Some(serde_json::json!({
+                "logIndex": 0,
+                "treeSize": 2,
+                "rootHash": hex(root),
+                "hashes": [hex(sibling)]
+            })),
+            signed_entry_timestamp: None,
+        };
+        verify_inclusion(&entry, None).unwrap();
+    }
+
+    #[test]
+    fn checkpoints_parse_and_verify() {
+        use p256::ecdsa::signature::Signer as _;
+        let signing = p256::ecdsa::SigningKey::from_bytes(&[7u8; 32].into()).unwrap();
+        let root = [9u8; 32];
+        let body = format!("rekor.example - 123\n42\n{}\n", BASE64.encode(root));
+        let sig: p256::ecdsa::Signature = signing.sign(body.as_bytes());
+        let mut line = vec![1, 2, 3, 4];
+        line.extend_from_slice(sig.to_der().as_bytes());
+        let text = format!("{body}\n\u{2014} rekor.example {}\n", BASE64.encode(&line));
+        let checkpoint = Checkpoint::parse(&text).unwrap();
+        assert_eq!(checkpoint.size, 42);
+        assert_eq!(checkpoint.root, root);
+        assert_eq!(checkpoint.origin, "rekor.example - 123");
+        let key = signing.verifying_key();
+        checkpoint.verify(key).unwrap();
+        let other = p256::ecdsa::SigningKey::from_bytes(&[8u8; 32].into()).unwrap();
+        assert!(checkpoint.verify(other.verifying_key()).is_err());
+        let mut tampered = checkpoint.clone();
+        tampered.body = tampered.body.replace("42", "43");
+        assert!(tampered.verify(key).is_err());
+        use p256::pkcs8::EncodePublicKey as _;
+        let pem = key.to_public_key_pem(p256::pkcs8::LineEnding::LF).unwrap();
+        log_key(&pem).unwrap();
+    }
 
     #[test]
     fn pem_is_spki_ed25519() {

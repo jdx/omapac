@@ -9,7 +9,21 @@ use base64::Engine as _;
 use common::Rig;
 use sha2::Digest as _;
 
-/// A fake Rekor that accepts dsse entries and answers like the real one.
+/// The fake log's signing key, and its public key as SPKI PEM.
+fn log_key() -> p256::ecdsa::SigningKey {
+    p256::ecdsa::SigningKey::from_bytes(&[5u8; 32].into()).unwrap()
+}
+
+fn log_pubkey_pem() -> String {
+    use p256::pkcs8::EncodePublicKey as _;
+    log_key()
+        .verifying_key()
+        .to_public_key_pem(p256::pkcs8::LineEnding::LF)
+        .unwrap()
+}
+
+/// A fake Rekor that accepts dsse entries and answers like the real one,
+/// with a genuine single-leaf inclusion proof and a signed checkpoint.
 fn fake_rekor() -> String {
     common::http::serve_with(Arc::new(|method, path, body| {
         if method != "POST" || path != "/api/v1/log/entries" {
@@ -37,14 +51,33 @@ fn fake_rekor() -> String {
             "apiVersion": "0.0.1", "kind": "dsse",
             "spec": {"payloadHash": {"algorithm": "sha256", "value": hash}, "signatures": []}
         });
+        // A one-leaf tree: the root is the leaf hash.
+        let body_bytes = serde_json::to_vec(&entry_body).unwrap();
+        let mut leaf = sha2::Sha256::new();
+        leaf.update([0u8]);
+        leaf.update(&body_bytes);
+        let root: [u8; 32] = leaf.finalize().into();
+        let root_hex: String = root.iter().map(|b| format!("{b:02x}")).collect();
+        let note = format!(
+            "rekor.example - 1\n1\n{}\n",
+            base64::engine::general_purpose::STANDARD.encode(root)
+        );
+        use p256::ecdsa::signature::Signer as _;
+        let sig: p256::ecdsa::Signature = log_key().sign(note.as_bytes());
+        let mut sig_line = vec![0xde, 0xad, 0xbe, 0xef];
+        sig_line.extend_from_slice(sig.to_der().as_bytes());
+        let checkpoint = format!(
+            "{note}\n\u{2014} rekor.example {}\n",
+            base64::engine::general_purpose::STANDARD.encode(sig_line)
+        );
         let response = serde_json::json!({
             "24296fb24b8ad77a": {
-                "body": base64::engine::general_purpose::STANDARD.encode(serde_json::to_vec(&entry_body).unwrap()),
+                "body": base64::engine::general_purpose::STANDARD.encode(&body_bytes),
                 "integratedTime": 1_788_220_800,
                 "logID": "c0d23d6ad406973f9559f3ba2d1ca01f84147d8ffc5b8445c224f98b9591801d",
-                "logIndex": 4242,
+                "logIndex": 0,
                 "verification": {
-                    "inclusionProof": {"logIndex": 4242, "rootHash": "aa", "treeSize": 4243, "hashes": []},
+                    "inclusionProof": {"logIndex": 0, "rootHash": root_hex, "treeSize": 1, "hashes": [], "checkpoint": checkpoint},
                     "signedEntryTimestamp": "MEUCIQ=="
                 }
             }
@@ -241,7 +274,7 @@ fn rekor_and_index_gates() {
         out.contains("logged repo/good-1-1-x86_64.pkg.tar.zst.rekor.json at"),
         "{out}"
     );
-    assert!(out.contains("index 4242"), "{out}");
+    assert!(out.contains("index 0"), "{out}");
     let entry: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(
             rig.path()
@@ -251,7 +284,7 @@ fn rekor_and_index_gates() {
     )
     .unwrap();
     assert_eq!(entry["uuid"], "24296fb24b8ad77a");
-    assert_eq!(entry["log_index"], 4242);
+    assert_eq!(entry["log_index"], 0);
     assert!(entry["inclusion_proof"].is_object());
 
     // The index lists the rekor sidecar too.
@@ -280,7 +313,9 @@ fn rekor_and_index_gates() {
         "{sidecars:?}"
     );
 
-    // With the entry present and the index consistent, the gate passes.
+    // With the entry present and the index consistent, the gate passes,
+    // including the checkpoint signature against the log key.
+    std::fs::write(rig.path().join("rekor.pub"), log_pubkey_pem()).unwrap();
     let (code, out, _) = rig.run(&[
         "sign",
         "--dir",
@@ -292,12 +327,70 @@ fn rekor_and_index_gates() {
         "--gpg-key",
         "k",
         "--require-rekor",
+        "--rekor-pubkey",
+        "rekor.pub",
         "--index",
         "repo/omapac-index.json",
         "--dry-run",
     ]);
     assert_eq!(code, 0, "{out}");
     assert!(out.contains("would sign good"), "{out}");
+    // Another log's key does not verify the checkpoint.
+    use p256::pkcs8::EncodePublicKey as _;
+    let other = p256::ecdsa::SigningKey::from_bytes(&[6u8; 32].into()).unwrap();
+    std::fs::write(
+        rig.path().join("other.pub"),
+        other
+            .verifying_key()
+            .to_public_key_pem(p256::pkcs8::LineEnding::LF)
+            .unwrap(),
+    )
+    .unwrap();
+    let (code, out, _) = rig.run(&[
+        "sign",
+        "--dir",
+        "repo",
+        "--package",
+        "good-1-1-x86_64.pkg.tar.zst",
+        "--build-key",
+        "build.pub",
+        "--gpg-key",
+        "k",
+        "--require-rekor",
+        "--rekor-pubkey",
+        "other.pub",
+        "--dry-run",
+    ]);
+    assert_ne!(code, 0);
+    assert!(
+        out.contains("no checkpoint signature verifies with the log key"),
+        "{out}"
+    );
+    // A proof that does not reach its root is refused.
+    let path = rig
+        .path()
+        .join("repo/good-1-1-x86_64.pkg.tar.zst.rekor.json");
+    let mut stored: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let good_entry = stored.clone();
+    stored["inclusion_proof"]["rootHash"] = serde_json::Value::String("00".repeat(32));
+    std::fs::write(&path, stored.to_string()).unwrap();
+    let (code, out, _) = rig.run(&[
+        "sign",
+        "--dir",
+        "repo",
+        "--package",
+        "good-1-1-x86_64.pkg.tar.zst",
+        "--build-key",
+        "build.pub",
+        "--gpg-key",
+        "k",
+        "--require-rekor",
+        "--dry-run",
+    ]);
+    assert_ne!(code, 0);
+    assert!(out.contains("inclusion proof reaches root"), "{out}");
+    std::fs::write(&path, good_entry.to_string()).unwrap();
 
     // A package the index does not know is refused.
     std::fs::write(rig.path().join("repo/new-1-1-x86_64.pkg.tar.zst"), "new").unwrap();
