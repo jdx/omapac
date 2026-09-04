@@ -9,7 +9,8 @@ permissions:
 
 jobs:
   release-notes:
-    if: github.repository == 'jdx/pacvamp'
+    # Forks should not spend the maintainer's model credits or edit releases.
+    if: github.repository_owner == 'jdx'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
