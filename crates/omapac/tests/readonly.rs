@@ -151,7 +151,12 @@ fn info_for_sync_and_installed_packages() {
     assert!(out.contains("Installed        7.1.0-2 (explicit)"), "{out}");
     assert!(out.contains("Signature        present"), "{out}");
 
-    let (code, out, err) = omapac(root.path(), &["info", "glibc", "nonexistent-package"]);
+    // --no-aur keeps the unknown name from falling through to the real
+    // AUR over the network.
+    let (code, out, err) = omapac(
+        root.path(),
+        &["info", "--no-aur", "glibc", "nonexistent-package"],
+    );
     assert_eq!(code, 1);
     assert!(out.contains("Name             glibc"), "{out}");
     assert!(

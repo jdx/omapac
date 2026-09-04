@@ -42,7 +42,7 @@ carries its own copy at `<snapshot_base>/<id>/release.json`.
   "promoted": { "rc": "2026-09-03T08:00:00Z", "stable": "2026-09-06T08:00:00Z" },
   "expedited": false,
   "held": false,
-  "db_digests": { "core": "...", "extra": "...", "multilib": "..." }
+  "db_digests": { "core/os/x86_64/core.db": "...", "extra/os/x86_64/extra.db": "..." }
 }
 ```
 
@@ -52,7 +52,7 @@ carries its own copy at `<snapshot_base>/<id>/release.json`.
 - `promoted` records when the snapshot reached `rc` and `stable`.
   Rollback without `--force` requires one of them.
 - `expedited` marks a security snapshot that ran the short suite;
-  `held` marks one a maintainer pulled.
+  `held` marks one a maintainer pulled, with `hold_reason`.
 - `db_digests` let a client check the databases it downloaded belong to
   this snapshot.
 

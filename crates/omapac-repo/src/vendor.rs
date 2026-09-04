@@ -307,7 +307,7 @@ impl RunWith<()> for Vendor {
     }
 }
 
-fn now() -> Result<jiff::Timestamp> {
+pub(crate) fn now() -> Result<jiff::Timestamp> {
     match std::env::var("OMAPAC_REPO_NOW") {
         Ok(fixed) => jiff::Timestamp::from_str(&fixed).wrap_err("OMAPAC_REPO_NOW"),
         Err(_) => Ok(jiff::Timestamp::now()),
