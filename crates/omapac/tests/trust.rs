@@ -222,3 +222,124 @@ fn bad_signatures_and_missing_keys_are_refused() {
     assert_ne!(code, 0);
     assert!(err.contains("publishes no omapac index"), "{err}");
 }
+
+/// The index lists a provenance envelope and a log entry beside the
+/// package; verify fetches and checks both against the build keys the
+/// index publishes.
+#[test]
+fn verify_checks_the_provenance_sidecar_and_the_log_entry() {
+    use base64::Engine as _;
+    let s = setup();
+    let filename = yay_filename(&s);
+    let cache = s.rig.root.join("var/cache/pacman/pkg");
+    std::fs::create_dir_all(&cache).unwrap();
+    std::fs::write(cache.join(&filename), b"fake pkg!").unwrap();
+    let (yay_sha, _) = packslip::digest_file(&cache.join(&filename)).unwrap();
+    let (db_sha, _) =
+        packslip::digest_file(&s.rig.root.join("var/lib/pacman/sync/omarchy.db")).unwrap();
+    let build_key = SecretKey::from_seed([77u8; 32]);
+    let stranger = SecretKey::from_seed([78u8; 32]);
+    let statement = |sha: &str| {
+        serde_json::json!({
+            "_type": "https://in-toto.io/Statement/v1",
+            "subject": [{"name": filename, "digest": {"sha256": sha}}],
+            "predicateType": "https://slsa.dev/provenance/v1",
+            "predicate": {"buildDefinition": {"externalParameters": {
+                "pkgbase": "yay", "source": "https://github.com/omacom/omarchy-pkgs", "commit": "abc123"}}}
+        })
+    };
+    let envelope = |key: &SecretKey, sha: &str| {
+        packslip::dsse::Envelope::sign(
+            packslip::dsse::IN_TOTO_PAYLOAD_TYPE,
+            &serde_json::to_vec(&statement(sha)).unwrap(),
+            key,
+        )
+    };
+    let good = envelope(&build_key, &yay_sha);
+    let payload_hash: String = {
+        use sha2::Digest as _;
+        sha2::Sha256::digest(good.payload_bytes().unwrap())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    };
+    let body = serde_json::json!({"apiVersion": "0.0.1", "kind": "dsse",
+        "spec": {"payloadHash": {"algorithm": "sha256", "value": payload_hash}}});
+    let entry = serde_json::json!({
+        "log_url": "https://rekor.example", "uuid": "u", "log_index": 4242, "log_id": "l",
+        "integrated_time": 1, "body": base64::engine::general_purpose::STANDARD.encode(serde_json::to_vec(&body).unwrap()),
+        "inclusion_proof": {"logIndex": 4242}
+    });
+    let index = serde_json::json!({
+        "version": 1, "repo": "omarchy", "sequence": 7, "generated_at": "2026-09-03T00:00:00Z",
+        "db": {"file": "omarchy.db", "sha256": db_sha},
+        "packages": {&filename: {"sha256": yay_sha, "size": 9, "published_at": "2026-08-01T00:00:00Z",
+            "sidecars": [format!("{filename}.provenance.json"), format!("{filename}.rekor.json")],
+            "evidence": {"build_provenance": true}}},
+        "build_keys": [build_key.public_key().to_file()]
+    })
+    .to_string();
+    let serve_with = |envelope: &packslip::dsse::Envelope| {
+        let (index_body, index_sig) = signed(&s.key, &index);
+        common::http::serve(vec![
+            ("/stable/x86_64/omapac-index.json.minisig", index_sig),
+            ("/stable/x86_64/omapac-index.json", index_body),
+            (
+                Box::leak(format!("/stable/x86_64/{filename}.provenance.json").into_boxed_str()),
+                serde_json::to_string(envelope).unwrap(),
+            ),
+            (
+                Box::leak(format!("/stable/x86_64/{filename}.rekor.json").into_boxed_str()),
+                entry.to_string(),
+            ),
+        ])
+    };
+
+    let base = serve_with(&good);
+    let (code, out, err) = run(&s, &base, &["verify", "yay"]);
+    assert_eq!(code, 0, "{err}\n{out}");
+    assert!(
+        out.contains("provenance: verified (build key")
+            && out.contains("yay at abc123 from https://github.com/omacom/omarchy-pkgs"),
+        "{out}"
+    );
+    assert!(
+        out.contains("transparency: entry 4242 at https://rekor.example"),
+        "{out}"
+    );
+    let (_, out, _) = run(&s, &base, &["verify", "--json", "yay"]);
+    let json: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(json["provenance"]["verified"], true);
+    assert_eq!(json["transparency"]["ok"], true);
+
+    // Offline verification uses the cached index and does not attempt to
+    // fetch evidence sidecars.
+    let (code, out, err) = run(&s, "http://127.0.0.1:9/", &["verify", "--offline", "yay"]);
+    assert_eq!(code, 0, "{err}\n{out}");
+    assert!(
+        out.contains("provenance: published, not checked offline")
+            && out.contains("transparency: published, not checked offline"),
+        "{out}"
+    );
+
+    // A stranger's envelope fails, and so does the exit status.
+    let base = serve_with(&envelope(&stranger, &yay_sha));
+    let (code, out, _) = run(&s, &base, &["verify", "yay"]);
+    assert_eq!(code, 1);
+    assert!(
+        out.contains("provenance: FAILED: not signed by any build key the index publishes"),
+        "{out}"
+    );
+    // An envelope about another digest fails too.
+    let base = serve_with(&envelope(&build_key, &"0".repeat(64)));
+    let (code, out, _) = run(&s, &base, &["verify", "yay"]);
+    assert_eq!(code, 1);
+    assert!(
+        out.contains("provenance: FAILED: statement does not name the package digest"),
+        "{out}"
+    );
+    assert!(
+        out.contains("transparency: FAILED: the provenance envelope did not verify"),
+        "{out}"
+    );
+}

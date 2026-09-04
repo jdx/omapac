@@ -51,6 +51,158 @@ pub struct Report {
     pub sidecars: Vec<String>,
     pub evidence: trust::feeds::Evidence,
     pub db_ok: Option<bool>,
+    /// The build provenance sidecar, when the index lists one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<Provenance>,
+    /// The transparency log entry sidecar, when the index lists one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transparency: Option<Transparency>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Provenance {
+    pub verified: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub build_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pkgbase: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Transparency {
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub log: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub log_index: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Fetch and verify `<file>.provenance.json` with the index's build keys:
+/// a DSSE envelope whose statement names the package digest.
+fn check_provenance(
+    source: &trust::FeedSource,
+    filename: &str,
+    sha256: &str,
+    build_keys: &[String],
+) -> (Provenance, Option<Vec<u8>>) {
+    let failed = |error: String| Provenance {
+        verified: false,
+        build_key: None,
+        pkgbase: None,
+        source: None,
+        commit: None,
+        error: Some(error),
+    };
+    let bytes = match super::tools::download(
+        &source.url(&format!("{filename}.provenance.json")),
+        64 * 1024 * 1024,
+    ) {
+        Ok(bytes) => bytes,
+        Err(err) => return (failed(format!("{err:#}")), None),
+    };
+    let envelope: packslip::dsse::Envelope = match serde_json::from_slice(&bytes) {
+        Ok(envelope) => envelope,
+        Err(err) => return (failed(format!("envelope: {err}")), None),
+    };
+    let keys: Vec<packslip::minisign::PublicKey> = build_keys
+        .iter()
+        .filter_map(|text| packslip::minisign::PublicKey::parse(text).ok())
+        .collect();
+    if keys.is_empty() {
+        return (failed("the index publishes no build keys".into()), None);
+    }
+    let Some((payload, key)) = envelope.verify_any(keys.iter()) else {
+        return (
+            failed("not signed by any build key the index publishes".into()),
+            None,
+        );
+    };
+    let statement: serde_json::Value = match serde_json::from_slice(&payload) {
+        Ok(statement) => statement,
+        Err(err) => return (failed(format!("statement: {err}")), None),
+    };
+    let named = statement["subject"].as_array().is_some_and(|subjects| {
+        subjects
+            .iter()
+            .any(|s| s["digest"]["sha256"].as_str() == Some(sha256))
+    });
+    if !named {
+        return (
+            failed("statement does not name the package digest".into()),
+            None,
+        );
+    }
+    let params = &statement["predicate"]["buildDefinition"]["externalParameters"];
+    (
+        Provenance {
+            verified: true,
+            build_key: Some(packslip::minisign::key_id_hex(&key.key_id)),
+            pkgbase: params["pkgbase"].as_str().map(str::to_string),
+            source: params["source"].as_str().map(str::to_string),
+            commit: params["commit"].as_str().map(str::to_string),
+            error: None,
+        },
+        Some(payload),
+    )
+}
+
+/// Fetch `<file>.rekor.json` and check its body is a dsse entry whose
+/// payload hash is the provenance envelope's payload.
+fn check_transparency(
+    source: &trust::FeedSource,
+    filename: &str,
+    provenance_payload: Option<&[u8]>,
+) -> Transparency {
+    let failed = |error: String| Transparency {
+        ok: false,
+        log: None,
+        log_index: None,
+        error: Some(error),
+    };
+    let Some(payload) = provenance_payload else {
+        return failed("the provenance envelope did not verify".into());
+    };
+    let entry: serde_json::Value = match super::tools::download(
+        &source.url(&format!("{filename}.rekor.json")),
+        64 * 1024 * 1024,
+    )
+    .and_then(|bytes| Ok(serde_json::from_slice(&bytes)?))
+    {
+        Ok(entry) => entry,
+        Err(err) => return failed(format!("{err:#}")),
+    };
+    use base64::Engine as _;
+    let body = entry["body"]
+        .as_str()
+        .and_then(|b| base64::engine::general_purpose::STANDARD.decode(b).ok())
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok());
+    let Some(body) = body else {
+        return failed("entry body unreadable".into());
+    };
+    let expected = trust::sha256_bytes(payload);
+    let actual = body["spec"]["payloadHash"]["value"]
+        .as_str()
+        .unwrap_or_default();
+    if body["kind"] != "dsse" || !actual.eq_ignore_ascii_case(&expected) {
+        return failed("entry is not about the provenance envelope".into());
+    }
+    if entry["inclusion_proof"].is_null() {
+        return failed("entry has no inclusion proof".into());
+    }
+    Transparency {
+        ok: true,
+        log: entry["log_url"].as_str().map(str::to_string),
+        log_index: entry["log_index"].as_u64(),
+        error: None,
+    }
 }
 
 impl App {
@@ -204,6 +356,31 @@ impl RunWith<&App> for Verify {
             .is_file()
             .then(|| trust::sha256_file(&db_path).map(|d| d == index.db.sha256))
             .transpose()?;
+        let source = app.feed_source(&host, &repo);
+        let checked_provenance = source
+            .as_ref()
+            .filter(|_| !self.offline)
+            .filter(|_| {
+                entry
+                    .sidecars
+                    .iter()
+                    .any(|s| s == &format!("{filename}.provenance.json"))
+            })
+            .map(|source| check_provenance(source, &filename, &entry.sha256, &index.build_keys));
+        let provenance_payload = checked_provenance
+            .as_ref()
+            .and_then(|(_, payload)| payload.as_deref());
+        let transparency = source
+            .as_ref()
+            .filter(|_| !self.offline)
+            .filter(|_| {
+                entry
+                    .sidecars
+                    .iter()
+                    .any(|s| s == &format!("{filename}.rekor.json"))
+            })
+            .map(|source| check_transparency(source, &filename, provenance_payload));
+        let provenance = checked_provenance.map(|(report, _)| report);
         let report = Report {
             name,
             repo,
@@ -259,8 +436,51 @@ impl RunWith<&App> for Verify {
                 }
                 None => println!("database: not on disk"),
             }
+            match &report.provenance {
+                Some(p) if p.verified => println!(
+                    "provenance: verified (build key {}, {} at {} from {})",
+                    p.build_key.as_deref().unwrap_or("?"),
+                    p.pkgbase.as_deref().unwrap_or("?"),
+                    p.commit.as_deref().unwrap_or("?"),
+                    p.source.as_deref().unwrap_or("?")
+                ),
+                Some(p) => println!(
+                    "provenance: FAILED: {}",
+                    p.error.as_deref().unwrap_or("unknown")
+                ),
+                None if self.offline
+                    && report.sidecars.iter().any(|sidecar| {
+                        sidecar == &format!("{}.provenance.json", report.filename)
+                    }) =>
+                {
+                    println!("provenance: published, not checked offline")
+                }
+                None => println!("provenance: none published"),
+            }
+            match &report.transparency {
+                Some(t) if t.ok => println!(
+                    "transparency: entry {} at {}",
+                    t.log_index.unwrap_or(0),
+                    t.log.as_deref().unwrap_or("?")
+                ),
+                Some(t) => println!(
+                    "transparency: FAILED: {}",
+                    t.error.as_deref().unwrap_or("unknown")
+                ),
+                None if self.offline
+                    && report
+                        .sidecars
+                        .iter()
+                        .any(|sidecar| sidecar == &format!("{}.rekor.json", report.filename)) =>
+                {
+                    println!("transparency: published, not checked offline")
+                }
+                None => {}
+            }
         }
-        let failed = report.digest_ok == Some(false)
+        let failed = report.provenance.as_ref().is_some_and(|p| !p.verified)
+            || report.transparency.as_ref().is_some_and(|t| !t.ok)
+            || report.digest_ok == Some(false)
             || report.size_ok == Some(false)
             || report.db_ok == Some(false);
         if failed {
