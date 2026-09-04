@@ -1,0 +1,100 @@
+name: registry deploy
+run-name: deploy ${{ inputs.deploy_ref }} to registry
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_ref:
+        description: Branch, tag, or commit to deploy
+        required: true
+        default: registry-deployment
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: registry-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: registry
+      url: https://repo.pacvamp.com/healthz
+    env:
+      SSH_HOST: ${{ vars.REGISTRY_SSH_HOST }}
+      SSH_PORT: ${{ vars.REGISTRY_SSH_PORT || '22' }}
+      SSH_USER: ${{ vars.REGISTRY_SSH_USER }}
+    steps:
+      - name: Check out requested revision
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.deploy_ref }}
+
+      - name: Resolve immutable deployment revision
+        id: revision
+        shell: bash
+        run: |
+          sha="$(git rev-parse --verify HEAD)"
+          if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "unable to resolve an immutable deployment SHA" >&2
+            exit 1
+          fi
+          printf 'sha=%s\n' "$sha" >>"$GITHUB_OUTPUT"
+          printf 'Deploying %s (%s)\n' "${{ inputs.deploy_ref }}" "$sha"
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build publisher binaries
+        run: cargo build --locked --release -p packslip -p pacvamp-repo
+
+      - name: Build deployment bundle
+        run: |
+          install -Dm755 target/release/packslip registry-bundle/bin/packslip
+          install -Dm755 target/release/pacvamp-repo registry-bundle/bin/pacvamp-repo
+          cp -R deploy registry-bundle/
+          tar -C registry-bundle -czf registry-deploy.tar.gz .
+
+      - name: Configure pinned SSH host
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.REGISTRY_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.REGISTRY_SSH_KNOWN_HOSTS }}
+        run: |
+          test -n "$SSH_HOST"
+          test -n "$SSH_USER"
+          test -n "$SSH_PRIVATE_KEY"
+          test -n "$SSH_KNOWN_HOSTS"
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" >~/.ssh/registry
+          printf '%s\n' "$SSH_KNOWN_HOSTS" >~/.ssh/known_hosts
+          chmod 0600 ~/.ssh/registry ~/.ssh/known_hosts
+
+      - name: Deploy exact commit
+        env:
+          DEPLOY_SHA: ${{ steps.revision.outputs.sha }}
+        run: |
+          remote="$SSH_USER@$SSH_HOST"
+          remote_dir="/tmp/pacvamp-deploy-$DEPLOY_SHA"
+          ssh -p "$SSH_PORT" -i ~/.ssh/registry -o BatchMode=yes \
+            -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$remote" \
+            "install -d '$remote_dir' && tar -xz -C '$remote_dir'" \
+            <registry-deploy.tar.gz
+          ssh -p "$SSH_PORT" -i ~/.ssh/registry -o BatchMode=yes \
+            -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$remote" \
+            "'$remote_dir/deploy/registry/bin/install' '$remote_dir' '$DEPLOY_SHA'"
+          ssh -p "$SSH_PORT" -i ~/.ssh/registry -o BatchMode=yes \
+            -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$remote" \
+            "rm -rf '$remote_dir'"
+
+      - name: Verify registry
+        run: |
+          remote="$SSH_USER@$SSH_HOST"
+          ssh -p "$SSH_PORT" -i ~/.ssh/registry -o BatchMode=yes \
+            -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$remote" \
+            "test -L /srv/pacvamp/store/channels/stable"
+          curl --fail --show-error --silent --retry 5 \
+            https://repo.pacvamp.com/healthz
