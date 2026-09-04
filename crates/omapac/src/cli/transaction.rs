@@ -41,6 +41,20 @@ pub struct Plan {
 
 /// Annotate `resolved` with tiers and policy warnings.
 pub fn plan(host: &Host, resolved: &ResolvedTx, command: String) -> Plan {
+    plan_with_custom_repos(
+        host,
+        resolved,
+        command,
+        crate::manifest::settings::CustomRepos::Warn,
+    )
+}
+
+pub fn plan_with_custom_repos(
+    host: &Host,
+    resolved: &ResolvedTx,
+    command: String,
+    custom_repos: crate::manifest::settings::CustomRepos,
+) -> Plan {
     let mut warnings = Vec::new();
     let changes: Vec<TieredChange> = resolved
         .changes
@@ -83,20 +97,26 @@ pub fn plan(host: &Host, resolved: &ResolvedTx, command: String) -> Plan {
                 ));
             }
             if matches!(change.tier, Tier::Custom(_)) {
-                warnings.push(format!(
-                    "{}: repository [{repo}] is outside Arch and Omarchy review",
-                    change.name
-                ));
+                match custom_repos {
+                    crate::manifest::settings::CustomRepos::Allow => {}
+                    crate::manifest::settings::CustomRepos::Warn => warnings.push(format!(
+                        "{}: repository [{repo}] is outside Arch and Omarchy review",
+                        change.name
+                    )),
+                    crate::manifest::settings::CustomRepos::Deny => warnings.push(format!(
+                        "{}: repository [{repo}] is denied by trust.custom_repos policy",
+                        change.name
+                    )),
+                }
             }
         }
     }
-    let hold: Vec<&str> = resolved
-        .changes
+    // Pacman asks before removing HoldPkg entries, including removals caused
+    // by replacements or conflicts during an upgrade.
+    let hold: Vec<&str> = changes
         .iter()
-        .filter(|c| {
-            c.repo.as_deref() == Some("local") && host.config.options.hold_pkg.contains(&c.name)
-        })
-        .map(|c| c.name.as_str())
+        .filter(|change| change.removal && host.config.options.hold_pkg.contains(&change.name))
+        .map(|change| change.name.as_str())
         .collect();
     if !hold.is_empty() {
         warnings.push(format!("HoldPkg: {}", hold.join(", ")));
@@ -191,18 +211,45 @@ pub fn confirm_and_apply(
         println!("would run: {}", plan.command);
         return Ok(false);
     }
-    if yes {
-        if !plan.warnings.is_empty() {
-            bail!(
-                "refusing to {verb} unattended with {} warning(s); run interactively to decide",
-                plan.warnings.len()
-            );
-        }
-    } else {
+    validate_plan(plan, verb, yes)?;
+    if !yes {
         println!("run: {}", plan.command);
         if !ui::confirm("Proceed?", true)? {
             bail!("cancelled");
         }
+    }
+    apply_confirmed(engine, resolved, plan, yes)
+}
+
+/// Enforce the unattended warning policy before any side effects begin.
+pub fn validate_plan(plan: &Plan, verb: &str, yes: bool) -> Result<()> {
+    if yes {
+        let blocking = plan
+            .warnings
+            .iter()
+            .filter(|warning| {
+                verb != "upgrade" || !warning.contains("is outside Arch and Omarchy review")
+            })
+            .count();
+        if blocking != 0 {
+            bail!(
+                "refusing to {verb} unattended with {} warning(s); run interactively to decide",
+                blocking
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Apply a plan whose containing workflow has already confirmed it.
+pub fn apply_confirmed(
+    engine: &dyn Engine,
+    resolved: &ResolvedTx,
+    plan: &Plan,
+    yes: bool,
+) -> Result<bool> {
+    if plan.changes.is_empty() {
+        return Ok(false);
     }
     engine.apply(
         resolved,
