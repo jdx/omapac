@@ -4,12 +4,17 @@ export default defineConfig({
   title: "pacvamp",
   description: "Trusted packages for pacman-based Linux distributions",
   lang: "en-US",
+  head: [
+    ["link", { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" }],
+    ["meta", { name: "theme-color", content: "#17112b" }],
+  ],
   cleanUrls: true,
   lastUpdated: true,
   sitemap: {
     hostname: "https://pacvamp.com",
   },
   themeConfig: {
+    logo: { src: "/logo.svg", alt: "pacvamp" },
     nav: [
       { text: "Guide", link: "/" },
       { text: "Install", link: "/install" },

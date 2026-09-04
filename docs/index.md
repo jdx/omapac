@@ -5,6 +5,9 @@ hero:
   name: pacvamp
   text: Trusted packages for pacman systems
   tagline: One interface for distribution repositories, the AUR, policy, provenance, and repeatable machines.
+  image:
+    src: /logo.svg
+    alt: pacvamp vampire logo
   actions:
     - theme: brand
       text: Install Pacvamp
@@ -21,6 +24,11 @@ features:
   - title: Built for distributions
     details: Layer distro policy over user manifests, publish tested snapshots, and operate independent compatible registries.
 ---
+
+> [!WARNING]
+> This project is not ready to be reviewed and is still very much a work in
+> progress. Nothing here is stable, supported, or intended for real use — do not
+> depend on it.
 
 # Documentation
 

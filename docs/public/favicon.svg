@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <rect width="256" height="256" rx="56.3" fill="#17112B"/>
+  <g transform="translate(15.4 15.4)">
+    <path d="M 22.9 44.0 C 38.7 91.5 8.8 147.8 15.8 209.4 Q 45.8 195.4 73.9 211.2 Q 109.1 195.4 144.3 211.2 Q 172.5 195.4 202.4 209.4 C 209.4 147.8 179.5 91.5 195.4 44.0 Q 176.0 61.6 154.9 84.5 L 109.1 68.6 L 63.4 84.5 Q 42.2 61.6 22.9 44.0 Z" fill="#3A2A66" stroke="#221838" stroke-width="5.3" stroke-linejoin="round"/>
+    <path d="M 35.2 56.3 C 44.0 91.5 35.2 132.0 61.6 160.2 L 156.6 160.2 C 183.0 132.0 174.2 91.5 183.0 56.3 Q 170.7 72.2 151.4 89.8 L 109.1 77.4 L 66.9 89.8 Q 47.5 72.2 35.2 56.3 Z" fill="#E5405E"/>
+    <path d="M 109.1 119.7 L 177.8 76.8 A 81.0 81.0 0 1 0 177.8 162.6 Z" fill="#B993FF"/>
+    <clipPath id="pv-body"><path d="M 109.1 119.7 L 177.8 76.8 A 81.0 81.0 0 1 0 177.8 162.6 Z"/></clipPath>
+    <ellipse clip-path="url(#pv-body)" cx="109.1" cy="204.7" rx="93.1" ry="50.2" fill="#9A6FF0" opacity="0.55"/>
+    <path d="M 109.1 119.7 L 177.8 76.8 A 81.0 81.0 0 1 0 177.8 162.6 Z" fill="none" stroke="#2B1D4D" stroke-width="5.3" stroke-linejoin="round"/>
+    <path d="M 137.0 100.4 L 148.2 93.4 L 154.6 116.1 Z" fill="#FFFFFF" stroke="#2B1D4D" stroke-width="2.6" stroke-linejoin="round"/>
+    <path d="M 154.9 89.2 L 166.1 82.2 L 172.5 105.0 Z" fill="#FFFFFF" stroke="#2B1D4D" stroke-width="2.6" stroke-linejoin="round"/>
+    <ellipse cx="91.5" cy="112.6" rx="11.4" ry="7.0" fill="#FF8FB3" opacity="0.75"/>
+    <ellipse cx="132.0" cy="79.2" rx="15.0" ry="16.7" fill="#fff" stroke="#2B1D4D" stroke-width="3.5"/>
+    <circle cx="134.6" cy="81.8" r="8.4" fill="#2B1D4D"/>
+    <circle cx="137.7" cy="77.9" r="3.1" fill="#fff"/>
+  </g>
+</svg>
