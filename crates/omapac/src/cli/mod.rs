@@ -7,6 +7,7 @@ use usage_rs::RunWith;
 
 use crate::host::{Host, HostPaths};
 
+mod audit;
 mod aur_cmd;
 mod channel;
 mod converge;
@@ -75,6 +76,7 @@ pub struct Cli {
 enum Commands {
     Add(declare::Add),
     Apply(declare::Apply),
+    Audit(audit::Audit),
     Aur(aur_cmd::Aur),
     Channel(channel::Channel),
     Doctor(doctor::Doctor),
