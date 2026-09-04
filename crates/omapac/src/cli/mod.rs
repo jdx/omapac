@@ -13,6 +13,7 @@ mod declare;
 mod doctor;
 mod info;
 mod install;
+mod jail_cmd;
 mod ledger_cmd;
 mod list;
 mod present;
@@ -75,6 +76,8 @@ enum Commands {
     Drop(declare::Drop),
     Info(info::Info),
     Install(install::Install),
+    #[usage(name = "__jail", hide)]
+    JailExec(jail_cmd::JailExec),
     #[usage(name = "__ledger", hide)]
     LedgerMerge(ledger_cmd::LedgerMerge),
     List(list::List),

@@ -18,6 +18,9 @@ pub struct Install {
     /// Package names, optionally as repo/name
     #[usage(required = true)]
     packages: Vec<String>,
+    /// Install from the AUR: review, approve, build in the jail, install
+    #[usage(short = 'a', long)]
+    aur: bool,
     /// Proceed without asking; refuses a plan with warnings
     #[usage(short = 'y', long)]
     yes: bool,
@@ -39,6 +42,9 @@ impl RunWith<&App> for Install {
     type Output = Result<()>;
 
     fn run_with(self, app: &App) -> Self::Output {
+        if self.aur {
+            return self.run_aur(app);
+        }
         let host = app.host()?;
         let targets = resolve_targets(&host, &self.packages)?;
         let engine = app.engine()?;
@@ -92,6 +98,89 @@ impl RunWith<&App> for Install {
                 )?
             };
             app.record(&patch)?;
+        }
+        Ok(())
+    }
+}
+
+impl Install {
+    /// The AUR path: one package at a time, each reviewed, approved,
+    /// built, and installed from its file.
+    fn run_aur(&self, app: &App) -> Result<()> {
+        if self.json {
+            let mut plans = Vec::new();
+            for name in &self.packages {
+                let (reviewed, _) = app.review_aur(name, None, false)?;
+                plans.push(serde_json::json!({
+                    "name": name,
+                    "pkgbase": reviewed.pkgbase,
+                    "commit": reviewed.target,
+                    "version": reviewed.srcinfo.version(),
+                    "report": reviewed.report,
+                }));
+            }
+            return print_json(&plans);
+        }
+        for name in &self.packages {
+            if self.dry_run {
+                let (reviewed, _) =
+                    app.review_aur(name, None, !self.yes && crate::ui::interactive())?;
+                println!(
+                    "would build {name} at {} and install it",
+                    &reviewed.target[..12]
+                );
+                continue;
+            }
+            let prepared = app.prepare_aur(name, None, true, self.yes)?;
+            if !self.yes && !crate::ui::confirm(&format!("Build and install {name}?"), true)? {
+                bail!("cancelled");
+            }
+            let files = app.build_aur(&prepared, self.yes)?;
+            let packages = crate::aur::build::built_packages(&files)?;
+            let selected: Vec<_> = files
+                .into_iter()
+                .zip(packages)
+                .filter(|(_, package)| package.name == *name)
+                .collect();
+            if selected.is_empty() {
+                bail!("{name}: makepkg did not produce the requested package");
+            }
+            let files: Vec<_> = selected.iter().map(|(file, _)| file.clone()).collect();
+            let engine = app.engine()?;
+            let install = crate::engine::FileInstall {
+                files: files.clone(),
+                as_deps: self.as_deps,
+                overwrite: Vec::new(),
+            };
+            crate::engine::Engine::install_files(
+                &engine,
+                &install,
+                crate::engine::ApplyOpts {
+                    dry_run: false,
+                    no_confirm: true,
+                },
+            )?;
+            let mut patch = crate::ledger::Patch::default();
+            for (_, package) in selected {
+                patch.upsert.insert(
+                    package.name,
+                    crate::ledger::Entry {
+                        version: package.version,
+                        tier: crate::resolve::Tier::Aur,
+                        repo: None,
+                        aur_commit: Some(prepared.reviewed.target.clone()),
+                        explicit: !self.as_deps,
+                        by: "install".to_string(),
+                        at: crate::ledger::now(),
+                    },
+                );
+            }
+            app.record(&patch)?;
+            println!(
+                "installed {name} {} from AUR commit {}",
+                prepared.reviewed.srcinfo.version(),
+                &prepared.reviewed.target[..12]
+            );
         }
         Ok(())
     }
