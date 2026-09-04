@@ -2,6 +2,9 @@
 
 mod attest;
 mod index;
+mod rekor;
+mod sign;
+mod vendor;
 
 use std::ffi::OsString;
 
@@ -36,6 +39,8 @@ struct Cli {
 enum Commands {
     Attest(attest::Attest),
     Index(index::IndexCmd),
+    Sign(sign::Sign),
+    Vendor(vendor::Vendor),
     Version(Version),
 }
 
@@ -47,6 +52,8 @@ fn main() -> Result<()> {
     match cli.command {
         Some(Commands::Attest(cmd)) => cmd.run_with(()),
         Some(Commands::Index(cmd)) => cmd.run_with(()),
+        Some(Commands::Sign(cmd)) => cmd.run_with(()),
+        Some(Commands::Vendor(cmd)) => cmd.run_with(()),
         Some(Commands::Version(cmd)) => cmd.run_with(BIN),
         None => Ok(()),
     }

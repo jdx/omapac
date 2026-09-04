@@ -237,6 +237,7 @@ pub fn read_previous(dir: &Path, key: &PublicKey) -> Result<Option<Index>> {
 const SIDECARS: &[&str] = &[
     ".sig",
     crate::attest::SIDECAR,
+    crate::rekor::SIDECAR,
     ".sigstore.json",
     ".vendor.sigstore.json",
     ".vendor.json",
@@ -334,10 +335,40 @@ pub fn build(
     })
 }
 
-fn is_package(path: &Path) -> bool {
+pub fn is_package(path: &Path) -> bool {
     let name = path
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or_default();
-    name.contains(".pkg.tar.") && !name.ends_with(".sig") && !name.ends_with(".json")
+    [
+        ".pkg.tar",
+        ".pkg.tar.gz",
+        ".pkg.tar.bz2",
+        ".pkg.tar.xz",
+        ".pkg.tar.zst",
+        ".pkg.tar.lrz",
+        ".pkg.tar.lzo",
+        ".pkg.tar.Z",
+        ".pkg.tar.lz4",
+        ".pkg.tar.lz",
+    ]
+    .iter()
+    .any(|suffix| name.ends_with(suffix))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_package;
+    use std::path::Path;
+
+    #[test]
+    fn package_sidecars_and_temporary_signatures_are_not_packages() {
+        assert!(is_package(Path::new("tool-1-1-x86_64.pkg.tar.zst")));
+        assert!(is_package(Path::new("tool-1-1-x86_64.pkg.tar")));
+        assert!(!is_package(Path::new(
+            "tool-1-1-x86_64.pkg.tar.zst.sig.tmp"
+        )));
+        assert!(!is_package(Path::new("tool-1-1-x86_64.pkg.tar.zst.sig")));
+        assert!(!is_package(Path::new("tool-1-1-x86_64.pkg.tar.zst.json")));
+    }
 }
