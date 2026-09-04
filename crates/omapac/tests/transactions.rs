@@ -1,109 +1,9 @@
 //! `install` and `remove` driven through a fake pacman and a fake sudo on a
 //! temporary PATH, against the same fixture sysroot the read-only tests use.
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
+mod common;
 
-fn fixtures() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../alpm-db/fixtures")
-}
-
-struct Rig {
-    _dir: tempfile::TempDir,
-    root: PathBuf,
-    bin: PathBuf,
-    log: PathBuf,
-}
-
-impl Rig {
-    fn new() -> Rig {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().join("root");
-        std::fs::create_dir_all(root.join("etc")).unwrap();
-        std::fs::create_dir_all(root.join("var/lib/pacman/sync")).unwrap();
-        std::fs::write(
-            root.join("etc/pacman.conf"),
-            "[options]\nArchitecture = x86_64\nSigLevel = Required DatabaseOptional\nHoldPkg = pacman glibc\n\
-             [core]\nServer = https://m/$repo/os/$arch\n\
-             [omarchy]\nServer = https://pkgs.omarchy.org/stable/$arch\n\
-             [chaotic-aur]\nServer = https://example.invalid/$arch\nSigLevel = Never\n",
-        )
-        .unwrap();
-        copy_dir(
-            &fixtures().join("local"),
-            &root.join("var/lib/pacman/local"),
-        );
-        for db in ["core.db", "omarchy.db"] {
-            std::fs::copy(
-                fixtures().join("sync").join(db),
-                root.join("var/lib/pacman/sync").join(db),
-            )
-            .unwrap();
-        }
-        let bin = dir.path().join("bin");
-        std::fs::create_dir_all(&bin).unwrap();
-        for fake in ["pacman", "sudo"] {
-            let target = bin.join(fake);
-            std::fs::copy(
-                Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("tests/fakes")
-                    .join(fake),
-                &target,
-            )
-            .unwrap();
-            let mut perms = std::fs::metadata(&target).unwrap().permissions();
-            std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
-            std::fs::set_permissions(&target, perms).unwrap();
-        }
-        let log = dir.path().join("log");
-        Rig {
-            _dir: dir,
-            root,
-            bin,
-            log,
-        }
-    }
-
-    fn run(&self, args: &[&str], print: &str, status: i32) -> (i32, String, String) {
-        let output = Command::new(env!("CARGO_BIN_EXE_omapac"))
-            .env("PATH", format!("{}:/usr/bin:/bin", self.bin.display()))
-            .env("OMAPAC_TEST_PACMAN", self.bin.join("pacman"))
-            .env("FAKE_PACMAN_LOG", &self.log)
-            .env("FAKE_PACMAN_PRINT", print)
-            .env("FAKE_PACMAN_STATUS", status.to_string())
-            .arg("--sysroot")
-            .arg(&self.root)
-            .args(args)
-            .output()
-            .unwrap();
-        (
-            output.status.code().unwrap_or(-1),
-            String::from_utf8_lossy(&output.stdout).into_owned(),
-            String::from_utf8_lossy(&output.stderr).into_owned(),
-        )
-    }
-
-    fn log(&self) -> Vec<String> {
-        std::fs::read_to_string(&self.log)
-            .unwrap_or_default()
-            .lines()
-            .map(str::to_string)
-            .collect()
-    }
-}
-
-fn copy_dir(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).unwrap();
-    for entry in std::fs::read_dir(from).unwrap() {
-        let entry = entry.unwrap();
-        let target = to.join(entry.file_name());
-        if entry.file_type().unwrap().is_dir() {
-            copy_dir(&entry.path(), &target);
-        } else {
-            std::fs::copy(entry.path(), target).unwrap();
-        }
-    }
-}
+use common::Rig;
 
 const HELIX_PLAN: &str = "helix\\t26.03-1\\textra\\thttps://m/extra/os/x86_64/helix-26.03-1-x86_64.pkg.tar.zst\\t12000000\\n\
                           tree-sitter\\t0.26.0-1\\tcore\\thttps://m/core/os/x86_64/tree-sitter-0.26.0-1-x86_64.pkg.tar.zst\\t500000\\n";
@@ -114,10 +14,7 @@ fn install_dry_run_shows_plan_and_command_without_running_pacman_for_real() {
     // pacman is in core; the fake resolves it to a helix-shaped plan.
     let (code, out, err) = rig.run(&["install", "--dry-run", "pacman"], HELIX_PLAN, 0);
     assert_eq!(code, 0, "{err}");
-    insta::assert_snapshot!(
-        out.replace(rig.bin.to_str().unwrap(), "<bin>")
-            .replace(rig.root.to_str().unwrap(), "<root>")
-    );
+    insta::assert_snapshot!(rig.redact(&out));
     let log = rig.log();
     assert_eq!(log.len(), 1, "only the --print call: {log:?}");
     assert!(log[0].contains("--print --print-format"), "{log:?}");
