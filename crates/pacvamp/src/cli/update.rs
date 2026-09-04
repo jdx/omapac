@@ -361,8 +361,10 @@ impl RunWith<&App> for Update {
             if let Some((resolved, p)) = &repo_plan
                 && !resolved.is_empty()
             {
-                let performed = transaction::apply_confirmed(&engine, resolved, p, self.yes)?;
-                if performed {
+                let accepted = transaction::verify_and_apply(
+                    app, &host, settings, &engine, resolved, p, self.yes,
+                )?;
+                if let Some(accepted) = accepted {
                     let mut explicit = Vec::new();
                     for change in &p.changes {
                         if host
@@ -374,7 +376,9 @@ impl RunWith<&App> for Update {
                             explicit.push(change.name.clone());
                         }
                     }
-                    app.record(&transaction::ledger_patch(p, &explicit, "update", false))?;
+                    let mut patch = transaction::ledger_patch(p, &explicit, "update", false);
+                    accepted.attach(&mut patch);
+                    app.record(&patch)?;
                     if let Some(release) = &converged_release {
                         let patch = crate::ledger::Patch {
                             snapshot: Some(release.id.clone()),
@@ -594,6 +598,7 @@ fn update_aur_package(app: &App, name: &str, yes: bool) -> Result<AurOutcome> {
                 tier: crate::resolve::Tier::Aur,
                 repo: None,
                 aur_commit: Some(prepared.reviewed.target.clone()),
+                verification: None,
                 explicit,
                 by: "update".to_string(),
                 at: crate::ledger::now(),

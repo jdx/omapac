@@ -87,7 +87,7 @@ pub struct Transparency {
 
 /// Fetch and verify `<file>.provenance.json` with the index's build keys:
 /// a DSSE envelope whose statement names the package digest.
-fn check_provenance(
+pub(crate) fn check_provenance(
     source: &trust::FeedSource,
     filename: &str,
     sha256: &str,

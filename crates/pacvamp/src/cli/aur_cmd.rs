@@ -590,6 +590,7 @@ impl App {
                     tier: crate::resolve::Tier::Aur,
                     repo: None,
                     aur_commit: Some(prepared.reviewed.target.clone()),
+                    verification: None,
                     explicit,
                     by: by.to_string(),
                     at: crate::ledger::now(),

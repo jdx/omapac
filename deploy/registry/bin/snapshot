@@ -15,7 +15,7 @@ fi
 sync_root="$PACVAMP_REGISTRY_ROOT/sync"
 store="$PACVAMP_REGISTRY_ROOT/store"
 index="$sync_root/pacvamp/os/x86_64/pacvamp-index.json"
-snapshot_id="${PACVAMP_SNAPSHOT_ID:-$(date -u +%Y-%m-%dT%H)}"
+snapshot_id="${PACVAMP_SNAPSHOT_ID:-$(date -u +%Y-%m-%dT%H%M%SZ)}"
 lock="$PACVAMP_REGISTRY_ROOT/.snapshot.lock"
 
 install -d "$PACVAMP_REGISTRY_ROOT"

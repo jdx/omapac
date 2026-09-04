@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Release {
     pub version: u32,
-    /// The snapshot id, `YYYY-MM-DDTHH`.
+    /// The lexically sortable UTC snapshot id.
     pub id: String,
     pub channel: String,
     /// The Arch mirror snapshot this release was built from.

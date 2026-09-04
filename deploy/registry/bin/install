@@ -12,10 +12,16 @@ registry_user=pacvamp-registry
 registry_root=/srv/pacvamp
 state_root=/var/lib/pacvamp-registry
 config_root=/etc/pacvamp-registry
+canary_root=/usr/local/lib/pacvamp-registry/canary
+package_root=/usr/local/lib/pacvamp-registry/pacvamp
 
 for file in \
 	"$stage/bin/packslip" \
 	"$stage/bin/pacvamp-repo" \
+	"$stage/deploy/registry/pacvamp/pacvamp" \
+	"$stage/deploy/registry/pacvamp/PKGBUILD" \
+	"$stage/deploy/registry/pacvamp/LICENSE" \
+	"$stage/deploy/registry/pacvamp/pacvamp-registry.pub" \
 	"$stage/deploy/registry/Caddyfile"; do
 	test -f "$file"
 done
@@ -31,13 +37,23 @@ install -Dm644 "$stage/deploy/registry/pacvamp-registry.tmpfiles" \
 	/usr/lib/tmpfiles.d/pacvamp-registry.conf
 systemd-tmpfiles --create /usr/lib/tmpfiles.d/pacvamp-registry.conf
 
-install -Dm755 "$stage/deploy/registry/bin/publish-canary" \
-	/usr/local/lib/pacvamp-registry/publish-canary
+install -Dm755 "$stage/deploy/registry/bin/publish" \
+	/usr/local/lib/pacvamp-registry/publish
 install -Dm755 "$stage/deploy/registry/bin/snapshot" \
 	/usr/local/lib/pacvamp-registry/snapshot
-install -d /usr/local/lib/pacvamp-registry/canary
+install -d "$canary_root"
 install -m 0644 "$stage/deploy/registry/canary/PKGBUILD" \
-	/usr/local/lib/pacvamp-registry/canary/PKGBUILD
+	"$canary_root/PKGBUILD"
+test -f "$canary_root/PKGBUILD"
+install -d "$package_root"
+install -m 0755 "$stage/deploy/registry/pacvamp/pacvamp" \
+	"$package_root/pacvamp"
+install -m 0644 \
+	"$stage/deploy/registry/pacvamp/PKGBUILD" \
+	"$stage/deploy/registry/pacvamp/LICENSE" \
+	"$stage/deploy/registry/pacvamp/pacvamp-registry.pub" \
+	"$package_root/"
+test -x "$package_root/pacvamp"
 for unit in \
 	pacvamp-registry-publish.service \
 	pacvamp-registry-snapshot.service \
@@ -71,6 +87,8 @@ config="$(mktemp "$config_root/.registry.env.XXXXXX")"
 	printf 'PACVAMP_GPG_KEY=%s\n' "$gpg_fingerprint"
 	printf 'PACVAMP_SOURCE_URL=%s\n' 'https://github.com/jdx/pacvamp'
 	printf 'PACVAMP_SOURCE_COMMIT=%s\n' "$source_commit"
+	printf 'PACVAMP_CANARY_DIR=%s\n' "$canary_root"
+	printf 'PACVAMP_PACKAGE_DIR=%s\n' "$package_root"
 	printf 'GNUPGHOME=%s\n' "$state_root/gnupg"
 } >"$config"
 chown "$registry_user:$registry_user" "$config"
@@ -91,19 +109,13 @@ install -Dm644 "$stage/deploy/registry/Caddyfile" /etc/caddy/Caddyfile
 systemctl daemon-reload
 systemctl enable --now caddy
 
-if [[ ! -f $registry_root/sync/pacvamp/os/x86_64/pacvamp.db ]]; then
-	systemctl start pacvamp-registry-publish.service
-fi
-if [[ ! -L $registry_root/store/channels/rc ]]; then
-	systemctl start pacvamp-registry-snapshot.service
-fi
-if [[ ! -L $registry_root/store/channels/stable ]]; then
-	id="$(basename "$(readlink "$registry_root/store/channels/rc")")"
-	runuser -u "$registry_user" -- pacvamp-repo snapshot \
-		--store "$registry_root/store" \
-		--key "$config_root/index.key" \
-		promote --channel stable --id "$id"
-fi
+systemctl start pacvamp-registry-publish.service
+systemctl start pacvamp-registry-snapshot.service
+id="$(basename "$(readlink "$registry_root/store/channels/rc")")"
+runuser -u "$registry_user" -- pacvamp-repo snapshot \
+	--store "$registry_root/store" \
+	--key "$config_root/index.key" \
+	promote --channel stable --id "$id"
 
 systemctl enable --now pacvamp-registry-snapshot.timer
 systemctl reload caddy

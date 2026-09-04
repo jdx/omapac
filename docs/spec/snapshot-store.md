@@ -9,7 +9,7 @@ moves them.
 
 ```
 <store>/
-  snapshots/<id>/                 immutable; id is YYYY-MM-DDTHH
+  snapshots/<id>/                 immutable; id is lexically sortable UTC
     core/os/x86_64/core.db, *.pkg.tar.zst, *.sig
     extra/os/x86_64/...
     multilib/os/x86_64/...
@@ -24,6 +24,10 @@ A machine on channel `stable` has
 `Server = <base>/channels/stable/$repo/os/$arch` in its mirrorlist and
 reads `<base>/channels/stable/release.json`. Pinning writes
 `<base>/snapshots/<id>/$repo/os/$arch`.
+
+The CLI defaults IDs to `YYYY-MM-DDTHH`. Automated publishers may add finer
+UTC precision, such as `YYYY-MM-DDTHHMMSSZ`, when more than one deployment can
+occur within an hour.
 
 Package files are hard-linked from the previous snapshot when unchanged,
 so a snapshot costs the churn since the last one, not a full copy.

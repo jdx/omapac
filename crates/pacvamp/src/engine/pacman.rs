@@ -150,6 +150,34 @@ impl PacmanCli {
         invocation
     }
 
+    /// The command that caches a transaction without installing it.
+    pub fn download_invocation(&self, tx: &Transaction, opts: ApplyOpts) -> Invocation {
+        let mut args = self.transaction_args(tx);
+        if let Some(operation) = args
+            .iter_mut()
+            .find(|arg| matches!(arg.as_str(), "-S" | "-Su" | "-Suu"))
+        {
+            *operation = match operation.as_str() {
+                "-S" => "-Sw",
+                "-Su" => "-Suw",
+                "-Suu" => "-Suuw",
+                _ => unreachable!(),
+            }
+            .to_string();
+        }
+        if opts.no_confirm {
+            let at = args
+                .iter()
+                .position(|a| a.starts_with('-') && !a.starts_with("--"));
+            args.insert(at.map_or(0, |i| i + 1), "--noconfirm".to_string());
+        }
+        let mut invocation = Invocation::new(&self.pacman, args);
+        if self.omarchy_guard && matches!(tx.operation, Operation::Upgrade { .. }) {
+            invocation = invocation.with_env(OMARCHY_GUARD_ENV, "1");
+        }
+        invocation
+    }
+
     /// The command that would plan `tx`.
     pub fn plan_invocation(&self, tx: &Transaction) -> Invocation {
         let mut args = self.transaction_args(tx);
@@ -306,6 +334,10 @@ impl Engine for PacmanCli {
         })
     }
 
+    fn download(&self, tx: &ResolvedTx, opts: ApplyOpts) -> Result<Report> {
+        self.perform(self.download_invocation(&tx.transaction, opts), opts)
+    }
+
     fn apply(&self, tx: &ResolvedTx, opts: ApplyOpts) -> Result<Report> {
         self.perform(self.apply_invocation(&tx.transaction, opts), opts)
     }
@@ -354,6 +386,18 @@ mod tests {
             "/usr/bin/pacman -S --noconfirm --needed --ignore gcc14,gcc14-libs --overwrite '/usr/share/omarchy/*' -- helix extra/zathura"
         );
         assert!(apply.env.is_empty(), "installs do not need the guard");
+        assert_eq!(
+            engine()
+                .download_invocation(
+                    &tx,
+                    ApplyOpts {
+                        dry_run: false,
+                        no_confirm: true,
+                    },
+                )
+                .display(),
+            "/usr/bin/pacman -Sw --noconfirm --needed --ignore gcc14,gcc14-libs --overwrite '/usr/share/omarchy/*' -- helix extra/zathura"
+        );
     }
 
     #[test]
@@ -391,6 +435,18 @@ mod tests {
         assert_eq!(
             apply.display(),
             "OMARCHY_UPDATE_PACMAN=1 /usr/bin/pacman -Su --ignore linux"
+        );
+        assert_eq!(
+            engine()
+                .download_invocation(
+                    &tx,
+                    ApplyOpts {
+                        dry_run: false,
+                        no_confirm: true,
+                    },
+                )
+                .display(),
+            "OMARCHY_UPDATE_PACMAN=1 /usr/bin/pacman -Suw --noconfirm --ignore linux"
         );
         let mut no_guard = engine();
         no_guard.omarchy_guard = false;
