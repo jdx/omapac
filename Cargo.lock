@@ -1272,6 +1272,7 @@ dependencies = [
  "color-eyre",
  "eyre",
  "jiff",
+ "nix 0.31.3",
  "omapac",
  "omapac-cli-support",
  "omapac-policy",
