@@ -1,5 +1,6 @@
 ---
 layout: home
+title: Trusted packages for pacman systems
 
 hero:
   name: pacvamp
@@ -30,7 +31,7 @@ features:
 > progress. Nothing here is stable, supported, or intended for real use — do not
 > depend on it.
 
-# Documentation
+## Documentation
 
 - [Install Pacvamp](/install): configure the public repository and install the
   signed Arch package.

@@ -1,27 +1,68 @@
 import { defineConfig } from "vitepress";
 
+const siteUrl = "https://pacvamp.com";
+const description =
+  "Install trusted packages from distribution repositories and the AUR with policy, provenance, and repeatable system state.";
+
 export default defineConfig({
   title: "pacvamp",
-  description: "Trusted packages for pacman-based Linux distributions",
+  description,
   lang: "en-US",
   head: [
     ["meta", { property: "og:type", content: "website" }],
     ["meta", { property: "og:site_name", content: "pacvamp" }],
+    ["meta", { property: "og:locale", content: "en_US" }],
     ["meta", { property: "og:image", content: "https://pacvamp.com/og-image.png" }],
     ["meta", { property: "og:image:type", content: "image/png" }],
     ["meta", { property: "og:image:width", content: "1200" }],
     ["meta", { property: "og:image:height", content: "630" }],
     ["meta", { property: "og:image:alt", content: "pacvamp — a pacman frontend with fangs. Official repos, third-party repos, and AUR — one command, trust tiers built in." }],
     ["meta", { name: "twitter:card", content: "summary_large_image" }],
+    ["meta", { name: "twitter:site", content: "@jdxcode" }],
     ["meta", { name: "twitter:image", content: "https://pacvamp.com/og-image.png" }],
     ["meta", { name: "twitter:image:alt", content: "pacvamp — a pacman frontend with fangs. Official repos, third-party repos, and AUR — one command, trust tiers built in." }],
+    ["link", { rel: "icon", href: "/favicon.ico", sizes: "any" }],
+    ["link", { rel: "icon", type: "image/png", sizes: "32x32", href: "/favicon-32x32.png" }],
     ["link", { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" }],
+    ["link", { rel: "apple-touch-icon", sizes: "180x180", href: "/apple-touch-icon.png" }],
+    ["link", { rel: "manifest", href: "/site.webmanifest" }],
     ["meta", { name: "theme-color", content: "#17112b" }],
   ],
+  transformHead: ({ pageData, title, description: pageDescription }) => {
+    const pagePath = pageData.relativePath
+      .replace(/(^|\/)index\.md$/, "$1")
+      .replace(/\.md$/, "");
+    const url = new URL(pagePath, `${siteUrl}/`).toString();
+
+    return [
+      ["link", { rel: "canonical", href: url }],
+      ["meta", { property: "og:url", content: url }],
+      ["meta", { property: "og:title", content: title }],
+      ["meta", { property: "og:description", content: pageDescription }],
+      ["meta", { name: "twitter:title", content: title }],
+      ["meta", { name: "twitter:description", content: pageDescription }],
+      [
+        "script",
+        { type: "application/ld+json" },
+        JSON.stringify({
+          "@context": "https://schema.org",
+          "@type": "WebPage",
+          name: title,
+          description: pageDescription,
+          url,
+          isPartOf: {
+            "@type": "WebSite",
+            name: "pacvamp",
+            url: siteUrl,
+          },
+        }),
+      ],
+    ];
+  },
   cleanUrls: true,
   lastUpdated: true,
   sitemap: {
-    hostname: "https://pacvamp.com",
+    hostname: siteUrl,
   },
   themeConfig: {
     logo: { src: "/logo.svg", alt: "pacvamp" },
