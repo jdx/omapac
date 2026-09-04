@@ -2,14 +2,14 @@
 
 Version 1, draft. The server side of the release train
 (`release-train.md` is the client side): how a mirror becomes a store of
-immutable snapshots with channel pointers, and how `omapac-repo snapshot`
+immutable snapshots with channel pointers, and how `pacvamp-repo snapshot`
 moves them.
 
 ## Layout
 
 ```
 <store>/
-  snapshots/<id>/                 immutable; id is YYYY-MM-DDTHH
+  snapshots/<id>/                 immutable; id is lexically sortable UTC
     core/os/x86_64/core.db, *.pkg.tar.zst, *.sig
     extra/os/x86_64/...
     multilib/os/x86_64/...
@@ -25,18 +25,22 @@ A machine on channel `stable` has
 reads `<base>/channels/stable/release.json`. Pinning writes
 `<base>/snapshots/<id>/$repo/os/$arch`.
 
+The CLI defaults IDs to `YYYY-MM-DDTHH`. Automated publishers may add finer
+UTC precision, such as `YYYY-MM-DDTHHMMSSZ`, when more than one deployment can
+occur within an hour.
+
 Package files are hard-linked from the previous snapshot when unchanged,
 so a snapshot costs the churn since the last one, not a full copy.
 
 ## Commands
 
 - `snapshot cut --store S --from <mirror> --key K [--id <id>]
-  [--opr-index <omapac-index.json>]` copies the repositories from a
+  [--repo-index <pacvamp-index.json>]...` copies the repositories from a
   synced Arch mirror into a new snapshot, records the database digests
-  and the OPR index sequence, writes and signs `release.json` with no
-  test result, and points `edge` at it.
+  and each supplied repository index sequence, writes and signs
+  `release.json` with no test result, and points `edge` at it.
 - `snapshot test --store S --id <id> [--suite <command>]` runs the
-  suite with `OMAPAC_SNAPSHOT_ID` and `OMAPAC_SNAPSHOT_DIR` set. Exit 0
+  suite with `PACVAMP_SNAPSHOT_ID` and `PACVAMP_SNAPSHOT_DIR` set. Exit 0
   is a pass. Lines the suite prints as `tested: <pkgbase>` become
   `tested_pkgbases`. The result is recorded and signed; a pass points
   `rc` at the snapshot when it is newer than the current `rc`. Without
@@ -56,7 +60,7 @@ so a snapshot costs the churn since the last one, not a full copy.
   deletes snapshots older than the retention, keeping any that were
   ever `stable` for the longer period and never a channel target.
 
-`OMAPAC_REPO_NOW` fixes the clock for tests.
+`PACVAMP_REPO_NOW` fixes the clock for tests.
 
 ## Built-in consistency check
 

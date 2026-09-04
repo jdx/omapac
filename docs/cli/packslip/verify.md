@@ -12,7 +12,7 @@ Checks the signature, the document, and the digest and size of every artifact fi
 
 ## Flags
 - **`-p --pubkey <PUBKEY>`** — The minisign public key file, or its base64 line
-- **`-s --signature <SIGNATURE>`** — The signature file; defaults to <document>.minisig
+- **`-s --signature <SIGNATURE>`** — The signature file; defaults to &lt;document>.minisig
 - **`-a --artifact <ARTIFACT>`** — Artifact files to check against the document
 - **`-J --json`** — Print the result as JSON
 - **`-h --help`** — Print help

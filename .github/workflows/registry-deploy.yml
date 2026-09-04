@@ -50,15 +50,26 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Build publisher binaries
-        run: cargo build --locked --release -p packslip -p pacvamp-repo
-
+        run: cargo build --locked --release -p packslip -p pacvamp -p pacvamp-repo
       - name: Build deployment bundle
         run: |
-          install -Dm755 target/release/packslip registry-bundle/bin/packslip
-          install -Dm755 target/release/pacvamp-repo registry-bundle/bin/pacvamp-repo
+          install -d registry-bundle
           cp -R deploy registry-bundle/
+          install -Dm755 target/release/packslip registry-bundle/bin/packslip
+          install -Dm755 target/release/pacvamp registry-bundle/deploy/registry/pacvamp/pacvamp
+          install -Dm644 LICENSE registry-bundle/deploy/registry/pacvamp/LICENSE
+          install -Dm755 target/release/pacvamp-repo registry-bundle/bin/pacvamp-repo
+          pkgver="0.1.0.r${GITHUB_RUN_NUMBER}.g${DEPLOY_SHA:0:12}"
+          package_sha256="$(sha256sum registry-bundle/deploy/registry/pacvamp/pacvamp |
+            cut -d ' ' -f 1)"
+          license_sha256="$(sha256sum registry-bundle/deploy/registry/pacvamp/LICENSE |
+            cut -d ' ' -f 1)"
+          sed -i \
+            -e "s/@PACVAMP_PKGVER@/$pkgver/" \
+            -e "s/@PACVAMP_SHA256@/$package_sha256/" \
+            -e "s/@LICENSE_SHA256@/$license_sha256/" \
+            registry-bundle/deploy/registry/pacvamp/PKGBUILD
           tar -C registry-bundle -czf registry-deploy.tar.gz .
-
       - name: Configure pinned SSH host
         env:
           SSH_PRIVATE_KEY: ${{ secrets.REGISTRY_SSH_PRIVATE_KEY }}
@@ -72,7 +83,6 @@ jobs:
           printf '%s\n' "$SSH_PRIVATE_KEY" >~/.ssh/registry
           printf '%s\n' "$SSH_KNOWN_HOSTS" >~/.ssh/known_hosts
           chmod 0600 ~/.ssh/registry ~/.ssh/known_hosts
-
       - name: Deploy exact commit
         env:
           DEPLOY_SHA: ${{ steps.revision.outputs.sha }}
@@ -85,16 +95,15 @@ jobs:
             <registry-deploy.tar.gz
           ssh -p "$SSH_PORT" -i ~/.ssh/registry -o BatchMode=yes \
             -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$remote" \
-            "'$remote_dir/deploy/registry/bin/install' '$remote_dir' '$DEPLOY_SHA'"
+            "if test \"\$(id -u)\" = 0; then '$remote_dir/deploy/registry/bin/install' '$remote_dir' '$DEPLOY_SHA'; else sudo -n '$remote_dir/deploy/registry/bin/install' '$remote_dir' '$DEPLOY_SHA'; fi"
           ssh -p "$SSH_PORT" -i ~/.ssh/registry -o BatchMode=yes \
             -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$remote" \
             "rm -rf '$remote_dir'"
-
       - name: Verify registry
         run: |
           remote="$SSH_USER@$SSH_HOST"
           ssh -p "$SSH_PORT" -i ~/.ssh/registry -o BatchMode=yes \
             -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$remote" \
-            "test -L /srv/pacvamp/store/channels/stable"
+            "systemctl is-active --quiet caddy && test -L /srv/pacvamp/store/channels/stable"
           curl --fail --show-error --silent --retry 5 \
             https://repo.pacvamp.com/healthz

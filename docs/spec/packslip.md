@@ -6,7 +6,7 @@ Version 1, draft. Predicate type `https://packslip.dev/release/v1`.
 
 A vendor publishes one signed, machine-readable document per release that
 says what the artifacts are and how to verify them. Any consumer (mise,
-omapac and the Omarchy Package Repository, aqua, Homebrew, a corporate
+pacvamp and the Omarchy Package Repository, aqua, Homebrew, a corporate
 mirror) verifies it with a single pinned identity and gets checksums,
 platform mapping, provenance links, and an evidence level, without
 per-vendor logic. The name is neutral on purpose: a packing slip is the

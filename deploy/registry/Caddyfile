@@ -1,0 +1,15 @@
+repo.pacvamp.com {
+	root * /srv/pacvamp/store
+
+	@health path /healthz
+	respond @health 200
+
+	@immutable path /snapshots/*
+	header @immutable Cache-Control "public, max-age=31536000, immutable"
+
+	@channel path /channels/*
+	header @channel Cache-Control "no-cache"
+
+	encode zstd gzip
+	file_server browse
+}

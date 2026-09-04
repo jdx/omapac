@@ -37,8 +37,8 @@ versions of vetted tools, retires the plugin.
 
 ## 4. On Omarchy
 
-Have the `pacman` and `aur` bootstrap managers delegate to `omapac
-install` and `omapac install --aur`, so mise's "my machine" config keeps
-working and gains omapac's guarantees. Stop forcing a zero minimum
+Have the `pacman` and `aur` bootstrap managers delegate to `pacvamp
+install` and `pacvamp install --aur`, so mise's "my machine" config keeps
+working and gains pacvamp's guarantees. Stop forcing a zero minimum
 release age in the Omarchy update step once the tool channel covers the
 tools it was for.

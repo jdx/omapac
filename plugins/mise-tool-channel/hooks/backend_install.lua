@@ -1,4 +1,4 @@
--- Fetch a vetted artifact through `omapac tools fetch`, which verifies the
+-- Fetch a vetted artifact through `pacvamp tools fetch`, which verifies the
 -- index signature, the digest, the vendor packslip, and the channel
 -- provenance, then lay it out for mise.
 --
@@ -17,7 +17,7 @@ function PLUGIN:BackendInstall(ctx)
     local options = ctx.options or {}
 
     local platform = options.platform or self:platform()
-    local command = "omapac tools" .. self:channel_flags(options)
+    local command = "pacvamp tools" .. self:channel_flags(options)
         .. " fetch " .. self:quote(ctx.tool) .. " " .. self:quote(ctx.version)
         .. " --platform " .. self:quote(platform)
         .. " --dest " .. self:quote(ctx.download_path) .. " --json"
@@ -101,7 +101,8 @@ end
 function PLUGIN:find_executable(install_path, tool)
     local file = require("file")
     for _, candidate in ipairs({ tool, file.join_path("bin", tool) }) do
-        if self:is_regular_file(file.join_path(install_path, candidate)) then
+        local stat = file.stat(file.join_path(install_path, candidate))
+        if stat ~= nil and stat.is_file then
             return candidate
         end
     end
@@ -117,7 +118,8 @@ function PLUGIN:find_executable(install_path, tool)
             if entry:sub(1, #install_path) ~= install_path then
                 entry_path = file.join_path(bin, entry)
             end
-            if not self:is_regular_file(entry_path) then
+            local entry_stat = file.stat(entry_path)
+            if entry_stat == nil or not entry_stat.is_file then
                 return nil
             end
             if entry:sub(1, #install_path) == install_path then
@@ -128,12 +130,4 @@ function PLUGIN:find_executable(install_path, tool)
         end
     end
     return nil
-end
-
--- Follow symlinks when checking an executable candidate. mise's file.stat
--- reports symlink metadata, so its is_file field is false for common vendor
--- layouts such as bin/npm -> ../lib/node_modules/npm/bin/npm-cli.js.
-function PLUGIN:is_regular_file(path)
-    local cmd = require("cmd")
-    return pcall(cmd.exec, "test -f " .. self:quote(path))
 end

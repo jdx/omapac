@@ -10,28 +10,28 @@
 > progress. Nothing here is stable, supported, or intended for real use — do not
 > depend on it.
 
-omapac is the system package manager for [Omarchy](https://omarchy.org): a pacman
-frontend that installs from the Arch mirror, the Omarchy Package Repository, and the
-AUR through one command, with trust tiers, commit-bound AUR builds, and policy that is
-stricter when nobody is watching. The repository also ships `omapac-repo`, the
+pacvamp is a trust-focused package manager for pacman-based Linux distributions. It
+installs from distribution repositories and the AUR through one command, with trust
+tiers, commit-bound AUR builds, and policy that is stricter when nobody is watching.
+[Omarchy](https://omarchy.org) is the reference integration. The repository also ships `pacvamp-repo`, the
 server-side tooling a repository runs, `packslip`, a vendor-neutral standard for
 signed release manifests, and a mise backend plugin for a vetted tool channel. The
 full design, decisions, and implementation plan are in [PLAN.md](PLAN.md); the
-documentation index is [docs/README.md](docs/README.md).
+documentation index is [docs/index.md](docs/index.md).
 
 ## The client
 
 ```bash
-omapac search helix              # repositories, with trust tiers
-omapac search --aur helix        # the AUR, with votes, maintainer, and age
-omapac install helix             # a plan, then pacman with the Omarchy guard
-omapac install --aur google-chrome   # review, approve, build in a jail, install
-omapac add helix                 # declare it in the manifest
-omapac apply                     # converge the machine to the manifest
-omapac update                    # the whole update pipeline, holds and AUR included
-omapac audit                     # installed packages against Arch's security tracker
-omapac channel                   # which tested snapshot this machine follows
-omapac tools list claude         # vetted versions from the tool channel
+pacvamp search helix              # repositories, with trust tiers
+pacvamp search --aur helix        # the AUR, with votes, maintainer, and age
+pacvamp install helix             # a plan, then pacman with the Omarchy guard
+pacvamp install --aur google-chrome   # review, approve, build in a jail, install
+pacvamp add helix                 # declare it in the manifest
+pacvamp apply                     # converge the machine to the manifest
+pacvamp update                    # the whole update pipeline, holds and AUR included
+pacvamp audit                     # installed packages against Arch's security tracker
+pacvamp channel                   # which tested snapshot this machine follows
+pacvamp tools list claude         # vetted versions from the tool channel
 ```
 
 Every command has `--json`; transactions have `-n` for the exact pacman command and
@@ -39,7 +39,7 @@ Every command has `--json`; transactions have `-n` for the exact pacman command 
 
 ## The server
 
-`omapac-repo` runs on the repository: `index` and `attest` produce the signed index
+`pacvamp-repo` runs on the repository: `index` and `attest` produce the signed index
 and build provenance, `sign` is the signer gate, `vendor` builds packages from a
 vendor's packslip, `sync-aur` gates AUR commits, `verdict` and `advisories` maintain
 the signed feeds, `snapshot` runs the release train, and `tool-channel` publishes
@@ -64,9 +64,3 @@ mise run render       # regenerate docs/cli
 Integration tests run without pacman, makepkg, gpg, or a network: fakes on a
 temporary PATH, fixture databases, local HTTP servers, and bare git repositories
 stand in for them. The mise plugin test runs when a `mise` binary is on `PATH`.
-
-## Brand assets
-
-Logo, wordmark, Open Graph image, and favicons live in [assets/](assets/). They are
-generated from [assets/generate.py](assets/generate.py); rerun it with
-`uv run assets/generate.py` after editing.

@@ -10,9 +10,9 @@
 > progress. Nothing here is stable, supported, or intended for real use — do not
 > depend on it.
 
-# omapac
+# pacvamp
 
-omapac is the system package manager for [Omarchy](https://omarchy.org). It is a
+pacvamp is a trust-focused package manager for pacman-based Linux distributions. It is a
 pacman frontend in the yay and paru category, owned by the distro, with supply-chain
 security as the product. This document is the design. Every pull request cites the
 section it implements, and a pull request that changes the design edits this file in
@@ -56,7 +56,7 @@ Two product problems drive the design:
   faster than the current 30-day mirror lag but not on the bleeding edge.
 
 mise keeps its role as the declarative "my machine" layer (tools, dotfiles, services)
-and delegates system packages to omapac on Omarchy.
+and delegates system packages to pacvamp on Omarchy.
 
 ## What exists today
 
@@ -140,14 +140,14 @@ Facts as of 2026-09-03.
 
 ## Principles
 
-1. One verb for the whole thing. `omapac add helix` resolves across Arch mirror, OPR,
+1. One verb for the whole thing. `pacvamp add helix` resolves across Arch mirror, OPR,
    and AUR, and never silently crosses into the AUR.
 2. Trust tiers are first-class. Every package has an origin (`arch`, `opr`, `aur`, or
    `custom`) and its evidence is shown in every list, plan, and prompt.
-3. AUR is commit-bound. The unit of approval is a pkgbase plus a git commit. omapac
+3. AUR is commit-bound. The unit of approval is a pkgbase plus a git commit. pacvamp
    builds exactly that commit and refuses drift without a new review.
 4. Declared intent, recorded fact. A manifest says what the machine should have; a
-   ledger records what omapac did and why.
+   ledger records what pacvamp did and why.
 5. Unattended is stricter than interactive. `-y` and `omarchy update` deny where a
    human is only warned.
 6. Policy can be tightened, never loosened, below the distro floor.
@@ -156,19 +156,19 @@ Facts as of 2026-09-03.
 8. Risk gating, not malware detection. Findings are signals and gates; the tool never
    claims to detect malware.
 9. Evidence is portable. Every verdict, provenance statement, and vendor manifest is a
-   signed in-toto style document any consumer can verify, so mise, OPR, and omapac
+   signed in-toto style document any consumer can verify, so mise, OPR, and pacvamp
    share formats rather than integrations.
 10. Scope decides the installer; vendor-built decides the evidence. A user-scoped tool
-    goes through mise, a system-scoped package goes through omapac, and packslip
+    goes through mise, a system-scoped package goes through pacvamp, and packslip
     applies to any vendor-built artifact whichever path consumes it. Vendor-built
     things are mostly user-scoped tools (agent CLIs, gh, language runtimes), so they
     reach users through mise and the tool channel with no PKGBUILD at all. A
     vendor-built thing is system-scoped, and therefore an OPR package, when it is
-    needed before any user exists (mise, omapac), when it needs root-only integration
+    needed before any user exists (mise, pacvamp), when it needs root-only integration
     (setuid helpers, udev, systemd units, PAM or kernel modules, polkit, system D-Bus),
     or when the launcher expects it system-wide (desktop files, icons, MIME handlers
     under `/usr/share`). Source-built software, which is Arch's repos, Omarchy's own
-    apps, drivers, and the AUR, always goes through omapac.
+    apps, drivers, and the AUR, always goes through pacvamp.
 
 Non-goals for v1: flatpak and snap, a GUI store, pacman's full flag surface,
 multi-distro support, and the AI reviewer itself.
@@ -176,18 +176,18 @@ multi-distro support, and the AI reviewer itself.
 ## Architecture
 
 ```
-omapac (bin)           the client
+pacvamp (bin)           the client
  ├─ cli/               usage-rs surface, output, prompts, --json
  ├─ manifest/          layered TOML, lockfile, managed config
- ├─ ledger/            /var/lib/omapac/state.json
+ ├─ ledger/            /var/lib/pacvamp/state.json
  ├─ resolve/           name to (tier, repo or pkgbase)
  ├─ aur/               rpc, git checkout, .SRCINFO, jailed makepkg
  ├─ trust/             index, release.json, sidecars, verdict feed, advisories
  ├─ update/            the omarchy-update package pipeline
  ├─ tui/               ratatui pickers
  └─ engine/            Engine trait; PacmanCli now, Native later
-omapac-repo (bin)      the server side OPR runs: index, signer gate, sync gate, verdicts, snapshots, tool channel
-omapac-policy (lib)    findings engine and rule catalog, shared by client and server
+pacvamp-repo (bin)      the server side OPR runs: index, signer gate, sync gate, verdicts, snapshots, tool channel
+pacvamp-policy (lib)    findings engine and rule catalog, shared by client and server
 packslip (lib + bin)   the vendor-binary standard: schema, verifier, generator
 alpm-db (lib)          pacman.conf, local db, sync db, .PKGINFO and .BUILDINFO, vercmp
 ```
@@ -237,9 +237,9 @@ Virtual names resolve through the sync database `PROVIDES` entries.
 
 ### Manifest
 
-`omapac.toml` is layered lowest to highest: `/etc/omapac/omapac.toml`,
-`/etc/omapac/conf.d/*.toml` (the omarchy package ships `omarchy.toml` there, generated
-from `omarchy-base.packages`), then `~/.config/omapac/omapac.toml`. The same key wins
+`pacvamp.toml` is layered lowest to highest: `/etc/pacvamp/pacvamp.toml`,
+`/etc/pacvamp/conf.d/*.toml` (the omarchy package ships `omarchy.toml` there, generated
+from `omarchy-base.packages`), then `~/.config/pacvamp/pacvamp.toml`. The same key wins
 by last layer.
 
 ```toml
@@ -262,16 +262,16 @@ ignore = ["gcc14", "gcc14-libs"]
 
 ### Managed config
 
-`/etc/omapac/managed.toml` is owned by the omarchy package, root-only, and applied
+`/etc/pacvamp/managed.toml` is owned by the omarchy package, root-only, and applied
 last. Each key carries a combinator, exactly as aube does: `max` (the higher value
 wins), `trueWins`, `ranked` (a fixed order of strictness), or `managedWins`. User
 config can raise an age and never lower it below the floor, cannot turn off signature
 or index verification, and cannot grant a network build the floor denies.
-`OMAPAC_MANAGED_CONFIG_PATH` adds a stricter file for fleets.
+`PACVAMP_MANAGED_CONFIG_PATH` adds a stricter file for fleets.
 
 ### Lockfile
 
-`omapac.lock` sits next to the user manifest and is git-friendly. Per AUR package it
+`pacvamp.lock` sits next to the user manifest and is git-friendly. Per AUR package it
 records the approved commit, pkgver, approval time, and the hash of the findings that
 were acknowledged. Per package with provenance it records the evidence level so
 no-downgrade can be enforced. It also records the snapshot id the machine last
@@ -280,8 +280,8 @@ reviewed AUR commits.
 
 ### Ledger
 
-`/var/lib/omapac/state.json` is root-owned, schema-versioned, and written atomically
-under a lock. It records every package omapac installed with tier, repo, AUR commit,
+`/var/lib/pacvamp/state.json` is root-owned, schema-versioned, and written atomically
+under a lock. It records every package pacvamp installed with tier, repo, AUR commit,
 explicit versus dependency, timestamp, verification results, and the index sequence
 and snapshot id seen. It enables `prune`, drift reports, and rollback detection.
 
@@ -306,12 +306,12 @@ and snapshot id seen. It enables `prune`, drift reports, and rollback detection.
 |---|---|---|---|
 | `arch` | Arch developer OpenPGP via pacman | Arch build pipeline (opaque) | Arch review |
 | `opr` | OPR GPG signature plus signed index entry | OPR build provenance sidecar; vendor packages chain a verified packslip | verdict attestations (static, AV, AI, human), PR review, channel promotion, release-train tests |
-| `aur` | PKGBUILD checksums only | none | omapac policy engine on an exact commit plus verdict feed |
+| `aur` | PKGBUILD checksums only | none | pacvamp policy engine on an exact commit plus verdict feed |
 | `custom` | whatever `SigLevel` says | none | none; always shown |
 
 ### Client-side features
 
-These ship with omapac alone and need nothing from OPR.
+These ship with pacvamp alone and need nothing from OPR.
 
 **Policy engine on AUR commits.** A finding is an id, a severity, and evidence.
 Config maps each id to allow, warn, or deny. Interactive mode warns by default;
@@ -338,9 +338,9 @@ whole run fails.
 | `upstream-advisory` | the upstream repository appears in OSV's malicious set |
 | `out-of-date` | AUR out-of-date flag (info) |
 
-`omapac aur review <pkg>` prints findings, any published verdicts, the `.SRCINFO`
+`pacvamp aur review <pkg>` prints findings, any published verdicts, the `.SRCINFO`
 summary, and the git diff of PKGBUILD and install files between the approved and
-target commits. `omapac aur approve <pkg> [--commit]` records approval in the lock so a
+target commits. `pacvamp aur approve <pkg> [--commit]` records approval in the lock so a
 later unattended run proceeds.
 
 **Jailed builds.** makepkg runs as the invoking user, never root, in three phases so the
@@ -392,18 +392,18 @@ and index verification required and failing closed when unreachable, custom repo
 denied. `safe` resolves and plans from `.SRCINFO` only and never executes PKGBUILD or
 hook code; it is for menu guards, `update --check`, and agents.
 
-**audit.** `omapac audit` joins the local database against Arch's security tracker so
+**audit.** `pacvamp audit` joins the local database against Arch's security tracker so
 users see which installed packages carry open issues.
 
 ### Server-side features
 
-Everything OPR needs is a subcommand of the `omapac-repo` binary in this repository,
+Everything OPR needs is a subcommand of the `pacvamp-repo` binary in this repository,
 so OPR can adopt it by invoking it rather than by taking code. Formats are documented
-under `docs/spec/` and shared with the client through the `omapac-policy` and
+under `docs/spec/` and shared with the client through the `pacvamp-policy` and
 `packslip` crates.
 
 **index.** Signs the pacman database and writes a signed, append-only
-`omapac-index.json` with a monotonically increasing sequence. Per package file it
+`pacvamp-index.json` with a monotonically increasing sequence. Per package file it
 records the sha256, size, publish time, sidecar list, evidence flags (build provenance,
 vendor manifest, verdicts, reproducible), and the channel record. The signing key is
 Ed25519 in minisign format, shipped in `omarchy-keyring`, and separate from the
@@ -453,7 +453,7 @@ Socket purl lookups, and reproducible-build results. An AI reviewer is the same
 document with kind `ai`; its policy weight is a client setting, so shipping it later
 requires no client change. Because verdicts are keyed by pkgbase and commit rather
 than by OPR package, OPR can review popular AUR packages proactively and the feed
-becomes an AUR review cache that `omapac aur review` consults. A third-party verdict
+becomes an AUR review cache that `pacvamp aur review` consults. A third-party verdict
 from any vendor plugs in as one more signed statement with its own reviewer id.
 
 **advisories.** A signed kill list of pkgbase, commits or versions, tier, action
@@ -477,7 +477,7 @@ client change. OPR's own reviewers ship first; no vendor is a dependency.
 ## packslip: the vendor-binary standard
 
 A vendor publishes one signed, machine-readable document per release that says what
-the artifacts are and how to verify them. Any consumer (mise, omapac and OPR, aqua,
+the artifacts are and how to verify them. Any consumer (mise, pacvamp and OPR, aqua,
 Homebrew, a corporate mirror) verifies it with a single pinned identity and gets
 checksums, platform mapping, provenance links, and an evidence level, without
 per-vendor logic. The name is neutral on purpose: a packing slip is the paper in the
@@ -534,7 +534,7 @@ first publisher and the reference; that is a later change in the mise repository
 
 Consumers:
 
-- OPR, through `omapac-repo vendor`. Vendor packages are generated from the packslip
+- OPR, through `pacvamp-repo vendor`. Vendor packages are generated from the packslip
   instead of hand-edited checksum lines.
 - mise, through its `github` and `http` backends and a new field in aqua registry
   entries, verifying the packslip when present and recording the evidence level in
@@ -556,7 +556,7 @@ which vendor-built things take this path: everything user-scoped, which on Omarc
 the agent CLIs, gh, and the developer-tool long tail.
 
 What vetting a tool version means, run by the channel publisher of
-`omapac-repo vendor`:
+`pacvamp-repo vendor`:
 
 - Fetch the vendor release and verify its packslip, or the legacy evidence (checksum
   file plus minisign, cosign, GPG, or GitHub attestation), against the pinned vendor
@@ -601,7 +601,7 @@ refusal under paranoid mode or the managed floor. The channel can place a hold o
 version, which is how a bad release is pulled after the fact.
 
 The channel format is packslip plus verdicts plus an index and carries nothing
-Omarchy-specific. A company can run the same `omapac-repo vendor` pipeline to publish
+Omarchy-specific. A company can run the same `pacvamp-repo vendor` pipeline to publish
 an internal vetted-tools channel and mise consumes it identically.
 
 ## Release train
@@ -619,12 +619,12 @@ a manifest. Arch's own archive is the precedent. Snapshots are retained for 90 d
 and any snapshot that was ever `stable` for a year.
 
 Release manifest: each snapshot has a signed `release.json` recording its id, the Arch
-snapshot and OPR index sequence it was built from, creation time, test suite results
+snapshot and signed index sequence for each included repository, creation time, test suite results
 with logs, promotion times, and whether it was expedited or held. It also contains a
 map keyed by repository name with the SHA-256 digest of each exact sync database and a
 canonical package map keyed by `repo/name` whose value is the selected version and
-`tested` or `snapshot` label. The signed test result records the snapshot id, OPR index
-sequence, repository-qualified `repo/name`, exact package output, selected version, and
+`tested` or `snapshot` label. The signed test result records the snapshot id, repository
+index sequence, repository-qualified `repo/name`, exact package output, selected version, and
 SHA-256 digest of the package bytes it exercised. `tested` is assigned only when the
 snapshot, index sequence, repository, output name, version, and digest all match;
 unexercised siblings from a split PKGBUILD remain `snapshot`. Imported results are held
@@ -646,7 +646,7 @@ binaries start, each curated install entry installs and launches, `omarchy updat
 from the previous `stable` succeeds including migrations and the pacman guard, snapper
 rollback works, audio and network come up, and a desktop screenshot stays within
 tolerance. Start with the boot and update paths and grow the matrix. The harness is
-`omapac-repo snapshot test` plus QEMU; openQA is the reference if a full framework is
+`pacvamp-repo snapshot test` plus QEMU; openQA is the reference if a full framework is
 wanted later.
 
 Tested versus consistent: the suite exercises only base and curated packages.
@@ -660,15 +660,15 @@ can be promoted straight to `stable` by a maintainer, recorded as expedited with
 advisory ids.
 
 Holds and feedback: regressions are filed against a snapshot id, which appears in
-`omapac doctor` and in the update log. A hold stops promotion or moves the pointer
+`pacvamp doctor` and in the update log. A hold stops promotion or moves the pointer
 back to the previous good snapshot. Opt-in update telemetry keyed by snapshot id is a
 later, optional signal.
 
-Client role: `omapac channel` shows the channel, the snapshot id it resolves to, and
+Client role: `pacvamp channel` shows the channel, the snapshot id it resolves to, and
 when it was tested and promoted. `update` records the snapshot id and verifies the
 downloaded databases against the release manifest digests, which closes the
 mirror-integrity gap and guarantees a whole transaction comes from one snapshot.
-`omapac channel pin <id>` freezes a machine; `omapac rollback --snapshot <id>` performs
+`pacvamp channel pin <id>` freezes a machine; `pacvamp rollback --snapshot <id>` performs
 the downgrade against the archived snapshot and pairs with the snapper snapshot omarchy
 already takes. A three-day soak is also a three-day minimum release age for `arch`,
 which is why the client default stays zero.
@@ -704,7 +704,7 @@ is the documented one-liner for people who want hard fails.
 
 ## Update flow
 
-1. Take omapac's lock and wait on pacman's database lock.
+1. Take pacvamp's lock and wait on pacman's database lock.
 2. Fetch and verify the index, release manifest, verdicts, and advisories. Refuse an
    index or snapshot older than the last one seen.
 3. Refresh sync databases and verify their digests against the release manifest.
@@ -723,31 +723,31 @@ is the documented one-liner for people who want hard fails.
 10. Build and install approved AUR upgrades one pkgbase at a time in the jail.
 11. List orphans; remove only interactively or with `--prune-orphans`.
 12. Report pacnew and pacsave files.
-13. Run configured post-update hooks. Hook commands stay outside omapac; omapac only
+13. Run configured post-update hooks. Hook commands stay outside pacvamp; pacvamp only
     guarantees their ordering around all package mutations.
 
 ## CLI surface
 
 ```
-omapac add <pkg>...        [--aur] [--absent]     write manifest, then converge
-omapac drop <pkg>...                              remove from manifest, then converge
-omapac install <pkg>...    [--aur] [-y] [-n]      imperative, ledger only
-omapac remove <pkg>...     [--keep-deps]
-omapac search <query>      [--aur] [--json]       tiered results with age, votes, maintainer
-omapac info <pkg>                                 tier, evidence chain, verdicts, findings, tested label
-omapac list                [--explicit|--aur|--orphans|--drift|--unverified]
-omapac update              [-y] [--no-aur] [--prune-orphans]
-omapac plan | apply | status                      manifest convergence, --json, --detailed-exitcode
-omapac aur review|approve|diff|build <pkg>
-omapac verify <pkg|file>                          re-run the evidence chain
-omapac audit                                      Arch security tracker join
-omapac channel             [pin <id> | unpin]     snapshot id, test and promotion status
-omapac rollback            --snapshot <id>        downgrade to an archived snapshot
-omapac pacnew              [--merge]
-omapac present|missing <pkg>...                   exit-code predicates for menu guards
-omapac doctor                                     SigLevel floor, keyring, index freshness, jail support
+pacvamp add <pkg>...        [--aur] [--absent]     write manifest, then converge
+pacvamp drop <pkg>...                              remove from manifest, then converge
+pacvamp install <pkg>...    [--aur] [-y] [-n]      imperative, ledger only
+pacvamp remove <pkg>...     [--keep-deps]
+pacvamp search <query>      [--aur] [--json]       tiered results with age, votes, maintainer
+pacvamp info <pkg>                                 tier, evidence chain, verdicts, findings, tested label
+pacvamp list                [--explicit|--aur|--orphans|--drift|--unverified]
+pacvamp update              [-y] [--no-aur] [--prune-orphans]
+pacvamp plan | apply | status                      manifest convergence, --json, --detailed-exitcode
+pacvamp aur review|approve|diff|build <pkg>
+pacvamp verify <pkg|file>                          re-run the evidence chain
+pacvamp audit                                      Arch security tracker join
+pacvamp channel             [pin <id> | unpin]     snapshot id, test and promotion status
+pacvamp rollback            --snapshot <id>        downgrade to an archived snapshot
+pacvamp pacnew              [--merge]
+pacvamp present|missing <pkg>...                   exit-code predicates for menu guards
+pacvamp doctor                                     SigLevel floor, keyring, index freshness, jail support
 
-omapac-repo index | attest | sign | vendor [--publish channel|package] | sync-aur | verdict | advisories | snapshot
+pacvamp-repo index | attest | sign | vendor [--publish channel|package] | sync-aur | verdict | advisories | snapshot
 packslip create | verify
 ```
 
@@ -762,16 +762,16 @@ macros so `docs/cli` and shell completions are generated. Interactive pickers ar
 All changes in this repository. The steps other projects would take are written as
 guides under `docs/adoption/` so they can be picked up when ready.
 
-Omarchy: package omapac in OPR as a vendor-feed package from this repository's
-releases, using packslip from day one so omapac is the first package through the new
+Omarchy: package pacvamp in OPR as a vendor-feed package from this repository's
+releases, using packslip from day one so pacvamp is the first package through the new
 vendor pipeline, and make the `omarchy` package depend on it. Turn the `omarchy-pkg-*`
 scripts into one-line shims. Replace the AUR step of `omarchy-update` first, then the
-repo step, then drop yay from the base install. Point the menu at omapac pickers and
-guards. Ship the distro manifest and the managed floor, and run `omapac apply` from
+repo step, then drop yay from the base install. Point the menu at pacvamp pickers and
+guards. Ship the distro manifest and the managed floor, and run `pacvamp apply` from
 `omarchy update`. Point the lazy agent CLIs in the system-level mise config at the
 tool channel so they resolve to vetted versions.
 
-OPR: adopt the `omapac-repo` subcommands in order: index, attest and sign, vendor,
+OPR: adopt the `pacvamp-repo` subcommands in order: index, attest and sign, vendor,
 sync-aur, verdict reviewers, snapshot. Set the packager field. Move the mirror to
 snapshots with `stable` and `rc` as pointers a human moves first, then the QEMU suite
 gating `rc`, then the timed soak.
@@ -780,7 +780,7 @@ mise: publish a packslip from mise's own release workflow; verify packslips in t
 `github` and `http` backends and record the evidence level in the lockfile; add native
 tool-channel support (a setting listing channel URLs consulted before the registry)
 and, until then, list the tool-channel backend plugin in the registry; on Omarchy,
-have the `pacman` and `aur` bootstrap managers delegate to omapac; stop forcing a zero
+have the `pacman` and `aur` bootstrap managers delegate to pacvamp; stop forcing a zero
 minimum release age in the Omarchy update step once the tool channel covers it.
 
 ## Repository layout
@@ -789,10 +789,10 @@ minimum release age in the Omarchy update step once the tool channel covers it.
 Cargo.toml                 workspace
 crates/alpm-db/            pacman.conf, local and sync databases, vercmp, with fixtures
 crates/cli-support/        argv handling and the version command shared by the binaries
-crates/omapac-policy/      findings engine and rule catalog
+crates/pacvamp-policy/      findings engine and rule catalog
 crates/packslip/           vendor standard: model, minisign, DSSE, verifier, generator, packslip binary
-crates/omapac/             client binary and library; integration tests with fake pacman, sudo, makepkg, AUR
-crates/omapac-repo/        server binary; integration tests with a fake gpg, Rekor, and vendor
+crates/pacvamp/             client binary and library; integration tests with fake pacman, sudo, makepkg, AUR
+crates/pacvamp-repo/        server binary; integration tests with a fake gpg, Rekor, and vendor
 plugins/mise-tool-channel/ mise backend plugin that consumes a vetted tool channel
 harness/                   the snapshot test suite contract and a sample
 docs/spec/                 packslip, feeds, provenance, vendor pipeline, sync gate, release train, snapshot store, tool channel
@@ -828,20 +828,20 @@ stays manageable; the first group is layers 1 through 6, a working pacman fronte
 7. Layered manifest and managed floor: add, drop, plan, apply, status.
 8. Ledger.
 9. AUR: RPC, git checkout, `.SRCINFO`.
-10. omapac-policy crate.
+10. pacvamp-policy crate.
 11. AUR review, approve, and lockfile.
 12. Jailed build and install.
 13. Update pipeline.
 14. packslip: spec, verifier, generator.
 15. Trust: index, release manifest, verdicts, advisories, sidecars.
 16. Channels and snapshots: channel, pin, rollback, tested labels.
-17. omapac-repo index and attest.
-18. omapac-repo sign gate and the vendor vetting core with the package publisher.
-19. omapac-repo sync-aur gate, verdict, advisories.
-20. omapac-repo snapshot and test harness.
+17. pacvamp-repo index and attest.
+18. pacvamp-repo sign gate and the vendor vetting core with the package publisher.
+19. pacvamp-repo sync-aur gate, verdict, advisories.
+20. pacvamp-repo snapshot and test harness.
 21. ratatui pickers.
 22. audit.
-23. omapac-repo vendor channel publisher: artifact mirror and signed tool index.
+23. pacvamp-repo vendor channel publisher: artifact mirror and signed tool index.
 24. mise tool-channel backend plugin.
 25. Documentation: specs, adoption guides, rendered CLI docs.
 
@@ -859,7 +859,7 @@ tool-channel support in mise, which is a mise change.
 - alpm-db: fixture tests; `vercmp` property tests against the real binary in CI.
 - Policy engine: table tests over crafted AUR histories (maintainer change, checksum
   flip to SKIP, source domain swap, install-script add, npm install inside build),
-  asserting findings and mode defaults. The same suite runs in `omapac-repo sync-aur`.
+  asserting findings and mode defaults. The same suite runs in `pacvamp-repo sync-aur`.
 - Jail: an end-to-end test builds a PKGBUILD whose build function tries to reach the
   network; it fails under the default policy and succeeds with a grant.
 - Trust: fixture bundles and packslips for valid, wrong key, wrong digest, expired
@@ -870,7 +870,7 @@ tool-channel support in mise, which is a mise change.
 - Signer gate: a test build key and signer key in the container; a package without a
   valid provenance bundle is refused a repo signature.
 - End-to-end in an `archlinux:base-devel` container with a local repo produced by
-  `omapac-repo index`, a local AUR git fixture, and a fake snapshot store: add, drop,
+  `pacvamp-repo index`, a local AUR git fixture, and a fake snapshot store: add, drop,
   update, commit-drift denial under `-y`, lockfile round-trip on a second container,
   rollback to a snapshot.
 - Benchmarks: `present` and `search` under 50 ms cold so menu guards stay snappy.
@@ -899,7 +899,7 @@ Recorded 2026-09-03. Each states the decision and the reasoning in plain terms.
    added the repo on purpose and leaves the machine half-upgraded. Decision: warn by
    default, deny only when the repo is unsigned, and let paranoid mode or the managed
    floor deny all custom repos.
-5. Native engine and pacman's local database. If omapac's future native installer
+5. Native engine and pacman's local database. If pacvamp's future native installer
    writes exactly pacman's on-disk format, every Arch tool and pacman itself keep
    working as a fallback. Dropping that makes Omarchy a fork of Arch rather than a
    distro on Arch. Decision: compatibility is mandatory.
@@ -927,9 +927,9 @@ Recorded 2026-09-03. Each states the decision and the reasoning in plain terms.
     supports channels natively.
 13. Scope decides the installer (principle 10). Vendor-built user-scoped tools go
     through mise and the tool channel; system-scoped software, vendor-built or not,
-    goes through omapac. The OPR vendor pipeline and the tool channel share one
+    goes through pacvamp. The OPR vendor pipeline and the tool channel share one
     vetting core with two publishers, so OPR only keeps PKGBUILDs for the
-    system-scoped exceptions such as mise, omapac, browsers, and desktop apps.
+    system-scoped exceptions such as mise, pacvamp, browsers, and desktop apps.
 14. alpm-db writes its own parsers rather than wrapping Arch's `alpm-*` crates. The
     formats involved (`pacman.conf`, `desc` files, `.PKGINFO`, the version grammar)
     are small and stable, a direct port of pacman's C keeps behaviour identical

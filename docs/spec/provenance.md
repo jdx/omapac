@@ -38,7 +38,7 @@ An in-toto Statement v1 with the SLSA v1 provenance predicate:
   "predicateType": "https://slsa.dev/provenance/v1",
   "predicate": {
     "buildDefinition": {
-      "buildType": "https://omapac.dev/build/makepkg/v1",
+      "buildType": "https://pacvamp.com/build/makepkg/v1",
       "externalParameters": {
         "pkgbase": "mise-bin",
         "source": "https://github.com/omacom/omarchy-pkgs",
@@ -49,7 +49,7 @@ An in-toto Statement v1 with the SLSA v1 provenance predicate:
       ]
     },
     "runDetails": {
-      "builder": { "id": "omapac-repo attest 5A0A0B8B9C6D7E1F" },
+      "builder": { "id": "pacvamp-repo attest 5A0A0B8B9C6D7E1F" },
       "metadata": { "invocationId": "...", "finishedOn": "2026-09-03T06:00:00Z" }
     }
   }
@@ -67,7 +67,7 @@ An in-toto Statement v1 with the SLSA v1 provenance predicate:
 ## Producing it
 
 ```
-omapac-repo attest --key build.key --pkgbase mise-bin \
+pacvamp-repo attest --key build.key --pkgbase mise-bin \
   --source https://github.com/omacom/omarchy-pkgs --commit <sha> \
   --dependency <uri>=<sha256> ... <package files>
 ```
@@ -79,7 +79,7 @@ holds the repository GPG key checks the envelope before signing a package
 
 ## Transparency
 
-`omapac-repo attest --rekor <log>` uploads each envelope to a Rekor
+`pacvamp-repo attest --rekor <log>` uploads each envelope to a Rekor
 instance as a `dsse` entry, with the build key as the verifier in SPKI
 PEM, and stores the log's answer beside the package as
 `<package>.rekor.json`: the entry uuid, log index, log id, integration
@@ -90,7 +90,7 @@ compromised build host leaves a public trail.
 
 ## The signer gate
 
-The repository GPG key lives on a separate signer host. `omapac-repo sign`
+The repository GPG key lives on a separate signer host. `pacvamp-repo sign`
 runs there and signs a package only after:
 
 1. the provenance envelope beside it verifies with an allowlisted build
@@ -117,7 +117,7 @@ verified.
 
 ## Consuming it
 
-`omapac-repo index` verifies envelopes against the accepted build keys and
+`pacvamp-repo index` verifies envelopes against the accepted build keys and
 records the result. A client reads `evidence.build_provenance` from the
 signed index and may fetch the sidecar to display or re-verify the
 statement; the accepted keys travel in the index so the client needs no

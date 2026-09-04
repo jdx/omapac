@@ -4,10 +4,10 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use eyre::{Context as _, Result, bail};
-use omapac_cli_support::version::{BinInfo, Version};
 use packslip::create::{ArtifactInput, Request};
 use packslip::minisign::{PublicKey, SecretKey};
 use packslip::model::Source;
+use pacvamp_cli_support::version::{BinInfo, Version};
 use usage_rs::RunWith;
 
 const BIN: BinInfo = BinInfo {
@@ -349,9 +349,9 @@ impl RunWith<BinInfo> for Verify {
 fn main() -> Result<()> {
     color_eyre::install()?;
     let args: Vec<OsString> = std::env::args_os().collect();
-    omapac_cli_support::dump_usage_spec_if_requested(&args, || Cli::spec().to_kdl());
-    let argv = omapac_cli_support::argv(&args);
-    let cli = omapac_cli_support::unwrap_or_exit(Cli::spec(), &argv, Cli::parse_from_argv(&argv));
+    pacvamp_cli_support::dump_usage_spec_if_requested(&args, || Cli::spec().to_kdl());
+    let argv = pacvamp_cli_support::argv(&args);
+    let cli = pacvamp_cli_support::unwrap_or_exit(Cli::spec(), &argv, Cli::parse_from_argv(&argv));
     match cli.command {
         Some(command) => command.run_with(BIN),
         None => Ok(()),

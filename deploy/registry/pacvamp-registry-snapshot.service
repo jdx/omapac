@@ -1,0 +1,25 @@
+[Unit]
+Description=Cut and test a Pacvamp registry snapshot
+After=local-fs.target
+ConditionPathExists=/etc/pacvamp-registry/index.key
+ConditionPathExists=/srv/pacvamp/sync/pacvamp/os/x86_64/pacvamp.db
+
+[Service]
+Type=oneshot
+User=pacvamp-registry
+Group=pacvamp-registry
+EnvironmentFile=/etc/pacvamp-registry/registry.env
+ExecStart=/usr/local/lib/pacvamp-registry/snapshot
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+ReadWritePaths=/srv/pacvamp
+RestrictSUIDSGID=true

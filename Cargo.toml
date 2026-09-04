@@ -7,8 +7,8 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT"
-repository = "https://github.com/jdx/omapac"
-homepage = "https://github.com/jdx/omapac"
+repository = "https://github.com/jdx/pacvamp"
+homepage = "https://github.com/jdx/pacvamp"
 authors = ["Jeff Dickey <@jdx>"]
 
 [workspace.dependencies]
@@ -17,9 +17,9 @@ base64 = "0.22"
 blake2 = "0.10"
 ed25519-dalek = "2"
 getrandom = "0.3"
-omapac-cli-support = { path = "crates/cli-support" }
-omapac = { path = "crates/omapac" }
-omapac-policy = { path = "crates/omapac-policy" }
+pacvamp-cli-support = { path = "crates/cli-support" }
+pacvamp = { path = "crates/pacvamp" }
+pacvamp-policy = { path = "crates/pacvamp-policy" }
 p256 = { version = "0.13", features = ["ecdsa", "pem"] }
 packslip = { path = "crates/packslip" }
 ratatui = "0.30"
