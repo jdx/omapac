@@ -224,6 +224,134 @@ pub fn run_hooks(hooks: &[String], stage: &str) -> Result<()> {
     Ok(())
 }
 
+/// The update lock: one `omapac update` at a time per lock path. Held
+/// for the life of the value.
+pub struct UpdateLock {
+    _flock: nix::fcntl::Flock<std::fs::File>,
+    pub path: PathBuf,
+}
+
+impl UpdateLock {
+    /// Where the lock lives: an existing readable system lock is shared
+    /// even when this process cannot write it. Otherwise use the ledger
+    /// directory when writable, then the user's runtime or cache directory.
+    pub fn path(sysroot: Option<&Path>) -> PathBuf {
+        let system = crate::ledger::Ledger::path(sysroot)
+            .parent()
+            .map(|dir| dir.join("update.lock"))
+            .unwrap_or_else(|| PathBuf::from("/var/lib/omapac/update.lock"));
+        if std::fs::symlink_metadata(&system).is_ok_and(|metadata| {
+            metadata.file_type().is_file() && open_lock(&system, false, false).is_ok()
+        }) {
+            return system;
+        }
+        if let Some(dir) = system.parent() {
+            let _ = std::fs::create_dir_all(dir);
+            if dir.is_dir() && is_writable(dir) {
+                return system;
+            }
+        }
+        if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") {
+            let runtime = PathBuf::from(runtime);
+            if let Some(path) = user_lock_path(&runtime) {
+                return path;
+            }
+        }
+        crate::aur::cache_dir().join("update.lock")
+    }
+
+    /// Take the lock, waiting up to `wait` when another update holds it.
+    pub fn acquire(path: &Path, wait: Option<Duration>) -> Result<UpdateLock> {
+        use nix::fcntl::{Flock, FlockArg};
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).wrap_err_with(|| format!("creating {}", dir.display()))?;
+        }
+        let file = match open_lock(path, true, true) {
+            Ok(file) => file,
+            Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
+                open_lock(path, false, false)
+                    .wrap_err_with(|| format!("opening {}", path.display()))?
+            }
+            Err(err) => {
+                return Err(err).wrap_err_with(|| format!("opening {}", path.display()));
+            }
+        };
+        let started = Instant::now();
+        let mut file = Some(file);
+        loop {
+            match Flock::lock(file.take().expect("file"), FlockArg::LockExclusiveNonblock) {
+                Ok(flock) => {
+                    // The inode and its flock are the authority. Contents
+                    // cannot reliably identify a holder because read-only
+                    // participants cannot refresh them.
+                    let _ = flock.set_len(0);
+                    return Ok(UpdateLock {
+                        _flock: flock,
+                        path: path.to_path_buf(),
+                    });
+                }
+                Err((returned, nix::errno::Errno::EWOULDBLOCK)) => match wait {
+                    Some(limit) if started.elapsed() < limit => {
+                        std::thread::sleep(Duration::from_millis(250));
+                        file = Some(returned);
+                    }
+                    Some(limit) => bail!(
+                        "timed out after {:.1}s waiting for another omapac update",
+                        limit.as_secs_f64()
+                    ),
+                    None => {
+                        bail!("another omapac update is running; pass --wait to queue behind it")
+                    }
+                },
+                Err((_, err)) => bail!("locking {}: {err}", path.display()),
+            }
+        }
+    }
+}
+
+fn open_lock(path: &Path, writable: bool, create: bool) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(writable)
+        .create(create)
+        .truncate(false)
+        .custom_flags(nix::libc::O_NOFOLLOW)
+        .open(path)
+}
+
+fn user_lock_path(root: &Path) -> Option<PathBuf> {
+    if root.as_os_str().is_empty() || !root.is_absolute() {
+        return None;
+    }
+    let dir = root.join("omapac");
+    std::fs::create_dir_all(&dir).ok()?;
+    (dir.is_dir() && is_writable(&dir)).then(|| dir.join("update.lock"))
+}
+
+fn is_writable(dir: &Path) -> bool {
+    for attempt in 0..16 {
+        let probe = dir.join(format!(
+            ".omapac-lock-probe-{}-{attempt}",
+            std::process::id()
+        ));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&probe)
+        {
+            Ok(file) => {
+                drop(file);
+                return std::fs::remove_file(probe).is_ok();
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return false,
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -257,6 +385,67 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("still exists"), "{err}");
+    }
+
+    #[test]
+    fn update_lock_wait_reports_timeout() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("update.lock");
+        let _held = UpdateLock::acquire(&path, None).unwrap();
+        let err = UpdateLock::acquire(&path, Some(Duration::ZERO))
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(err.contains("timed out"), "{err}");
+        assert!(!err.contains("pass --wait"), "{err}");
+    }
+
+    #[test]
+    fn existing_read_only_system_lock_is_shared() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join("var/lib/omapac");
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("update.lock");
+        std::fs::write(&path, "system\n").unwrap();
+        let mut file_permissions = std::fs::metadata(&path).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut file_permissions, 0o444);
+        std::fs::set_permissions(&path, file_permissions).unwrap();
+        let mut directory_permissions = std::fs::metadata(&directory).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut directory_permissions, 0o555);
+        std::fs::set_permissions(&directory, directory_permissions).unwrap();
+
+        assert_eq!(UpdateLock::path(Some(root.path())), path);
+        let _held = UpdateLock::acquire(&path, None).unwrap();
+        let err = UpdateLock::acquire(&path, Some(Duration::ZERO))
+            .err()
+            .unwrap()
+            .to_string();
+
+        let mut directory_permissions = std::fs::metadata(&directory).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut directory_permissions, 0o755);
+        std::fs::set_permissions(&directory, directory_permissions).unwrap();
+        assert!(err.contains("timed out"), "{err}");
+        assert!(!err.contains("pid system"), "{err}");
+    }
+
+    #[test]
+    fn runtime_lock_path_must_be_absolute_and_usable() {
+        assert!(user_lock_path(Path::new("")).is_none());
+        assert!(user_lock_path(Path::new("relative/runtime")).is_none());
+
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            user_lock_path(dir.path()),
+            Some(dir.path().join("omapac/update.lock"))
+        );
+
+        let stale = dir.path().join("stale");
+        std::fs::write(&stale, "not a directory").unwrap();
+        assert!(user_lock_path(&stale).is_none());
+        assert!(
+            !is_writable(Path::new("/proc")),
+            "an actual write probe must reject a read-only virtual filesystem even as root"
+        );
     }
 
     #[test]

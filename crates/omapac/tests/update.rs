@@ -69,6 +69,7 @@ fn run_with_status(s: &Setup, args: &[&str], print: &str, status: i32) -> (i32, 
         .env("PATH", format!("{}:/usr/bin:/bin", s.rig.bin.display()))
         .env("HOME", &s.rig.home)
         .env_remove("XDG_CONFIG_HOME")
+        .env_remove("XDG_RUNTIME_DIR")
         .env("XDG_CACHE_HOME", s.rig.dir.path().join("cache"))
         .env("OMAPAC_AUR_RPC_BASE", &s.rpc)
         .env("OMAPAC_AUR_GIT_BASE", s.aur.base())
@@ -578,4 +579,68 @@ fn age_floor_prefers_the_index_publish_time() {
         out.contains("hold: pacman: core 7.1.0.r9.g54d9411-2 release age cannot be verified"),
         "{out}"
     );
+}
+
+#[test]
+fn only_one_update_runs_at_a_time() {
+    let s = setup(INFO.to_string());
+    // The rig's state directory is writable by the test user, so the
+    // lock lives beside the ledger as it does for root.
+    let lock = s.rig.root.join("var/lib/omapac/update.lock");
+    std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
+    // flock forks the sleeper, which inherits the lock; kill the group.
+    use std::os::unix::process::CommandExt as _;
+    let mut holder = Command::new("flock")
+        .arg(&lock)
+        .args(["sleep", "30"])
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    // Give flock a moment to take the lock.
+    for _ in 0..50 {
+        let probe = Command::new("flock")
+            .args(["-n", lock.to_str().unwrap(), "true"])
+            .status()
+            .unwrap();
+        if !probe.success() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let (code, _, err) = run(&s, &["update", "-n", "--no-aur"], UPGRADE);
+    assert_ne!(code, 0);
+    assert!(err.contains("another omapac update is running"), "{err}");
+    assert!(err.contains("pass --wait to queue"), "{err}");
+    Command::new("kill")
+        .arg("--")
+        .arg(format!("-{}", holder.id()))
+        .status()
+        .unwrap();
+    holder.wait().unwrap();
+    for _ in 0..100 {
+        let probe = Command::new("flock")
+            .args(["-n", lock.to_str().unwrap(), "true"])
+            .status()
+            .unwrap();
+        if probe.success() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    // Free again: the run proceeds using the same lock inode.
+    let (code, out, err) = run(&s, &["update", "-n", "--no-aur"], UPGRADE);
+    assert_eq!(code, 0, "{err}\n{out}");
+    assert!(lock.is_file());
+
+    // --wait queues behind a short hold.
+    let mut holder = Command::new("flock")
+        .arg(&lock)
+        .args(["sleep", "1"])
+        .spawn()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let (code, out, err) = run(&s, &["update", "-n", "--no-aur", "--wait"], UPGRADE);
+    assert_eq!(code, 0, "{err}\n{out}");
+    holder.wait().unwrap();
 }
