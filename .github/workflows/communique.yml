@@ -1,0 +1,33 @@
+name: communique
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  release-notes:
+    # Forks should not spend the maintainer's model credits or edit releases.
+    if: github.repository_owner == 'jdx'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Communiqué compares this release with the previous tag and needs
+          # the intervening commits and tags to write accurate notes.
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
+        with:
+          install_args: communique
+        env:
+          # Keep releases on the reviewed, locked generator version.
+          MISE_LOCKED: "1"
+      - name: Rewrite the release body with Communiqué
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: communique generate "$TAG" --github-release
