@@ -190,6 +190,11 @@ impl SecretKey {
         }
     }
 
+    /// The underlying Ed25519 key, for raw signatures such as DSSE.
+    pub fn signing_key(&self) -> &SigningKey {
+        &self.key
+    }
+
     /// Sign `message` the prehashed way (`ED`), which is what current
     /// minisign produces.
     pub fn sign(&self, message: &[u8], trusted_comment: &str) -> Sig {

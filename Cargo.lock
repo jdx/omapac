@@ -737,11 +737,13 @@ dependencies = [
  "alpm-db",
  "color-eyre",
  "eyre",
+ "jiff",
  "omapac-cli-support",
  "omapac-policy",
  "packslip",
  "serde",
  "serde_json",
+ "tempfile",
  "usage-rs",
 ]
 

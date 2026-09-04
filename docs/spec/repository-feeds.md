@@ -50,10 +50,12 @@ the repository's `Server` line in `pacman.conf`. pacman ignores them.
 - `packages` is keyed by file name. `published_at` is when the file was
   first served in this channel, which is what release-age floors use.
 - `sidecars` are files next to the package that a client may fetch:
-  pacman's `.sig`, the build provenance bundle, the chained vendor
-  packslip, scan statements.
-- `evidence` is what the repository claims; a client shows it and may
-  verify the sidecars behind it.
+  pacman's `.sig`, the build provenance envelope (`.provenance.json`, see
+  `provenance.md`), a sigstore bundle where one exists, the chained vendor
+  packslip (`.vendor.json`), scan statements (`.scan.json`).
+- `evidence` is what the repository claims; `build_provenance` is set
+  only when the envelope verified with an accepted build key at index
+  time. A client shows it and may verify the sidecars behind it.
 - `build_keys` are the build hosts whose provenance statements the
   repository accepts.
 
