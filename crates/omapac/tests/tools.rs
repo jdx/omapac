@@ -14,7 +14,7 @@ use packslip::minisign::SecretKey;
 struct Store {
     rig: Rig,
     base: String,
-    channel_key: SecretKey,
+    channel_pub: std::path::PathBuf,
 }
 
 fn build_store(tamper: bool) -> Store {
@@ -45,7 +45,7 @@ fn build_store(tamper: bool) -> Store {
         ),
         ("1.2.0", "2026-09-01T00:00:00Z", vec!["edge"], None),
     ] {
-        let name = format!("tool-{version}-linux-x64.tar.gz");
+        let name = format!("tool-{version}-linux-x64.bin");
         let path = work.join(&name);
         let content = format!("bytes of {version}");
         std::fs::write(&path, &content).unwrap();
@@ -147,10 +147,11 @@ fn build_store(tamper: bool) -> Store {
     ));
     routes.push(("/tools/index.json", index_text));
     let base = common::http::serve(routes);
+    let channel_pub = rig.dir.path().join("channel.pub");
     Store {
         rig,
         base,
-        channel_key,
+        channel_pub,
     }
 }
 
@@ -170,7 +171,7 @@ fn run_with_cache(s: &Store, args: &[&str], cache: &std::path::Path) -> (i32, St
         .arg("--base")
         .arg(&s.base)
         .arg("--pubkey")
-        .arg(s.rig.dir.path().join("channel.pub"))
+        .arg(&s.channel_pub)
         .args(args)
         .output()
         .unwrap();
@@ -268,7 +269,7 @@ fn fetch_verifies_the_chain() {
     assert_eq!(report["level"], "l2");
     assert_eq!(report["channels"][2], "stable");
     assert_eq!(
-        std::fs::read_to_string(dest.join("tool-1.0.0-linux-x64.tar.gz")).unwrap(),
+        std::fs::read_to_string(dest.join("tool-1.0.0-linux-x64.bin")).unwrap(),
         "bytes of 1.0.0"
     );
     let (_, out, _) = run(
@@ -350,7 +351,6 @@ fn fetch_verifies_the_chain() {
         err.contains("no artifact for macos-arm64; platforms: linux-x64"),
         "{err}"
     );
-    let _ = &s.channel_key;
 }
 
 #[test]
@@ -375,7 +375,7 @@ fn a_tampered_mirror_is_caught() {
         "{err}"
     );
     assert!(
-        !dest.join("tool-1.2.0-linux-x64.tar.gz").exists(),
+        !dest.join("tool-1.2.0-linux-x64.bin").exists(),
         "nothing written"
     );
 }
