@@ -27,6 +27,9 @@ pub struct Search {
     /// Print as JSON
     #[usage(short = 'J', long)]
     json: bool,
+    /// Choose hits in a picker and install them
+    #[usage(short = 'p', long)]
+    pick: bool,
 }
 
 /// What the AUR knows about a hit, beyond name and description.
@@ -83,9 +86,55 @@ impl RunWith<&App> for Search {
         if self.json {
             return print_json(&hits);
         }
+        if self.pick {
+            return pick_and_install(app, &hits, self.aur);
+        }
         print!("{}", render(&hits, crate::ledger::now()));
         Ok(())
     }
+}
+
+/// Open the picker over `hits` and install what was chosen.
+fn pick_and_install(app: &App, hits: &[Hit], aur: bool) -> Result<()> {
+    crate::tui::require_terminal("search --pick", "run without --pick")?;
+    if hits.is_empty() {
+        eprintln!("nothing matched");
+        return Ok(());
+    }
+    let items: Vec<crate::tui::Item> = hits
+        .iter()
+        .map(|hit| {
+            let mut note = hit.tier.to_string();
+            if hit.installed.is_some() {
+                note.push_str(", installed");
+            }
+            crate::tui::Item::new(
+                hit.name.clone(),
+                format!(
+                    "{} {}  {}",
+                    hit.version,
+                    hit.repo,
+                    hit.description.as_deref().unwrap_or_default()
+                ),
+                note,
+            )
+        })
+        .collect();
+    let Some(chosen) = crate::tui::pick("Install", items, true)? else {
+        eprintln!("nothing chosen");
+        return Ok(());
+    };
+    let packages: Vec<String> = chosen
+        .iter()
+        .map(|&i| {
+            if aur {
+                hits[i].name.clone()
+            } else {
+                format!("{}/{}", hits[i].repo, hits[i].name)
+            }
+        })
+        .collect();
+    super::install::Install::for_packages(packages, aur).run_with(app)
 }
 
 fn matches(terms: &[String], name: &str, description: Option<&str>) -> bool {
