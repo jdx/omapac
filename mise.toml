@@ -40,6 +40,32 @@ run = "hk run fix --all"
 description = "Update insta snapshots"
 run = "cargo insta test --accept --workspace --all-features"
 
+[tasks.render]
+description = "Regenerate everything derived from the code"
+depends = ["render:usage"]
+
+[tasks."render:usage"]
+description = "Render the CLI reference under docs/cli from the usage specs"
+depends = ["build"]
+shell = "bash -c"
+run = """
+set -euo pipefail
+for bin in omapac omapac-repo packslip; do
+  rm -rf "docs/cli/$bin"
+  mkdir -p "docs/cli/$bin"
+  "target/debug/$bin" __usage > "docs/cli/$bin.usage.kdl"
+  usage generate markdown -f "docs/cli/$bin.usage.kdl" -m --out-dir "docs/cli/$bin" --url-prefix "/cli/$bin"
+done
+"""
+
+[tasks."render:check"]
+description = "Fail when docs/cli is out of date"
+depends = ["render"]
+run = """
+git diff --exit-code -- docs/cli
+test -z "$(git ls-files --others --exclude-standard -- docs/cli)"
+"""
+
 [tasks.ci]
 description = "What CI runs"
-depends = ["lint", "build", "test"]
+depends = ["lint", "build", "test", "render:check"]

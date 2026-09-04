@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Every binary starts, reports its version, and renders help.
+set -euo pipefail
+for bin in omapac omapac-repo packslip; do
+	"$bin" version | grep -q "^$bin "
+	"$bin" --help | grep -q "Usage"
+	"$bin" __usage | grep -q "^name $bin"
+done

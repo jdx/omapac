@@ -1,0 +1,425 @@
+name omapac-repo
+bin omapac-repo
+version "0.1.0"
+author "Jeff Dickey <@jdx>"
+about "Server-side tooling for a repository that serves omapac clients"
+long_about #"""
+Server-side tooling for a repository that serves omapac clients
+
+Everything a repository needs to publish what omapac verifies: the signed index, build provenance, and (in later releases) the signer gate, the vendor pipeline, the AUR sync gate, verdicts, advisories, and snapshots. See PLAN.md in the omapac repository.
+"""#
+arg_required_else_help #true
+flag "-h --help" help="Print help" action=help builtin=#true
+flag "-V --version" help="Print version" action=version builtin=#true
+cmd advisories help="Add or remove advisories in the signed advisory feed" subcommand_required=#true {
+    long_help #"""
+Add or remove advisories in the signed advisory feed
+
+An advisory blocks or holds a pkgbase, narrowed to commits or versions when given. Clients cache the feed and deny AUR operations unattended once it is stale, so publish promptly and keep the feed reachable.
+"""#
+    flag "-f --feed" help="The advisories.json to update (created when missing)" global=#true {
+        arg <FEED>
+    }
+    flag "-k --key" help="The feed signing key" global=#true {
+        arg <KEY>
+    }
+    flag "-h --help" help="Print help" action=help builtin=#true
+    complete feed type=path
+    complete key type=path
+    cmd add help="Add an advisory" {
+        flag --id help="The advisory id, such as OPR-2026-0007" required=#true {
+            arg <ID>
+        }
+        flag --pkgbase required=#true {
+            arg <PKGBASE>
+        }
+        flag --commit help="Affected commits (prefixes match); none means every commit" var=#true {
+            arg <COMMIT>
+        }
+        flag --version help="Affected versions; none means every version" var=#true {
+            arg <VERSION>
+        }
+        flag --tier help="The tier the advisory applies to: aur, opr, arch, custom" {
+            arg <TIER>
+        }
+        flag --action help="block or hold" required=#true {
+            arg <ACTION>
+        }
+        flag --reason required=#true {
+            arg <REASON>
+        }
+        flag --url {
+            arg <URL>
+        }
+        flag "-h --help" help="Print help" action=help builtin=#true
+    }
+    cmd remove help="Remove an advisory by id" {
+        flag --id required=#true {
+            arg <ID>
+        }
+        flag "-h --help" help="Print help" action=help builtin=#true
+    }
+}
+cmd attest help="Write a build provenance envelope beside each package" {
+    long_help #"""
+Write a build provenance envelope beside each package
+
+Every package file gets `<file>.provenance.json`: an in-toto statement with the SLSA v1 provenance predicate naming the pkgbase, the PKGBUILD source and commit, and every source artifact with its digest, signed with the build key in a DSSE envelope. The index marks a package as having build provenance when the envelope verifies with an accepted build key.
+"""#
+    flag "-k --key" help="The build key (secret seed from `packslip keygen`)" required=#true {
+        arg <KEY>
+    }
+    flag --pkgbase help="The pkgbase that was built" required=#true {
+        arg <PKGBASE>
+    }
+    flag --source help="The PKGBUILD repository URL" required=#true {
+        arg <SOURCE>
+    }
+    flag --commit help="The PKGBUILD commit that was built" required=#true {
+        arg <COMMIT>
+    }
+    flag --dependency help="A source artifact as uri=sha256, repeatable" var=#true {
+        arg <DEPENDENCY>
+    }
+    flag --invocation help="An identifier for this build run; defaults to a timestamp" {
+        arg <INVOCATION>
+    }
+    flag --rekor help="Upload each envelope to this transparency log and store the entry beside the package (`https://rekor.sigstore.dev` for the public log)" {
+        arg <REKOR>
+    }
+    flag "-h --help" help="Print help" action=help builtin=#true
+    arg <PACKAGES>... help="Package files to attest"
+    complete key type=path
+}
+cmd index help="Write the signed index for a repository directory" {
+    long_help #"""
+Write the signed index for a repository directory
+
+Scans the directory for the database and every package file, records each file's digest and size, carries publish times over from the previous index for files already listed (new files get now), lists the sidecars present, verifies build provenance envelopes with the accepted build keys, and writes omapac-index.json plus its minisign signature with the sequence one above the previous index.
+"""#
+    flag --repo help="The repository name, as in pacman.conf" required=#true {
+        arg <REPO>
+    }
+    flag "-d --dir" help="The directory holding <repo>.db and the packages" required=#true {
+        arg <DIR>
+    }
+    flag "-k --key" help="The index signing key (secret seed from `packslip keygen`)" required=#true {
+        arg <KEY>
+    }
+    flag --build-key help="Accepted build key public files, repeatable" var=#true {
+        arg <BUILD_KEY>
+    }
+    flag --sequence help="Use this sequence instead of previous + 1" {
+        arg <SEQUENCE>
+    }
+    flag --stdout help="Print the index instead of writing it"
+    flag "-h --help" help="Print help" action=help builtin=#true
+    complete dir type=dir
+    complete key type=path
+}
+cmd sign help="Sign packages with the repository key after checking provenance" {
+    long_help #"""
+Sign packages with the repository key after checking provenance
+
+For every package in the directory without a .sig (or the packages given), verify its provenance envelope with an allowlisted build key and that the subject digest matches the file; optionally require a transparency log entry and consistency with the index. Only then run gpg to produce the detached signature pacman checks. A package that fails any check is refused and the command exits 1, so a build host compromise cannot produce a repository-signed package by itself.
+"""#
+    flag "-d --dir" help="The repository directory" required=#true {
+        arg <DIR>
+    }
+    flag --package help="Only these package files (relative to the directory)" var=#true {
+        arg <PACKAGE>
+    }
+    flag --build-key help="Allowlisted build key public files, repeatable" required=#true var=#true {
+        arg <BUILD_KEY>
+    }
+    flag --gpg-key help="The GPG key id to sign with" required=#true {
+        arg <GPG_KEY>
+    }
+    flag --gpg help="The gpg program" default=gpg {
+        arg <GPG>
+    }
+    flag --require-rekor help="Require a stored transparency log entry about the envelope"
+    flag --index help="Require the package to be listed with this digest in the index" {
+        arg <INDEX>
+    }
+    flag "-n --dry-run" help="Check and report without signing"
+    flag "-J --json" help="Print the report as JSON"
+    flag "-h --help" help="Print help" action=help builtin=#true
+    complete dir type=dir
+}
+cmd snapshot help="Cut, test, promote, hold, and prune snapshots" subcommand_required=#true {
+    long_help #"""
+Cut, test, promote, hold, and prune snapshots
+
+The mirror is a store of immutable snapshots; edge, rc and stable are pointers into it. Every change to a snapshot's release manifest is re-signed with the index key.
+"""#
+    flag "-s --store" help="The snapshot store root" global=#true {
+        arg <STORE>
+    }
+    flag "-k --key" help="The release manifest signing key" global=#true {
+        arg <KEY>
+    }
+    flag "-J --json" help="Print as JSON" global=#true
+    flag "-h --help" help="Print help" action=help builtin=#true
+    complete store type=dir
+    complete key type=path
+    cmd check help="Verify a snapshot's databases and package files" {
+        flag --id required=#true {
+            arg <ID>
+        }
+        flag --allow-missing help="Pass with package files missing (a partial mirror)"
+        flag "-h --help" help="Print help" action=help builtin=#true
+    }
+    cmd cut help="Copy a synced mirror into a new snapshot and point edge at it" {
+        flag --from help="The synced mirror: <from>/<repo>/os/<arch>/<repo>.db" required=#true {
+            arg <FROM>
+        }
+        flag --id help="The snapshot id; defaults to the current hour in UTC" {
+            arg <ID>
+        }
+        flag --opr-index help="The OPR index this snapshot goes with, for its sequence" {
+            arg <OPR_INDEX>
+        }
+        flag "-h --help" help="Print help" action=help builtin=#true
+        complete from type=dir
+        complete opr_index type=path
+    }
+    cmd hold help="Hold a snapshot and move pointers off it" {
+        flag --id required=#true {
+            arg <ID>
+        }
+        flag --reason required=#true {
+            arg <REASON>
+        }
+        flag "-h --help" help="Print help" action=help builtin=#true
+    }
+    cmd promote help="Move a channel pointer" {
+        flag --channel help="rc or stable" required=#true {
+            arg <CHANNEL>
+        }
+        flag --id help="Promote this snapshot; default the current rc when it soaked" {
+            arg <ID>
+        }
+        flag --soak help="How long rc must have soaked before it becomes stable" default="3d" {
+            arg <SOAK>
+        }
+        flag --expedited help="Mark the snapshot as an expedited security release"
+        flag "-h --help" help="Print help" action=help builtin=#true
+    }
+    cmd prune help="Delete snapshots past their retention" {
+        flag --retain default="90d" {
+            arg <RETAIN>
+        }
+        flag --stable-retain help="Retention for snapshots that were ever stable" default="365d" {
+            arg <STABLE_RETAIN>
+        }
+        flag "-n --dry-run" help="Report without deleting"
+        flag "-h --help" help="Print help" action=help builtin=#true
+    }
+    cmd status help="List snapshots and channel pointers" {
+        flag "-h --help" help="Print help" action=help builtin=#true
+    }
+    cmd test help="Run the test suite on a snapshot and record the result" {
+        flag --id required=#true {
+            arg <ID>
+        }
+        flag --suite help="The suite command; the built-in consistency check when omitted" {
+            arg <SUITE>
+        }
+        flag --allow-missing help="Let the built-in check pass with package files missing"
+        flag --commit help="Record the suite's git commit" {
+            arg <COMMIT>
+        }
+        flag --log-url help="Where the log was published" {
+            arg <LOG_URL>
+        }
+        flag "-h --help" help="Print help" action=help builtin=#true
+    }
+    cmd unhold help="Clear a hold; pointers do not move forward on their own" {
+        flag --id required=#true {
+            arg <ID>
+        }
+        flag "-h --help" help="Print help" action=help builtin=#true
+    }
+}
+cmd sync-aur help="Gate AUR commits before the repository pulls them" {
+    long_help #"""
+Gate AUR commits before the repository pulls them
+
+For each package, syncs the AUR checkout, reviews the remote head with the unattended policy against the commit last merged, and decides: unchanged, auto-merge (a clean version bump by a trusted maintainer), needs-review, or blocked (a finding the unattended policy denies). A static verdict per reviewed commit can be appended to the verdict feed. With --write, auto-merged commits are recorded in the state.
+"""#
+    flag "-s --state" help="The sync state file (created when missing)" required=#true {
+        arg <STATE>
+    }
+    flag --package help="Packages to sync; default every package in the state" var=#true {
+        arg <PACKAGE>
+    }
+    flag --trusted-maintainer help="AUR maintainers whose clean bumps merge on their own" var=#true {
+        arg <TRUSTED_MAINTAINER>
+    }
+    flag --cache help="Where AUR checkouts live" {
+        arg <CACHE>
+    }
+    flag --config help="The pacman.conf for similar-name checks against the repositories" {
+        arg <CONFIG>
+    }
+    flag --sysroot help="An alternative root for pacman's files" {
+        arg <SYSROOT>
+    }
+    flag --arch help="The architecture to evaluate sources for" default=x86_64 {
+        arg <ARCH>
+    }
+    flag --verdicts help="Append a static verdict per reviewed commit to this feed" {
+        arg <VERDICTS>
+    }
+    flag --advisories help="Advisory kill list to enforce while gating commits" {
+        arg <ADVISORIES>
+    }
+    flag "-k --key" help="The feed signing key (with --verdicts)" {
+        arg <KEY>
+    }
+    flag "-w --write" help="Record auto-merged commits in the state"
+    flag "-J --json" help="Print the results as JSON"
+    flag "-h --help" help="Print help" action=help builtin=#true
+    complete state type=path
+    complete cache type=dir
+    complete config type=path
+    complete sysroot type=dir
+    complete verdicts type=path
+    complete advisories type=path
+    complete key type=path
+}
+cmd tool-channel help="Vet vendor tool releases and publish them for mise" subcommand_required=#true {
+    long_help #"""
+Vet vendor tool releases and publish them for mise
+
+A tool.toml pins a vendor identity the way vendor.toml does for a package. publish verifies the release, mirrors the artifacts under tools/<tool>/<version>/ with the vendor's packslip and the channel's own provenance beside them, and appends the version to the signed tool index in the edge channel. promote and hold move versions between channels or pull them.
+"""#
+    flag "-s --store" help="The channel store root (the same store the snapshots use)" global=#true {
+        arg <STORE>
+    }
+    flag "-k --key" help="The channel signing key" global=#true {
+        arg <KEY>
+    }
+    flag "-J --json" help="Print as JSON" global=#true
+    flag "-h --help" help="Print help" action=help builtin=#true
+    complete store type=dir
+    complete key type=path
+    cmd hold help="Pull a version from every channel" {
+        flag --tool required=#true {
+            arg <TOOL>
+        }
+        flag --version required=#true {
+            arg <VERSION>
+        }
+        flag --reason required=#true {
+            arg <REASON>
+        }
+        flag "-h --help" help="Print help" action=help builtin=#true
+    }
+    cmd promote help="Add a version to rc or stable" {
+        flag --tool required=#true {
+            arg <TOOL>
+        }
+        flag --version required=#true {
+            arg <VERSION>
+        }
+        flag --channel help="rc or stable" required=#true {
+            arg <CHANNEL>
+        }
+        flag "-h --help" help="Print help" action=help builtin=#true
+    }
+    cmd publish help="Vet a release and publish it to edge" {
+        flag "-c --config" help="The tool.toml describing the vendor and artifacts" required=#true {
+            arg <CONFIG>
+        }
+        flag --version help="Publish this release instead of the newest eligible one" {
+            arg <VERSION>
+        }
+        flag --allow-downgrade help="Accept a lower evidence level or another key than last time"
+        flag "-h --help" help="Print help" action=help builtin=#true
+        complete config type=path
+    }
+    cmd status help="List tools and versions" {
+        flag "-h --help" help="Print help" action=help builtin=#true
+    }
+    cmd unhold help="Clear a hold" {
+        flag --tool required=#true {
+            arg <TOOL>
+        }
+        flag --version required=#true {
+            arg <VERSION>
+        }
+        flag "-h --help" help="Print help" action=help builtin=#true
+    }
+}
+cmd vendor help="Generate a vendor-built package from the vendor's packslip" {
+    long_help #"""
+Generate a vendor-built package from the vendor's packslip
+
+Reads vendor.toml beside the PKGBUILD, fetches the vendor's signed release list and picks the newest release older than the minimum release age (or --version), fetches and verifies that release's packslip against the pinned key, enforces the evidence floor and no-downgrade against vendor.lock, then rewrites pkgver, pkgrel and the checksum arrays in the PKGBUILD and writes <pkgbase>.vendor.json for the built package to ship. Without --write it reports what it would do.
+"""#
+    flag "-p --pkgdir" help="The package directory holding PKGBUILD and vendor.toml" default=. {
+        arg <PKGDIR>
+    }
+    flag --version help="Use this release instead of the newest eligible one" {
+        arg <VERSION>
+    }
+    flag --allow-downgrade help="Accept a lower evidence level than vendor.lock records"
+    flag "-w --write" help="Apply the changes"
+    flag "-J --json" help="Print the report as JSON"
+    flag "-h --help" help="Print help" action=help builtin=#true
+    complete pkgdir type=dir
+}
+cmd verdict help="Append a verdict to the signed verdict feed" {
+    long_help #"""
+Append a verdict to the signed verdict feed
+
+One verdict is one reviewer's judgement of an AUR recipe at a commit or of a built package by digest. Every reviewer, static rules, an antivirus scan, a human, or an AI, writes the same document; clients weight them by kind. The feed's sequence advances and it is re-signed.
+"""#
+    flag "-f --feed" help="The verdicts.json to update (created when missing)" required=#true {
+        arg <FEED>
+    }
+    flag "-k --key" help="The feed signing key" required=#true {
+        arg <KEY>
+    }
+    flag --pkgbase help="The AUR pkgbase the verdict is about (with --commit)" {
+        arg <PKGBASE>
+    }
+    flag --commit help="The commit reviewed" {
+        arg <COMMIT>
+    }
+    flag --sha256 help="The built package digest reviewed instead" {
+        arg <SHA256>
+    }
+    flag --kind help="The reviewer kind: static, av, ai, human, reproducible" {
+        arg <KIND>
+    }
+    flag --reviewer help="The reviewer id, such as a username or tool name" {
+        arg <REVIEWER>
+    }
+    flag --reviewer-version help="The reviewer's version, model, or rules hash" {
+        arg <REVIEWER_VERSION>
+    }
+    flag --verdict help="pass, flag, or block" {
+        arg <VERDICT>
+    }
+    flag --summary help="A one-line summary" default="" {
+        arg <SUMMARY>
+    }
+    flag --finding help="A finding id, repeatable" var=#true {
+        arg <FINDING>
+    }
+    flag --from help="Append every verdict in this JSON array instead" {
+        arg <FROM>
+    }
+    flag "-h --help" help="Print help" action=help builtin=#true
+    complete feed type=path
+    complete key type=path
+    complete from type=path
+}
+cmd version help="Show the version" {
+    alias v
+    flag "-J --json" help="Print as JSON"
+    flag "-h --help" help="Print help" action=help builtin=#true
+}

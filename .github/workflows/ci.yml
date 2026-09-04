@@ -40,3 +40,4 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: jdx/mise-action@v3
       - run: mise run lint
+      - run: mise run render:check
