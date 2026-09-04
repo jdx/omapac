@@ -1,0 +1,81 @@
+name: registry smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/registry-smoke.yml
+      - deploy/registry/**
+
+permissions:
+  contents: read
+
+jobs:
+  install-canary:
+    runs-on: ubuntu-latest
+    container: archlinux:base
+    timeout-minutes: 10
+    steps:
+      - name: Trust repository and install canary
+        shell: bash
+        run: |
+          set -euo pipefail
+          pacman -Syu --noconfirm ca-certificates curl gnupg
+          pacman-key --init
+
+          expected_repository_fingerprint='E5E3DDD7492AC50D42BFEEA8D9D6D838ADC420F3'
+          expected_index_key_id='8C2D61867298C6DC'
+          expected_index_sha256='963e54974176571313edafd82d3ec40926e514b05cfdb29a885e95466d8abfa1'
+
+          curl --fail --show-error --silent \
+            https://repo.pacvamp.com/keys/repository.asc \
+            -o /tmp/pacvamp-repository.asc
+          curl --fail --show-error --silent \
+            https://repo.pacvamp.com/keys/index.pub \
+            -o /tmp/pacvamp-index.pub
+
+          fingerprint="$(gpg --show-keys --with-colons \
+            /tmp/pacvamp-repository.asc |
+            awk -F: "\$1 == \"fpr\" { print \$10; exit }")"
+          test "$fingerprint" = "$expected_repository_fingerprint"
+
+          index_key_id="$(sed -n \
+            '1s/^untrusted comment: minisign public key //p' \
+            /tmp/pacvamp-index.pub)"
+          test "$index_key_id" = "$expected_index_key_id"
+          printf '%s  %s\n' \
+            "$expected_index_sha256" /tmp/pacvamp-index.pub |
+            sha256sum --check --strict
+
+          pacman-key --add /tmp/pacvamp-repository.asc
+          pacman-key --lsign-key "$fingerprint"
+
+          {
+            printf '\n[pacvamp]\n'
+            printf 'SigLevel = Required DatabaseRequired\n'
+            printf "Server = https://repo.pacvamp.com/channels/stable/pacvamp/os/\$arch\n"
+          } >>/etc/pacman.conf
+
+          pacman -Syu --noconfirm pacvamp pacvamp-registry-canary
+          pacman -Q pacvamp
+          pacman -Q pacvamp-registry-canary
+          pacvamp version
+          printf '%s  %s\n' \
+            "$expected_index_sha256" \
+            /usr/share/pacvamp/keys/pacvamp-registry.pub |
+            sha256sum --check --strict
+          pacvamp doctor --json
+          pacvamp search --json pacvamp
+          pacvamp info --no-aur --json pacvamp-registry-canary
+
+          pacvamp install --yes tree
+          pacman -Q tree
+          pacvamp remove --yes tree
+          if pacman -Q tree; then
+            echo 'tree is still installed after pacvamp remove' >&2
+            exit 1
+          fi
+
+          pacvamp search --aur --json paru
+          test "$(cat /usr/share/pacvamp/registry-canary)" = \
+            'pacvamp registry canary 0.0.1-1'

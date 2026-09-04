@@ -1,0 +1,7 @@
+d /etc/pacvamp-registry 0750 pacvamp-registry pacvamp-registry -
+d /var/lib/pacvamp-registry 0750 pacvamp-registry pacvamp-registry -
+d /var/lib/pacvamp-registry/gnupg 0700 pacvamp-registry pacvamp-registry -
+d /srv/pacvamp 0755 pacvamp-registry pacvamp-registry -
+d /srv/pacvamp/sync 0755 pacvamp-registry pacvamp-registry -
+d /srv/pacvamp/store 0755 pacvamp-registry pacvamp-registry -
+d /srv/pacvamp/store/keys 0755 pacvamp-registry pacvamp-registry -

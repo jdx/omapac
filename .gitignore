@@ -20,6 +20,11 @@
 *.lcov
 flamegraph.svg
 
+# documentation website
+/node_modules
+/docs/.vitepress/cache
+/docs/.vitepress/dist
+
 # local agent settings
 .claude/settings.local.json
 

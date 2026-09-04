@@ -1,17 +1,17 @@
-# Adopting omapac-repo in the Omarchy Package Repository
+# Adopting pacvamp-repo in the Omarchy Package Repository
 
 The server side, in the order that keeps each step independently
-useful. Every command is documented under [the CLI reference](../cli/omapac-repo/).
+useful. Every command is documented under [the CLI reference](../cli/pacvamp-repo/).
 
 ## 1. Keys
 
 ```bash
-packslip keygen -o /etc/omapac-repo/index.key      # feeds, release manifests, tool index
-packslip keygen -o /etc/omapac-repo/build.key      # the build host only
+packslip keygen -o /etc/pacvamp-repo/index.key      # feeds, release manifests, tool index
+packslip keygen -o /etc/pacvamp-repo/build.key      # the build host only
 ```
 
 Publish `index.pub` through `omarchy-keyring` (clients read
-`/usr/share/omapac/keys/*.pub`). Keep `build.key` on the build host
+`/usr/share/pacvamp/keys/*.pub`). Keep `build.key` on the build host
 (hardware-backed when possible) and the GPG repository key on a separate
 signer host.
 
@@ -20,8 +20,8 @@ signer host.
 After every `repo-add`, run
 
 ```bash
-omapac-repo index --repo omarchy --dir /srv/repo/omarchy/x86_64 \
-  --key /etc/omapac-repo/index.key --build-key /etc/omapac-repo/build.pub
+pacvamp-repo index --repo omarchy --dir /srv/repo/omarchy/x86_64 \
+  --key /etc/pacvamp-repo/index.key --build-key /etc/pacvamp-repo/build.pub
 ```
 
 Clients start verifying the database digest and rollback protection at
@@ -32,7 +32,7 @@ once; evidence fields fill in as the next steps land.
 On the build host, after `makepkg`:
 
 ```bash
-omapac-repo attest --key /etc/omapac-repo/build.key --pkgbase "$pkgbase" \
+pacvamp-repo attest --key /etc/pacvamp-repo/build.key --pkgbase "$pkgbase" \
   --source https://github.com/omacom/omarchy-pkgs --commit "$(git rev-parse HEAD)" \
   --dependency "<source url>=<sha256>" ... *.pkg.tar.zst --rekor https://rekor.sigstore.dev
 ```
@@ -40,8 +40,8 @@ omapac-repo attest --key /etc/omapac-repo/build.key --pkgbase "$pkgbase" \
 On the signer host, instead of a bare `gpg --detach-sign`:
 
 ```bash
-omapac-repo sign --dir /srv/repo/omarchy/x86_64 --build-key /etc/omapac-repo/build.pub \
-  --gpg-key 40DFC571 --require-rekor --index /srv/repo/omarchy/x86_64/omapac-index.json
+pacvamp-repo sign --dir /srv/repo/omarchy/x86_64 --build-key /etc/pacvamp-repo/build.pub \
+  --gpg-key 40DFC571 --require-rekor --index /srv/repo/omarchy/x86_64/pacvamp-index.json
 ```
 
 A package without accepted provenance is refused a signature.
@@ -52,7 +52,7 @@ Replace the checksum-fetching `sync-upstream` step with a `vendor.toml`
 per vendor package and
 
 ```bash
-omapac-repo vendor --pkgdir pkgs/mise-bin --write
+pacvamp-repo vendor --pkgdir pkgs/mise-bin --write
 ```
 
 which rewrites the PKGBUILD from the vendor's packslip and writes the
@@ -64,13 +64,13 @@ the old path until they publish one (`packslip create` is one CI step).
 Replace the bot that pulls AUR HEAD every six hours with
 
 ```bash
-omapac-repo sync-aur --state aur-state.json --trusted-maintainer <name>... \
-  --verdicts /srv/repo/omarchy/x86_64/verdicts.json --key /etc/omapac-repo/index.key --write
+pacvamp-repo sync-aur --state aur-state.json --trusted-maintainer <name>... \
+  --verdicts /srv/repo/omarchy/x86_64/verdicts.json --key /etc/pacvamp-repo/index.key --write
 ```
 
 Clean bumps by trusted maintainers merge on their own; everything else
-opens a review. Humans record decisions with `omapac-repo verdict`, and
-`omapac-repo advisories add` publishes a block or hold within minutes of
+opens a review. Humans record decisions with `pacvamp-repo verdict`, and
+`pacvamp-repo advisories add` publishes a block or hold within minutes of
 a compromise report.
 
 ## 6. Snapshots
@@ -78,9 +78,9 @@ a compromise report.
 Move the mirror to a snapshot store:
 
 ```bash
-omapac-repo snapshot --store /srv/mirror --key /etc/omapac-repo/index.key cut --from /srv/mirror-sync
-omapac-repo snapshot --store /srv/mirror --key /etc/omapac-repo/index.key test --id <id> --suite ./omarchy-train.sh
-omapac-repo snapshot --store /srv/mirror --key /etc/omapac-repo/index.key promote --channel stable
+pacvamp-repo snapshot --store /srv/mirror --key /etc/pacvamp-repo/index.key cut --from /srv/mirror-sync
+pacvamp-repo snapshot --store /srv/mirror --key /etc/pacvamp-repo/index.key test --id <id> --suite ./omarchy-train.sh
+pacvamp-repo snapshot --store /srv/mirror --key /etc/pacvamp-repo/index.key promote --channel stable
 ```
 
 Serve `channels/{edge,rc,stable}` as the mirror roots. Start with a
@@ -92,7 +92,7 @@ timed soak promote.
 For each agent CLI, a `tool.toml` and
 
 ```bash
-omapac-repo tool-channel --store /srv/mirror --key /etc/omapac-repo/index.key publish --config tools/claude/tool.toml
+pacvamp-repo tool-channel --store /srv/mirror --key /etc/pacvamp-repo/index.key publish --config tools/claude/tool.toml
 ```
 
 on a schedule, with `promote` following the package channels.

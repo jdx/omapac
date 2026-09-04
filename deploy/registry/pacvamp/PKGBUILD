@@ -1,0 +1,23 @@
+pkgname=pacvamp
+pkgver=@PACVAMP_PKGVER@
+pkgrel=1
+pkgdesc='Trust-focused package manager for pacman-based Linux distributions'
+arch=('x86_64')
+url='https://pacvamp.com'
+license=('MIT')
+depends=('gcc-libs' 'git' 'glibc' 'pacman' 'xz')
+optdepends=(
+	'base-devel: build AUR packages'
+	'sudo: apply transactions as a non-root user'
+)
+options=('!debug')
+source=('pacvamp' 'LICENSE')
+sha256sums=('@PACVAMP_SHA256@' '@LICENSE_SHA256@')
+
+package() {
+	install -Dm755 "$srcdir/pacvamp" "$pkgdir/usr/bin/pacvamp"
+	install -Dm644 "$startdir/pacvamp-registry.pub" \
+		"$pkgdir/usr/share/pacvamp/keys/pacvamp-registry.pub"
+	install -Dm644 "$srcdir/LICENSE" \
+		"$pkgdir/usr/share/licenses/pacvamp/LICENSE"
+}

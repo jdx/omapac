@@ -1,0 +1,11 @@
+[Unit]
+Description=Cut and test the daily Pacvamp registry snapshot
+
+[Timer]
+OnCalendar=*-*-* 06:10:00 UTC
+Persistent=true
+RandomizedDelaySec=5m
+Unit=pacvamp-registry-snapshot.service
+
+[Install]
+WantedBy=timers.target
