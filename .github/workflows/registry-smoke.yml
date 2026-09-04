@@ -60,8 +60,10 @@ jobs:
           pacman -Q pacvamp
           pacman -Q pacvamp-registry-canary
           pacvamp version
-          cmp /tmp/pacvamp-index.pub \
-            /usr/share/pacvamp/keys/pacvamp-registry.pub
+          printf '%s  %s\n' \
+            "$expected_index_sha256" \
+            /usr/share/pacvamp/keys/pacvamp-registry.pub |
+            sha256sum --check --strict
           pacvamp doctor --json
           pacvamp search --json pacvamp
           pacvamp info --no-aur --json pacvamp-registry-canary
