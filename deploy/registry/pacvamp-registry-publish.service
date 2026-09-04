@@ -1,5 +1,5 @@
 [Unit]
-Description=Publish the Pacvamp registry canary package
+Description=Publish Pacvamp packages
 After=local-fs.target
 ConditionPathExists=/etc/pacvamp-registry/index.key
 ConditionPathExists=/etc/pacvamp-registry/build.key
@@ -10,7 +10,7 @@ User=pacvamp-registry
 Group=pacvamp-registry
 Environment=HOME=/var/lib/pacvamp-registry
 EnvironmentFile=/etc/pacvamp-registry/registry.env
-ExecStart=/usr/local/lib/pacvamp-registry/publish-canary
+ExecStart=/usr/local/lib/pacvamp-registry/publish
 NoNewPrivileges=true
 PrivateDevices=true
 PrivateTmp=true

@@ -121,7 +121,7 @@ sudo -u pacvamp-registry env GNUPGHOME=/var/lib/pacvamp-registry/gnupg \
   sudo -u pacvamp-registry tee /srv/pacvamp/store/keys/repository.asc >/dev/null
 ```
 
-For the canary, all three keys live on this isolated host. Before publishing
+For the proof of concept, all three keys live on this isolated host. Before publishing
 anything users rely on, move the repository GPG key to a separate signer and
 put the index key in hardware-backed storage. Cross-publish both public-key
 fingerprints on the [Pacvamp trust-roots page](/trust); a key downloaded only
@@ -166,10 +166,7 @@ the VM.
 
 ## Client smoke test
 
-After checking their fingerprints against the [Pacvamp trust roots](/trust), import
-`https://repo.pacvamp.com/keys/repository.asc` into pacman's keyring and install
-`https://repo.pacvamp.com/keys/index.pub` as
-`/etc/pacvamp/keys/pacvamp-registry.pub`. Add:
+Follow the [installation guide](/install) to import the repository key and add:
 
 ```ini
 [pacvamp]
@@ -177,5 +174,7 @@ SigLevel = Required DatabaseRequired
 Server = https://repo.pacvamp.com/channels/stable/pacvamp/os/$arch
 ```
 
-Then install `pacvamp-registry-canary` on a disposable Arch VM and verify that
-`pacvamp info pacvamp-registry-canary` reports the repository evidence.
+Then install `pacvamp` and `pacvamp-registry-canary` on a disposable Arch VM.
+Run `pacvamp doctor`, exercise repository search and package transactions, and
+verify the AUR metadata path. The `registry smoke` workflow performs this journey
+against every registry deployment.

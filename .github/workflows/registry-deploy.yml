@@ -33,12 +33,25 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Build publisher binaries
-        run: cargo build --locked --release -p packslip -p pacvamp-repo
+        run: cargo build --locked --release -p packslip -p pacvamp -p pacvamp-repo
       - name: Build deployment bundle
         run: |
-          install -Dm755 target/release/packslip registry-bundle/bin/packslip
-          install -Dm755 target/release/pacvamp-repo registry-bundle/bin/pacvamp-repo
+          install -d registry-bundle
           cp -R deploy registry-bundle/
+          install -Dm755 target/release/packslip registry-bundle/bin/packslip
+          install -Dm755 target/release/pacvamp registry-bundle/deploy/registry/pacvamp/pacvamp
+          install -Dm644 LICENSE registry-bundle/deploy/registry/pacvamp/LICENSE
+          install -Dm755 target/release/pacvamp-repo registry-bundle/bin/pacvamp-repo
+          pkgver="0.1.0.r${GITHUB_RUN_NUMBER}.g${DEPLOY_SHA:0:12}"
+          package_sha256="$(sha256sum registry-bundle/deploy/registry/pacvamp/pacvamp |
+            cut -d ' ' -f 1)"
+          license_sha256="$(sha256sum registry-bundle/deploy/registry/pacvamp/LICENSE |
+            cut -d ' ' -f 1)"
+          sed -i \
+            -e "s/@PACVAMP_PKGVER@/$pkgver/" \
+            -e "s/@PACVAMP_SHA256@/$package_sha256/" \
+            -e "s/@LICENSE_SHA256@/$license_sha256/" \
+            registry-bundle/deploy/registry/pacvamp/PKGBUILD
           tar -C registry-bundle -czf registry-deploy.tar.gz .
       - name: Configure pinned SSH host
         env:

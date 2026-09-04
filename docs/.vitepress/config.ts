@@ -12,6 +12,7 @@ export default defineConfig({
   themeConfig: {
     nav: [
       { text: "Guide", link: "/" },
+      { text: "Install", link: "/install" },
       { text: "Trust", link: "/trust" },
       { text: "Client CLI", link: "/cli/pacvamp/" },
       { text: "Repository CLI", link: "/cli/pacvamp-repo/" },
@@ -22,6 +23,7 @@ export default defineConfig({
         text: "Get started",
         items: [
           { text: "Overview", link: "/" },
+          { text: "Install Pacvamp", link: "/install" },
           { text: "Trust roots", link: "/trust" },
           { text: "Run a registry", link: "/operations/registry" },
           { text: "Omarchy", link: "/adoption/omarchy" },

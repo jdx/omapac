@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+config="${PACVAMP_REGISTRY_CONFIG:-/etc/pacvamp-registry/registry.env}"
+if [[ -r $config ]]; then
+	set -a
+	# shellcheck source=/dev/null
+	source "$config"
+	set +a
+fi
+
+: "${PACVAMP_REGISTRY_ROOT:?set PACVAMP_REGISTRY_ROOT}"
+: "${PACVAMP_INDEX_KEY:?set PACVAMP_INDEX_KEY}"
+: "${PACVAMP_BUILD_KEY:?set PACVAMP_BUILD_KEY}"
+: "${PACVAMP_BUILD_PUB:?set PACVAMP_BUILD_PUB}"
+: "${PACVAMP_GPG_KEY:?set PACVAMP_GPG_KEY}"
+: "${PACVAMP_SOURCE_URL:?set PACVAMP_SOURCE_URL}"
+: "${PACVAMP_SOURCE_COMMIT:?set PACVAMP_SOURCE_COMMIT}"
+: "${PACVAMP_CANARY_DIR:?set PACVAMP_CANARY_DIR}"
+: "${PACVAMP_PACKAGE_DIR:?set PACVAMP_PACKAGE_DIR}"
+
+if [[ $PACVAMP_GPG_KEY == replace-* || $PACVAMP_SOURCE_COMMIT == replace-* ]]; then
+	echo "replace the placeholder values in registry.env before publishing" >&2
+	exit 1
+fi
+
+repo_dir="$PACVAMP_REGISTRY_ROOT/sync/pacvamp/os/x86_64"
+work_root="$(mktemp -d "${TMPDIR:-/tmp}/pacvamp-publish.XXXXXX")"
+lock="$PACVAMP_REGISTRY_ROOT/.publish.lock"
+
+cleanup() {
+	rm -rf "$work_root"
+}
+trap cleanup EXIT
+
+install -d "$PACVAMP_REGISTRY_ROOT"
+exec 9>"$lock"
+flock --nonblock 9 || {
+	echo "another registry publish is running" >&2
+	exit 1
+}
+
+install -d "$repo_dir"
+
+publish_package() {
+	local pkgbase="$1"
+	local source_dir="$2"
+	local build_dir="$work_root/$pkgbase"
+	local package filename published
+	local -a packages
+
+	install -d "$build_dir"
+	cp -R "$source_dir/." "$build_dir/"
+	(
+		cd "$build_dir"
+		makepkg --clean --cleanbuild --force --noconfirm
+	)
+
+	mapfile -t packages < <(
+		find "$build_dir" -maxdepth 1 -type f -name '*.pkg.tar.zst' -print
+	)
+	if [[ ${#packages[@]} -ne 1 ]]; then
+		echo "expected one $pkgbase package, found ${#packages[@]}" >&2
+		exit 1
+	fi
+
+	package="${packages[0]}"
+	filename="$(basename "$package")"
+	published="$repo_dir/$filename"
+	if [[ -e $published ]]; then
+		echo "$filename is already published"
+		return
+	fi
+	install -m 0644 "$package" "$published"
+
+	pacvamp-repo attest \
+		--key "$PACVAMP_BUILD_KEY" \
+		--pkgbase "$pkgbase" \
+		--source "$PACVAMP_SOURCE_URL" \
+		--commit "$PACVAMP_SOURCE_COMMIT" \
+		"$published"
+
+	pacvamp-repo sign \
+		--dir "$repo_dir" \
+		--package "$filename" \
+		--build-key "$PACVAMP_BUILD_PUB" \
+		--gpg-key "$PACVAMP_GPG_KEY"
+
+	repo-add \
+		--remove \
+		--include-sigs \
+		--sign \
+		--key "$PACVAMP_GPG_KEY" \
+		"$repo_dir/pacvamp.db.tar.zst" \
+		"$published"
+
+	echo "published $filename"
+}
+
+publish_package pacvamp-registry-canary "$PACVAMP_CANARY_DIR"
+publish_package pacvamp "$PACVAMP_PACKAGE_DIR"
+
+pacvamp-repo index \
+	--repo pacvamp \
+	--dir "$repo_dir" \
+	--key "$PACVAMP_INDEX_KEY" \
+	--build-key "$PACVAMP_BUILD_PUB"
+
+echo "updated the mutable repository index; cut a snapshot next"

@@ -56,7 +56,24 @@ jobs:
             printf "Server = https://repo.pacvamp.com/channels/stable/pacvamp/os/\$arch\n"
           } >>/etc/pacman.conf
 
-          pacman -Syu --noconfirm pacvamp-registry-canary
+          pacman -Syu --noconfirm pacvamp pacvamp-registry-canary
+          pacman -Q pacvamp
           pacman -Q pacvamp-registry-canary
+          pacvamp version
+          cmp /tmp/pacvamp-index.pub \
+            /usr/share/pacvamp/keys/pacvamp-registry.pub
+          pacvamp doctor --json
+          pacvamp search --json pacvamp
+          pacvamp info --no-aur --json pacvamp-registry-canary
+
+          pacvamp install --yes tree
+          pacman -Q tree
+          pacvamp remove --yes tree
+          if pacman -Q tree; then
+            echo 'tree is still installed after pacvamp remove' >&2
+            exit 1
+          fi
+
+          pacvamp search --aur --json paru
           test "$(cat /usr/share/pacvamp/registry-canary)" = \
             'pacvamp registry canary 0.0.1-1'
