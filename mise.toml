@@ -3,6 +3,7 @@ _.path = ["./target/debug"]
 
 [tools]
 cargo-insta = "latest"
+communique = "latest"
 hk = "latest"
 shellcheck = "latest"
 shfmt = "latest"

@@ -1,0 +1,18 @@
+context = """
+pacvamp is an experimental pacman frontend for Arch Linux and Omarchy. It is designed to install
+packages from official Arch repositories, third-party repositories, and the AUR through one
+command, with explicit trust tiers, commit-bound AUR builds, release-age policy, and stricter
+behavior for unattended operation. The repository also contains server-side tooling for the
+Omarchy package repository and an early implementation of the packslip signed release-manifest
+format.
+"""
+
+system_extra = """
+pacvamp is an experimental spike that is likely to be abandoned. Nothing in the repository is
+stable, supported, or intended for real use. Match that status: do not imply production readiness,
+broad adoption, or compatibility guarantees. Describe what changed and why, call out breaking or
+security-relevant changes plainly, and avoid marketing language.
+"""
+
+[defaults]
+emoji = false
