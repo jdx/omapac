@@ -12,6 +12,7 @@ registry_user=pacvamp-registry
 registry_root=/srv/pacvamp
 state_root=/var/lib/pacvamp-registry
 config_root=/etc/pacvamp-registry
+canary_root=/usr/local/lib/pacvamp-registry/canary
 
 for file in \
 	"$stage/bin/packslip" \
@@ -35,9 +36,10 @@ install -Dm755 "$stage/deploy/registry/bin/publish-canary" \
 	/usr/local/lib/pacvamp-registry/publish-canary
 install -Dm755 "$stage/deploy/registry/bin/snapshot" \
 	/usr/local/lib/pacvamp-registry/snapshot
-install -d /usr/local/lib/pacvamp-registry/canary
+install -d "$canary_root"
 install -m 0644 "$stage/deploy/registry/canary/PKGBUILD" \
-	/usr/local/lib/pacvamp-registry/canary/PKGBUILD
+	"$canary_root/PKGBUILD"
+test -f "$canary_root/PKGBUILD"
 for unit in \
 	pacvamp-registry-publish.service \
 	pacvamp-registry-snapshot.service \
@@ -71,6 +73,7 @@ config="$(mktemp "$config_root/.registry.env.XXXXXX")"
 	printf 'PACVAMP_GPG_KEY=%s\n' "$gpg_fingerprint"
 	printf 'PACVAMP_SOURCE_URL=%s\n' 'https://github.com/jdx/pacvamp'
 	printf 'PACVAMP_SOURCE_COMMIT=%s\n' "$source_commit"
+	printf 'PACVAMP_CANARY_DIR=%s\n' "$canary_root"
 	printf 'GNUPGHOME=%s\n' "$state_root/gnupg"
 } >"$config"
 chown "$registry_user:$registry_user" "$config"
