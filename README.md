@@ -6,8 +6,9 @@
 </p>
 
 > [!WARNING]
-> This is an experimental spike and is likely to be abandoned. Nothing here is
-> stable, supported, or intended for real use — do not depend on it.
+> This project is not ready to be reviewed and is still very much a work in
+> progress. Nothing here is stable, supported, or intended for real use — do not
+> depend on it.
 
 pacvamp is a pacman frontend with fangs: it installs from the official Arch
 repositories, third-party repositories such as the [Omarchy](https://omarchy.org) one,

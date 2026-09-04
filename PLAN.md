@@ -1,3 +1,15 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/wordmark-dark.svg">
+    <img alt="pacvamp" src="assets/wordmark.svg" width="420">
+  </picture>
+</p>
+
+> [!WARNING]
+> This project is not ready to be reviewed and is still very much a work in
+> progress. Nothing here is stable, supported, or intended for real use — do not
+> depend on it.
+
 # omapac
 
 omapac is the system package manager for [Omarchy](https://omarchy.org). It is a
