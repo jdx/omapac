@@ -79,10 +79,32 @@ impl App {
             return Ok(None);
         };
         let keyring = crate::trust::Keyring::load(self.paths.sysroot.as_deref())?;
+        if keyring.is_empty() {
+            // Nothing could verify a manifest, so do not fetch one.
+            return Ok(None);
+        }
         let cache = crate::trust::Cache::for_repo(&source.name, self.paths.sysroot.as_deref())?;
         let fetched: crate::trust::Fetched<Release> =
             crate::trust::fetch(&feed, "release.json", &keyring, &cache, offline)?;
         Ok(Some(fetched.value))
+    }
+
+    /// The release manifest for the repositories the host is actually using.
+    pub fn active_release(&self, host: &Host, offline: bool) -> Result<Option<Release>> {
+        let Some(id) = channel::current_pin(&self.mirrorlist_path()) else {
+            return self.release(host, offline);
+        };
+        let manifest = self.manifest()?;
+        let base = manifest
+            .settings
+            .channel_snapshot_base
+            .as_deref()
+            .ok_or_else(|| {
+                eyre::eyre!(
+                    "mirrorlist is pinned to {id}, but channel.snapshot_base is not configured"
+                )
+            })?;
+        self.snapshot_release(base, &id, offline).map(Some)
     }
 
     /// A snapshot's own release manifest from the snapshot store.
@@ -235,7 +257,7 @@ impl RunWith<&App> for Channel {
     }
 }
 
-fn describe(release: &Release) -> String {
+pub(crate) fn describe(release: &Release) -> String {
     let tests = match &release.tests {
         Some(t) => format!("tests {:?}", t.result).to_lowercase(),
         None => "untested".to_string(),

@@ -36,6 +36,9 @@ pub struct Info {
 #[derive(Debug, Serialize)]
 pub struct PackageInfo {
     pub name: String,
+    /// The source package, which is what the release train tests name.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub pkgbase: String,
     pub tier: Tier,
     pub repo: Option<String>,
     pub version: Option<String>,
@@ -57,6 +60,17 @@ pub struct PackageInfo {
     pub installed: Option<Installed>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub aur: Option<AurMeta>,
+    /// Where the package stands in the release train, for the Arch tier.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub train: Option<Train>,
+}
+
+/// The tested-versus-snapshot label from the channel's release manifest.
+#[derive(Debug, Clone, Serialize)]
+pub struct Train {
+    pub snapshot: String,
+    /// Whether the suite exercised this package's pkgbase.
+    pub tested: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -95,6 +109,18 @@ impl RunWith<&App> for Info {
             match found {
                 Some(found) => infos.push(found),
                 None => missing.push(name.clone()),
+            }
+        }
+        // The release train label for Arch-tier packages, from the cached
+        // release manifest when there is one.
+        if infos.iter().any(|i| matches!(i.tier, Tier::Arch))
+            && let Ok(Some(release)) = app.active_release(&host, true)
+        {
+            for found in infos.iter_mut().filter(|i| matches!(i.tier, Tier::Arch)) {
+                found.train = Some(Train {
+                    snapshot: release.id.clone(),
+                    tested: release.is_tested(&found.pkgbase),
+                });
             }
         }
         if self.json {
@@ -138,7 +164,9 @@ pub fn info(host: &Host, name: &str) -> Result<Option<PackageInfo>> {
         let p: &SyncPackage = package;
         return Ok(Some(PackageInfo {
             name: p.name.clone(),
+            pkgbase: p.base.clone().unwrap_or_else(|| p.name.clone()),
             tier: source.tier.clone(),
+            train: None,
             repo: Some(source.name.clone()),
             version: Some(p.version.clone()),
             description: p.desc.clone(),
@@ -165,7 +193,9 @@ pub fn info(host: &Host, name: &str) -> Result<Option<PackageInfo>> {
     };
     Ok(Some(PackageInfo {
         name: p.name.clone(),
+        pkgbase: p.base.clone().unwrap_or_else(|| p.name.clone()),
         tier: Tier::Foreign,
+        train: None,
         repo: None,
         version: Some(p.version.clone()),
         description: p.desc.clone(),
@@ -197,7 +227,9 @@ pub fn info_aur(host: &Host, rpc: &dyn Rpc, name: &str) -> Result<Option<Package
     let installed = host.installed_package(name)?.map(installed_info);
     Ok(Some(PackageInfo {
         name: p.name.clone(),
+        pkgbase: p.package_base.clone(),
         tier: Tier::Aur,
+        train: None,
         repo: Some("aur".to_string()),
         version: Some(p.version.clone()),
         description: p.description.clone(),
@@ -235,6 +267,16 @@ pub fn render(info: &PackageInfo, now: i64) -> String {
             None => format!("none [{}]", info.tier),
         },
     );
+    if let Some(train) = &info.train {
+        row(
+            "Release Train",
+            if train.tested {
+                format!("tested in snapshot {}", train.snapshot)
+            } else {
+                format!("in snapshot {}, not exercised by the suite", train.snapshot)
+            },
+        );
+    }
     row("Version", info.version.clone().unwrap_or_default());
     row("Description", info.description.clone().unwrap_or_default());
     row("URL", info.url.clone().unwrap_or_default());
