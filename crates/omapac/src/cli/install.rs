@@ -64,7 +64,46 @@ impl RunWith<&App> for Install {
         if self.json {
             return print_json(&plan);
         }
-        transaction::confirm_and_apply(&engine, &resolved, &plan, "install", self.yes, self.dry_run)
+        let performed = transaction::confirm_and_apply(
+            &engine,
+            &resolved,
+            &plan,
+            "install",
+            self.yes,
+            self.dry_run,
+        )?;
+        if !self.dry_run {
+            let target_names = tx_targets(&tx);
+            let patch = if performed {
+                let explicit = if self.as_deps {
+                    Vec::new()
+                } else {
+                    target_names
+                };
+                transaction::ledger_patch(&plan, &explicit, "install", false)
+            } else {
+                let ledger = app.ledger()?;
+                transaction::ledger_patch_for_installed(
+                    &host,
+                    &ledger,
+                    &target_names,
+                    !self.as_deps,
+                    "install",
+                )?
+            };
+            app.record(&patch)?;
+        }
+        Ok(())
+    }
+}
+
+/// The bare names a sync transaction targets.
+pub fn tx_targets(tx: &Transaction) -> Vec<String> {
+    match &tx.operation {
+        crate::engine::Operation::Install { targets, .. } => {
+            targets.iter().map(|t| t.name.clone()).collect()
+        }
+        _ => Vec::new(),
     }
 }
 

@@ -12,6 +12,7 @@ use serde::Serialize;
 use super::{check_rank, format_size, trust_rank};
 use crate::engine::{ApplyOpts, Change, Engine, ResolvedTx};
 use crate::host::Host;
+use crate::ledger::{Entry, Patch};
 use crate::resolve::Tier;
 use crate::ui;
 
@@ -21,6 +22,8 @@ pub struct TieredChange {
     pub name: String,
     pub version: String,
     pub repo: Option<String>,
+    /// Pacman reports packages removed by this transaction from `local`.
+    pub removal: bool,
     pub tier: Tier,
     pub download_size: Option<u64>,
 }
@@ -107,6 +110,7 @@ pub fn plan(host: &Host, resolved: &ResolvedTx, command: String) -> Plan {
 }
 
 fn tiered(host: &Host, change: &Change) -> TieredChange {
+    let removal = change.repo.as_deref() == Some("local");
     let tier = match change.repo.as_deref() {
         Some("local") | None => host
             .find_sync(&change.name)
@@ -120,6 +124,7 @@ fn tiered(host: &Host, change: &Change) -> TieredChange {
         name: change.name.clone(),
         version: change.version.clone(),
         repo: change.repo.clone().filter(|r| r != "local"),
+        removal,
         tier,
         download_size: change.download_size,
     }
@@ -176,15 +181,15 @@ pub fn confirm_and_apply(
     verb: &str,
     yes: bool,
     dry_run: bool,
-) -> Result<()> {
+) -> Result<bool> {
     print!("{}", render(verb, plan));
     std::io::stdout().flush()?;
     if plan.changes.is_empty() {
-        return Ok(());
+        return Ok(false);
     }
     if dry_run {
         println!("would run: {}", plan.command);
-        return Ok(());
+        return Ok(false);
     }
     if yes {
         if !plan.warnings.is_empty() {
@@ -206,7 +211,84 @@ pub fn confirm_and_apply(
             no_confirm: apply_no_confirm(plan, yes),
         },
     )?;
-    Ok(())
+    Ok(true)
+}
+
+/// The ledger patch for a plan that was performed: every installed change
+/// is recorded, explicit when it was a target, and every removal dropped.
+pub fn ledger_patch(plan: &Plan, targets: &[String], by: &str, removing: bool) -> Patch {
+    let mut patch = Patch::default();
+    let at = crate::ledger::now();
+    for change in &plan.changes {
+        if removing || change.removal {
+            patch.remove.push(change.name.clone());
+            continue;
+        }
+        patch.upsert.insert(
+            change.name.clone(),
+            Entry {
+                version: change.version.clone(),
+                tier: change.tier.clone(),
+                repo: change.repo.clone(),
+                aur_commit: None,
+                explicit: targets.iter().any(|t| t == &change.name),
+                by: by.to_string(),
+                at,
+            },
+        );
+    }
+    patch
+}
+
+/// Reconstruct ledger entries from packages that are already in the local
+/// database. This lets a repeated command repair a ledger write that failed
+/// after pacman had successfully changed the machine.
+pub fn ledger_patch_for_installed(
+    host: &Host,
+    ledger: &crate::ledger::Ledger,
+    names: &[String],
+    explicit: bool,
+    by: &str,
+) -> Result<Patch> {
+    let mut patch = Patch::default();
+    let at = crate::ledger::now();
+    let installed = host.installed()?;
+    let roots: std::collections::BTreeSet<&str> = names.iter().map(String::as_str).collect();
+    let mut pending = names.to_vec();
+    let mut seen = std::collections::BTreeSet::new();
+    while let Some(name) = pending.pop() {
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        let Some(package) = installed.iter().find(|package| package.name == name) else {
+            continue;
+        };
+        for dependency in &package.depends {
+            if let Some(provider) = installed
+                .iter()
+                .find(|candidate| candidate.satisfies(dependency))
+            {
+                pending.push(provider.name.clone());
+            }
+        }
+        if ledger.packages.contains_key(&name) {
+            continue;
+        }
+        let source = host.find_sync(&name)?.map(|(source, _)| source);
+        patch.upsert.insert(
+            name.clone(),
+            Entry {
+                version: package.version.clone(),
+                tier: source.map_or(Tier::Foreign, |source| source.tier.clone()),
+                repo: source.map(|source| source.name.clone()),
+                aur_commit: None,
+                explicit: roots.contains(name.as_str()) && explicit,
+                by: by.to_string(),
+                at,
+            },
+        );
+    }
+    Ok(patch)
 }
 
 /// Whether the eventual pacman command may suppress prompts. Interactive

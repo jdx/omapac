@@ -5,7 +5,7 @@ use std::io::Write as _;
 use eyre::{Result, bail};
 use usage_rs::RunWith;
 
-use super::converge::{Action, Diff};
+use super::converge::{Action, Diff, RunOpts};
 use super::{App, print_json};
 use crate::engine::Engine;
 use crate::manifest::{Manifest, ManifestPaths, PackageToml, Source, State, edit};
@@ -80,10 +80,25 @@ impl RunWith<&App> for Apply {
         let diff = Diff::compute(&host, &manifest)?;
         print!("{}", diff.render());
         if !diff.has_changes() {
+            if !self.dry_run {
+                diff.record_noops(app, &host, "apply")?;
+            }
             return Ok(());
         }
         let engine = app.engine()?;
-        diff.apply(&host, &manifest, &engine, self.yes, self.dry_run)
+        let mut committed = false;
+        diff.apply(
+            app,
+            &host,
+            &manifest,
+            &engine,
+            RunOpts {
+                by: "apply",
+                yes: self.yes,
+                dry_run: self.dry_run,
+            },
+            &mut committed,
+        )
     }
 }
 
@@ -179,6 +194,7 @@ impl RunWith<&App> for Add {
             Err(err) => return Err(err.into()),
         };
         let mut declared = Vec::new();
+        let mut committed = false;
         let result = (|| {
             let mut names = Vec::new();
             for spec in &self.packages {
@@ -206,12 +222,32 @@ impl RunWith<&App> for Add {
             let diff = Diff::compute(&host, &manifest)?.restricted_to(&names);
             if !diff.has_changes() {
                 print!("{}", diff.render());
+                if !self.dry_run {
+                    diff.record_noops(app, &host, "add")?;
+                }
                 return Ok(());
             }
             let engine = app.engine()?;
-            diff.apply(&host, &manifest, &engine, self.yes, self.dry_run)
+            diff.apply(
+                app,
+                &host,
+                &manifest,
+                &engine,
+                RunOpts {
+                    by: "add",
+                    yes: self.yes,
+                    dry_run: self.dry_run,
+                },
+                &mut committed,
+            )
         })();
         if let Err(err) = result {
+            if committed {
+                for name in declared {
+                    println!("declared {name} in {}", paths.user.display());
+                }
+                return Err(err);
+            }
             let restore = match previous {
                 Some(bytes) => std::fs::write(&paths.user, bytes),
                 None => std::fs::remove_file(&paths.user),
@@ -277,7 +313,9 @@ impl RunWith<&App> for Drop {
         }
         let host = app.host()?;
         let manifest = app.manifest()?;
+        let ledger = (!self.dry_run).then(|| app.ledger()).transpose()?;
         let mut removals = Vec::new();
+        let mut stale = Vec::new();
         for target in &packages {
             let name = &target.name;
             // Still declared present by a lower layer: keep it.
@@ -289,10 +327,21 @@ impl RunWith<&App> for Drop {
             }
             if host.installed_package(name)?.is_some() {
                 removals.push(name.clone());
+            } else if ledger
+                .as_ref()
+                .is_some_and(|ledger| ledger.packages.contains_key(name))
+            {
+                stale.push(name.clone());
             }
         }
         if removals.is_empty() {
             println!("nothing to remove");
+            if !stale.is_empty() {
+                app.record(&crate::ledger::Patch {
+                    remove: stale,
+                    ..Default::default()
+                })?;
+            }
             return Ok(());
         }
         let engine = app.engine()?;
@@ -323,13 +372,23 @@ impl RunWith<&App> for Drop {
                 },
             )
             .display();
-        super::transaction::confirm_and_apply(
+        let performed = super::transaction::confirm_and_apply(
             &engine,
             &resolved,
             &plan,
             "remove",
             self.yes,
             self.dry_run,
-        )
+        )?;
+        if !self.dry_run {
+            let mut patch = if performed {
+                super::transaction::ledger_patch(&plan, &[], "drop", true)
+            } else {
+                Default::default()
+            };
+            patch.remove.extend(stale);
+            app.record(&patch)?;
+        }
+        Ok(())
     }
 }
