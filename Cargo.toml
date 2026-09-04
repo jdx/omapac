@@ -13,6 +13,10 @@ authors = ["Jeff Dickey <@jdx>"]
 
 [workspace.dependencies]
 alpm-db = { path = "crates/alpm-db" }
+base64 = "0.22"
+blake2 = "0.10"
+ed25519-dalek = "2"
+getrandom = "0.3"
 omapac-cli-support = { path = "crates/cli-support" }
 omapac-policy = { path = "crates/omapac-policy" }
 packslip = { path = "crates/packslip" }
@@ -21,6 +25,7 @@ color-eyre = "0.6"
 eyre = "0.6"
 indexmap = { version = "2", features = ["serde"] }
 nix = { version = "0.31", features = ["user"] }
+schemars = "1"
 insta = { version = "1", features = ["filters", "json"] }
 jiff = "0.2"
 landlock = "0.4"
