@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# omapac against a real pacman inside archlinux:base-devel. The binary is
+# copied in with `docker cp`, so it works with a remote daemon too. Skips
+# when docker or the image is unavailable, unless OMAPAC_E2E_CONTAINER=1
+# insists.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+image="${OMAPAC_E2E_IMAGE:-archlinux:base-devel}"
+insist="${OMAPAC_E2E_CONTAINER:-}"
+skip() {
+	if [ -n "$insist" ]; then
+		echo "    $1" >&2
+		exit 1
+	fi
+	echo "    skipped: $1"
+	exit 0
+}
+command -v docker >/dev/null 2>&1 || skip "no docker"
+timeout 20 docker info >/dev/null 2>&1 || skip "docker daemon unavailable"
+docker image inspect "$image" >/dev/null 2>&1 || docker pull "$image" >/dev/null 2>&1 || skip "image $image unavailable"
+[ -x target/debug/omapac ] || skip "target/debug/omapac not built"
+
+name="omapac-e2e-$$"
+cleanup() { docker rm -f "$name" >/dev/null 2>&1 || true; }
+trap cleanup EXIT
+docker create --name "$name" "$image" sleep 600 >/dev/null
+docker cp target/debug/omapac "$name:/usr/local/bin/omapac"
+docker start "$name" >/dev/null
+run() { docker exec "$name" bash -c "$1"; }
+# Capture, then match: grep -q closing a pipe early would turn into a
+# SIGPIPE failure under pipefail.
+expect() {
+	local pattern="$1" out
+	out=$(run "$2")
+	grep -qE -- "$pattern" <<<"$out" || {
+		echo "expected /$pattern/ in output of: $2" >&2
+		echo "$out" >&2
+		return 1
+	}
+}
+
+# Bring the rolling image fully current before any real package installs.
+run "pacman -Syu --noconfirm >/dev/null"
+
+# Read-only commands against the real local and sync databases.
+expect '^omapac ' "omapac version"
+expect 'ok    pacman' "omapac doctor"
+expect '"name": "pacman"' "omapac search --json pacman"
+expect 'Repository       core \[arch\]' "omapac info pacman"
+run "omapac present pacman"
+if run "omapac present definitely-not-a-package"; then
+	echo "present should fail for a missing package" >&2
+	exit 1
+fi
+expect '^base-devel ' "omapac list --explicit"
+run "omapac missing definitely-not-a-package"
+if run "omapac missing pacman definitely-not-a-package"; then
+	echo "missing should fail when any named package is installed" >&2
+	exit 1
+fi
+
+# Planning against the real resolver: the exact pacman command is shown
+# and nothing changes.
+candidate=$(run "comm -23 <(pacman -Slq | sort -u) <(pacman -Qq | sort -u) | head -n1")
+[ -n "$candidate" ] || skip "no uninstalled sync package available"
+expect 'would run: /usr/bin/pacman -S --noconfirm --needed -- ' "omapac install -n '$candidate'"
+expect 'would run:|nothing to upgrade|up to date' "omapac update -n --no-aur"
+before=$(run "pacman -Q | wc -l")
+
+# A real install and removal of a small package, as root inside the
+# container, through the guard variable omapac sets.
+expect 'installing tree' "omapac install -y tree"
+run "pacman -Q tree" >/dev/null
+run "omapac remove -y tree" >/dev/null
+after=$(run "pacman -Q | wc -l")
+[ "$before" = "$after" ]
+
+# The manifest round trip: add with a dry run declares without
+# converging, plan reports the gap, apply closes it.
+run "omapac add -n tree"
+run "omapac plan --detailed-exitcode; test \$? = 2"
+expect 'tree' "omapac apply -y"
+run "pacman -Q tree" >/dev/null
+expect 'tree' "omapac status"
+# drop removes the declaration and the package; apply alone would leave
+# an undeclared package where it is.
+run "omapac drop -y tree" >/dev/null
+if run "pacman -Q tree" >/dev/null 2>&1; then
+	echo "tree should be gone after drop" >&2
+	exit 1
+fi
+run "omapac audit --offline" >/dev/null 2>&1 || true
