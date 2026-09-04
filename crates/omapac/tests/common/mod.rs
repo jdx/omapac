@@ -2,6 +2,8 @@
 
 #![allow(dead_code)]
 
+pub mod http;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
