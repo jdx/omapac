@@ -455,3 +455,127 @@ fn prune_orphans_and_pacnew_command() {
         "{err}"
     );
 }
+
+/// A signed index for [core] that publishes pacman's newer build at `at`.
+fn core_index(key: &packslip::minisign::SecretKey, sequence: u64, at: &str) -> String {
+    let body = format!(
+        r#"{{"version":1,"repo":"core","sequence":{sequence},"generated_at":"2026-09-01T00:00:00Z","db":{{"file":"core.db","sha256":""}},
+            "packages":{{"pacman-7.1.0.r9.g54d9411-2-x86_64.pkg.tar.zst":{{"sha256":"","size":991730,"published_at":"{at}"}}}}}}"#
+    );
+    let sig = key.sign(body.as_bytes(), "feed").to_file();
+    common::http::serve(vec![
+        ("/core/os/x86_64/omapac-index.json.minisig", sig),
+        ("/core/os/x86_64/omapac-index.json", body),
+    ])
+}
+
+#[test]
+fn age_floor_prefers_the_index_publish_time() {
+    // pacman's newer core build has a build date in May 2026. With a
+    // 30-day floor, the build date alone would let it through; an index
+    // saying it was published yesterday holds it. Conversely, an index
+    // saying it was published two years ago lifts a one-year floor that
+    // the build date alone would apply.
+    let key = packslip::minisign::SecretKey::from_seed([42u8; 32]);
+    let recent = jiff::Timestamp::from_second(omapac::ledger::now() - 86_400)
+        .unwrap()
+        .to_string();
+    for (published, floor, expect_hold) in [
+        (recent.as_str(), "30d", true),
+        ("2024-01-01T00:00:00Z", "365d", false),
+    ] {
+        let s = setup(INFO.to_string());
+        s.rig
+            .write_root("/etc/omapac/keys/omarchy.pub", &key.public_key().to_file());
+        let base = core_index(&key, 1, published);
+        let conf = common::DEFAULT_CONF.replace(
+            "Server = https://m/$repo/os/$arch",
+            &format!("Server = {base}/$repo/os/$arch"),
+        );
+        s.rig.write_root("/etc/pacman.conf", &conf);
+        std::fs::write(
+            s.rig.home.join(".config/omapac/omapac.toml"),
+            format!("[policy]\naur.jail = false\nrepo.min_release_age.arch = \"{floor}\"\n"),
+        )
+        .unwrap();
+        let (code, out, err) = run(&s, &["update", "-n", "--no-aur"], UPGRADE);
+        assert_eq!(code, 0, "{err}\n{out}");
+        assert!(
+            !s.rig.root.join("var/lib/omapac/state.json").exists(),
+            "dry-run must not record the index sequence"
+        );
+        assert!(!err.contains("index unavailable"), "{err}");
+        if expect_hold {
+            assert!(
+                out.contains("hold: pacman: core 7.1.0.r9.g54d9411-2 was published"),
+                "{out}"
+            );
+        } else {
+            assert!(!out.contains("hold: pacman"), "{out}");
+        }
+    }
+    // Without the index the build date decides, with a note.
+    let s = setup(INFO.to_string());
+    s.rig
+        .write_root("/etc/omapac/keys/omarchy.pub", &key.public_key().to_file());
+    std::fs::write(
+        s.rig.home.join(".config/omapac/omapac.toml"),
+        "[policy]\naur.jail = false\nrepo.min_release_age.arch = \"365d\"\n",
+    )
+    .unwrap();
+    let dead = common::http::serve(Vec::new());
+    let conf = common::DEFAULT_CONF.replace(
+        "Server = https://m/$repo/os/$arch",
+        &format!("Server = {dead}/$repo/os/$arch"),
+    );
+    s.rig.write_root("/etc/pacman.conf", &conf);
+    let (code, out, err) = run(&s, &["update", "-n", "--no-aur"], UPGRADE);
+    assert_eq!(code, 0, "{err}\n{out}");
+    assert!(
+        err.contains("note: [core] index unavailable, release ages use build dates"),
+        "{err}"
+    );
+    assert!(
+        out.contains("hold: pacman: core 7.1.0.r9.g54d9411-2 was built"),
+        "{out}"
+    );
+
+    // A validly signed replay below the ledger floor fails closed instead of
+    // discarding index publish times and accepting the old build date.
+    let s = setup(INFO.to_string());
+    s.rig
+        .write_root("/etc/omapac/keys/omarchy.pub", &key.public_key().to_file());
+    s.rig.write_root(
+        "/var/lib/omapac/state.json",
+        r#"{"schema":1,"index_sequences":{"core":2}}"#,
+    );
+    std::fs::write(
+        s.rig.home.join(".config/omapac/omapac.toml"),
+        "[policy]\naur.jail = false\nrepo.min_release_age.arch = \"30d\"\n",
+    )
+    .unwrap();
+    // Seed an authenticated qualifying cache entry, then replay an older
+    // signed network index. Falling back to the cache must still mark the
+    // refreshed repository unsafe for packages the cache does not list.
+    let current = core_index(&key, 2, "2024-01-01T00:00:00Z");
+    let conf = common::DEFAULT_CONF.replace(
+        "Server = https://m/$repo/os/$arch",
+        &format!("Server = {current}/$repo/os/$arch"),
+    );
+    s.rig.write_root("/etc/pacman.conf", &conf);
+    let (code, _, err) = run(&s, &["update", "-n", "--no-aur"], UPGRADE);
+    assert_eq!(code, 0, "{err}");
+    let replay = core_index(&key, 1, "2024-01-01T00:00:00Z");
+    let conf = common::DEFAULT_CONF.replace(
+        "Server = https://m/$repo/os/$arch",
+        &format!("Server = {replay}/$repo/os/$arch"),
+    );
+    s.rig.write_root("/etc/pacman.conf", &conf);
+    let (code, out, err) = run(&s, &["update", "-n", "--no-aur"], UPGRADE);
+    assert_eq!(code, 0, "{err}\n{out}");
+    assert!(err.contains("stale or rolled-back index"), "{err}");
+    assert!(
+        out.contains("hold: pacman: core 7.1.0.r9.g54d9411-2 release age cannot be verified"),
+        "{out}"
+    );
+}

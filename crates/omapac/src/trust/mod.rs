@@ -224,6 +224,8 @@ pub struct Fetched<T> {
     pub fresh: bool,
     pub fetched_at: std::time::SystemTime,
     pub key_id: String,
+    /// Why a network fetch fell back to this authenticated cache entry.
+    pub fallback_error: Option<String>,
 }
 
 /// Fetch, verify, and cache one feed. Falls back to the cache when the
@@ -258,6 +260,7 @@ pub fn fetch_checked<T: serde::de::DeserializeOwned>(
         );
     }
     let cached = cache.read(name);
+    let mut fallback_error = None;
     if !offline {
         let network = (|| -> Result<(Vec<u8>, String)> {
             let bytes = http_get(&source.url(name))?;
@@ -285,11 +288,14 @@ pub fn fetch_checked<T: serde::de::DeserializeOwned>(
                 fresh: true,
                 fetched_at: std::time::SystemTime::now(),
                 key_id,
+                fallback_error: None,
             })
         }) {
             Ok(fetched) => return Ok(fetched),
             Err(err) if cached.is_some() && !err.to_string().contains("different repository") => {
-                eprintln!("warning: {name}: {err:#}; using the cached copy");
+                let detail = format!("{err:#}");
+                eprintln!("warning: {name}: {detail}; using the cached copy");
+                fallback_error = Some(detail);
             }
             Err(err) => return Err(err.wrap_err(format!("fetching {name} from {}", source.base))),
         }
@@ -307,6 +313,7 @@ pub fn fetch_checked<T: serde::de::DeserializeOwned>(
         fresh: false,
         fetched_at,
         key_id,
+        fallback_error,
     })
 }
 
