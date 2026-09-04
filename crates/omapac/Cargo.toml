@@ -9,6 +9,9 @@ repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
 
+[features]
+test-pacman = []
+
 [lib]
 name = "omapac"
 path = "src/lib.rs"
@@ -16,6 +19,11 @@ path = "src/lib.rs"
 [[bin]]
 name = "omapac"
 path = "src/main.rs"
+
+[[test]]
+name = "transactions"
+path = "tests/transactions.rs"
+required-features = ["test-pacman"]
 
 [dependencies]
 alpm-db.workspace = true

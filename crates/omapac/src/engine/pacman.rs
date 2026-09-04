@@ -39,6 +39,10 @@ impl PacmanCli {
     /// Find pacman, preferring Arch's root-owned system location. Falling
     /// back to PATH keeps development fixtures and nonstandard sysroots usable.
     pub fn detect() -> Result<PacmanCli> {
+        #[cfg(all(debug_assertions, feature = "test-pacman"))]
+        if let Some(pacman) = std::env::var_os("OMAPAC_TEST_PACMAN") {
+            return Ok(PacmanCli::with_binary(pacman));
+        }
         let system = PathBuf::from("/usr/bin/pacman");
         let pacman = if system.is_file() {
             system

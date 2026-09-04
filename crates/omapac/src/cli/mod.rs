@@ -9,9 +9,27 @@ use crate::host::{Host, HostPaths};
 
 mod doctor;
 mod info;
+mod install;
 mod list;
 mod present;
+mod remove;
 mod search;
+mod transaction;
+
+fn check_rank(check: alpm_db::Check) -> u8 {
+    match check {
+        alpm_db::Check::Never => 0,
+        alpm_db::Check::Optional => 1,
+        alpm_db::Check::Required => 2,
+    }
+}
+
+fn trust_rank(trust: alpm_db::Trust) -> u8 {
+    match trust {
+        alpm_db::Trust::TrustAll => 0,
+        alpm_db::Trust::TrustedOnly => 1,
+    }
+}
 
 const LONG_ABOUT: &str = "omapac installs, removes, and updates packages from the Arch mirror, \
 the Omarchy Package Repository, and the AUR through one command, with trust tiers, \
@@ -48,9 +66,11 @@ pub struct Cli {
 enum Commands {
     Doctor(doctor::Doctor),
     Info(info::Info),
+    Install(install::Install),
     List(list::List),
     Missing(present::Missing),
     Present(present::Present),
+    Remove(remove::Remove),
     Search(search::Search),
     Version(Version),
 }
