@@ -1,6 +1,6 @@
 use std::fmt::Write as _;
 
-use eyre::{Result, bail};
+use eyre::{Context as _, Result, bail};
 use omapac_policy::Decision;
 use usage_rs::RunWith;
 
@@ -294,6 +294,7 @@ impl App {
             .options
             .arch()
             .unwrap_or_else(|| alpm_db::conf::host_arch().to_string());
+        let feeds = self.feeds(&host, &manifest.settings)?;
         let request = Request {
             host: &host,
             rpc: &rpc,
@@ -305,9 +306,80 @@ impl App {
             pinned,
             interactive,
             arch: &arch,
+            advisories: feeds.as_ref().and_then(|f| f.0.as_ref()),
+            verdicts: feeds.as_ref().and_then(|f| f.1.as_ref()),
         };
         let reviewed = review(name, &request)?;
         Ok((reviewed, lock))
+    }
+}
+
+impl App {
+    /// The advisory and verdict feeds of the first `opr` repository, per
+    /// `trust.advisories`: `off` never fetches, `on` warns and continues
+    /// when they cannot be had, `required` fails.
+    pub fn feeds(
+        &self,
+        host: &crate::host::Host,
+        settings: &crate::manifest::Settings,
+    ) -> Result<
+        Option<(
+            Option<crate::trust::Advisories>,
+            Option<crate::trust::Verdicts>,
+        )>,
+    > {
+        use crate::manifest::settings::Advisories as Mode;
+        if settings.trust_advisories == Mode::Off {
+            return Ok(None);
+        }
+        let unavailable = |detail: String| {
+            if settings.trust_advisories == Mode::Required {
+                bail!("trust.advisories is required: {detail}");
+            }
+            eprintln!("warning: advisory feeds unavailable: {detail}");
+            Ok(None)
+        };
+        let Some(source) = host
+            .sources
+            .iter()
+            .find(|s| matches!(s.tier, crate::resolve::Tier::Opr))
+        else {
+            return unavailable("no OPR repository is configured".into());
+        };
+        let Some(feed) = self.feed_source(host, &source.name) else {
+            return unavailable(format!(
+                "[{}] has no server to fetch feeds from",
+                source.name
+            ));
+        };
+        let keyring = match crate::trust::Keyring::load(self.paths.sysroot.as_deref()) {
+            Ok(keyring) => keyring,
+            Err(err) => {
+                return unavailable(format!("loading trust keys: {err:#}"));
+            }
+        };
+        let cache = crate::trust::Cache::for_repo(&source.name, self.paths.sysroot.as_deref())?;
+        let advisories = crate::trust::fetch(&feed, "advisories.json", &keyring, &cache, false)
+            .map(|fetched: crate::trust::Fetched<crate::trust::Advisories>| fetched.value);
+        let verdicts = crate::trust::fetch(&feed, "verdicts.json", &keyring, &cache, false)
+            .map(|fetched: crate::trust::Fetched<crate::trust::Verdicts>| fetched.value);
+        if settings.trust_advisories == Mode::Required {
+            return Ok(Some((
+                Some(advisories.wrap_err("trust.advisories is required")?),
+                Some(verdicts.wrap_err("trust.advisories is required")?),
+            )));
+        }
+        let advisories = advisories
+            .map_err(|err| {
+                eprintln!("warning: advisory feeds unavailable (advisories): {err:#}");
+            })
+            .ok();
+        let verdicts = verdicts
+            .map_err(|err| {
+                eprintln!("warning: advisory feeds unavailable (verdicts): {err:#}");
+            })
+            .ok();
+        Ok(Some((advisories, verdicts)))
     }
 }
 
@@ -346,6 +418,9 @@ pub fn render(reviewed: &Reviewed) -> String {
             let _ = writeln!(out, "approved: never (first review)");
         }
     }
+    for note in &reviewed.notes {
+        let _ = writeln!(out, "note: {note}");
+    }
     if reviewed.report.findings.is_empty() {
         let _ = writeln!(out, "findings: none");
     } else {
@@ -381,6 +456,7 @@ impl RunWith<&App> for Review {
                 "version": reviewed.evidence.recipe.version,
                 "approved": reviewed.evidence.approved.as_ref().map(|a| a.commit.clone()),
                 "report": reviewed.report,
+                "notes": reviewed.notes,
                 "diff": if self.no_diff { None } else { Some(reviewed.review_text()?) },
             }))?;
             if denied {

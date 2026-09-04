@@ -233,3 +233,97 @@ fn split_package_approval_is_keyed_by_pkgbase() {
     assert!(lock.contains("[aur.demo]"), "{lock}");
     assert!(!lock.contains("[aur.demo-cli]"), "{lock}");
 }
+
+/// Signed advisory and verdict feeds shape the review: an advisory
+/// naming the commit denies, a gating reviewer's block denies, and a
+/// warn-weighted reviewer's block is only a note.
+#[test]
+fn feeds_shape_the_review() {
+    use packslip::minisign::SecretKey;
+    let s = setup();
+    let key = SecretKey::from_seed([42u8; 32]);
+    s.rig
+        .write_root("/etc/omapac/keys/omarchy.pub", &key.public_key().to_file());
+    let head = s.aur.head("yay");
+    let advisories = format!(
+        r#"{{"version":1,"sequence":1,"issued_at":"2026-09-03T00:00:00Z","advisories":[
+          {{"id":"OPR-2026-0001","pkgbase":"yay","commits":["{}"],"action":"block","reason":"account compromised","issued_at":"2026-09-03T00:00:00Z"}}]}}"#,
+        &head[..8]
+    );
+    let verdicts = format!(
+        r#"{{"version":1,"sequence":1,"issued_at":"2026-09-03T00:00:00Z","verdicts":[
+          {{"subject":{{"pkgbase":"yay","commit":"{head}"}},"reviewer":{{"kind":"ai","id":"opr-reviewer"}},"verdict":"block","summary":"looks bad","issued_at":"2026-09-03T00:00:00Z"}},
+          {{"subject":{{"pkgbase":"yay","commit":"{head}"}},"reviewer":{{"kind":"static","id":"omapac-policy"}},"verdict":"flag","summary":"odd source","issued_at":"2026-09-03T00:00:00Z"}}]}}"#
+    );
+    let sign = |body: &str| key.sign(body.as_bytes(), "feed").to_file();
+    let feeds = common::http::serve(vec![
+        ("/stable/x86_64/advisories.json.minisig", sign(&advisories)),
+        ("/stable/x86_64/advisories.json", advisories.clone()),
+        ("/stable/x86_64/verdicts.json.minisig", sign(&verdicts)),
+        ("/stable/x86_64/verdicts.json", verdicts.clone()),
+    ]);
+    let conf = common::DEFAULT_CONF.replace(
+        "Server = https://pkgs.omarchy.org/stable/$arch",
+        &format!("Server = {feeds}/stable/$arch"),
+    );
+    s.rig.write_root("/etc/pacman.conf", &conf);
+
+    let (code, out, err) = run(&s, &["aur", "review", "--unattended", "--no-diff", "yay"]);
+    assert_eq!(code, 1, "{err}\n{out}");
+    assert!(
+        out.contains(
+            "DENY  upstream-advisory: advisory: OPR-2026-0001 (Block): account compromised"
+        ),
+        "{out}"
+    );
+    assert!(
+        out.contains("DENY  verdict: static reviewer omapac-policy says Flag: odd source"),
+        "{out}"
+    );
+    assert!(
+        out.contains("note: ai reviewer opr-reviewer says Block: looks bad"),
+        "{out}"
+    );
+    assert!(
+        !out.contains("verdict: ai reviewer"),
+        "ai is warn-weighted: {out}"
+    );
+    let (_, out, _) = run(
+        &s,
+        &[
+            "aur",
+            "review",
+            "--json",
+            "--unattended",
+            "--no-diff",
+            "yay",
+        ],
+    );
+    let json: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert!(
+        json["notes"][0]
+            .as_str()
+            .is_some_and(|note| note.contains("ai reviewer opr-reviewer")),
+        "{json}"
+    );
+
+    // With the feeds unreachable, `on` warns and continues; `required` fails.
+    let conf = common::DEFAULT_CONF.replace(
+        "Server = https://pkgs.omarchy.org/stable/$arch",
+        "Server = http://127.0.0.1:9/stable/$arch",
+    );
+    s.rig.write_root("/etc/pacman.conf", &conf);
+    std::fs::remove_dir_all(s.rig.dir.path().join("cache/omapac/trust")).ok();
+    let (code, out, err) = run(&s, &["aur", "review", "--no-diff", "yay"]);
+    assert_eq!(code, 0, "{err}\n{out}");
+    assert!(err.contains("advisory feeds unavailable"), "{err}");
+    std::fs::create_dir_all(s.rig.home.join(".config/omapac")).unwrap();
+    std::fs::write(
+        s.rig.home.join(".config/omapac/omapac.toml"),
+        "[policy]\ntrust.advisories = \"required\"\n",
+    )
+    .unwrap();
+    let (code, _, err) = run(&s, &["aur", "review", "--no-diff", "yay"]);
+    assert_ne!(code, 0);
+    assert!(err.contains("trust.advisories is required"), "{err}");
+}

@@ -23,6 +23,8 @@ pub struct Reviewed {
     pub srcinfo: SrcInfo,
     pub evidence: Evidence,
     pub report: Report,
+    /// Verdicts from reviewers weighted `warn`: shown, never gating.
+    pub notes: Vec<String>,
 }
 
 /// How to review.
@@ -41,6 +43,10 @@ pub struct Request<'a> {
     /// Whether a human is present.
     pub interactive: bool,
     pub arch: &'a str,
+    /// The repository's advisory feed, when it could be fetched.
+    pub advisories: Option<&'a crate::trust::Advisories>,
+    /// The repository's verdict feed, when it could be fetched.
+    pub verdicts: Option<&'a crate::trust::Verdicts>,
 }
 
 /// Resolve `name` to its pkgbase, sync the checkout, and evaluate.
@@ -72,7 +78,7 @@ pub fn review(name: &str, request: &Request<'_>) -> Result<Reviewed> {
             srcinfo.pkgnames().join(", ")
         );
     }
-    let evidence = gather(name, &package, &checkout, &target, &srcinfo, request)?;
+    let (evidence, notes) = gather(name, &package, &checkout, &target, &srcinfo, request)?;
     let policy = policy_for(request.settings, request.interactive);
     let report = policy::evaluate(&evidence, &policy);
     Ok(Reviewed {
@@ -83,6 +89,7 @@ pub fn review(name: &str, request: &Request<'_>) -> Result<Reviewed> {
         srcinfo,
         evidence,
         report,
+        notes,
     })
 }
 
@@ -110,7 +117,7 @@ fn gather(
     target: &str,
     srcinfo: &SrcInfo,
     request: &Request<'_>,
-) -> Result<Evidence> {
+) -> Result<(Evidence, Vec<String>)> {
     let now = crate::ledger::now();
     let log = checkout.log(target, 2)?;
     let target_time = log.first().map(|c| c.time).unwrap_or(now);
@@ -161,7 +168,9 @@ fn gather(
         .flat_map(|db| db.packages.iter().map(|p| p.name.clone()))
         .collect();
     let similar_names = policy::similar::similar(name, known.iter().map(String::as_str), 2);
-    Ok(Evidence {
+    let (verdicts, notes) = feed_verdicts(request, &checkout.pkgbase, target);
+    let advisories = feed_advisories(request, &checkout.pkgbase, target, &srcinfo.version());
+    let evidence = Evidence {
         pkgbase: checkout.pkgbase.clone(),
         now,
         rpc: Some(policy::Rpc {
@@ -204,9 +213,80 @@ fn gather(
         pkgbuild: checkout.show(target, "PKGBUILD")?,
         install_scripts,
         similar_names,
-        verdicts: Vec::new(),
-        advisories: Vec::new(),
-    })
+        verdicts,
+        advisories,
+    };
+    Ok((evidence, notes))
+}
+
+/// Feed verdicts on this commit, split by the reviewer kind's weight:
+/// gating kinds become findings, warn kinds become notes, ignored kinds
+/// vanish.
+fn feed_verdicts(
+    request: &Request<'_>,
+    pkgbase: &str,
+    target: &str,
+) -> (Vec<policy::Verdict>, Vec<String>) {
+    use crate::manifest::settings::ReviewerWeight;
+    use crate::trust::feeds::VerdictKind;
+    let mut findings = Vec::new();
+    let mut notes = Vec::new();
+    let Some(feed) = request.verdicts else {
+        return (findings, notes);
+    };
+    for verdict in feed.for_commit(pkgbase, target) {
+        let weight = request
+            .settings
+            .trust_reviewers
+            .get(&verdict.reviewer.kind)
+            .copied()
+            .unwrap_or(ReviewerWeight::Warn);
+        let kind = match verdict.verdict {
+            VerdictKind::Pass => policy::evidence::VerdictKind::Pass,
+            VerdictKind::Flag => policy::evidence::VerdictKind::Flag,
+            VerdictKind::Block => policy::evidence::VerdictKind::Block,
+        };
+        match weight {
+            ReviewerWeight::Ignore => continue,
+            ReviewerWeight::Warn => {
+                if verdict.verdict != VerdictKind::Pass {
+                    notes.push(format!(
+                        "{} reviewer {} says {:?}: {}",
+                        verdict.reviewer.kind,
+                        verdict.reviewer.id,
+                        verdict.verdict,
+                        verdict.summary
+                    ));
+                }
+            }
+            ReviewerWeight::Gate => findings.push(policy::Verdict {
+                reviewer_kind: verdict.reviewer.kind.clone(),
+                reviewer: verdict.reviewer.id.clone(),
+                verdict: kind,
+                summary: verdict.summary.clone(),
+            }),
+        }
+    }
+    (findings, notes)
+}
+
+/// Advisories naming this pkgbase at this commit or version.
+fn feed_advisories(
+    request: &Request<'_>,
+    pkgbase: &str,
+    target: &str,
+    version: &str,
+) -> Vec<policy::Advisory> {
+    let Some(feed) = request.advisories else {
+        return Vec::new();
+    };
+    feed.matching(pkgbase, Some(target), Some(version))
+        .into_iter()
+        .map(|a| policy::Advisory {
+            source: "advisory".to_string(),
+            summary: format!("{} ({:?}): {}", a.id, a.action, a.reason),
+        })
+        .collect()
 }
 
 impl Reviewed {
