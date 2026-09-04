@@ -61,6 +61,7 @@ impl RunWith<&App> for Install {
             return self.run_aur(app);
         }
         let host = app.host()?;
+        let manifest = app.manifest()?;
         let targets = resolve_targets(&host, &self.packages)?;
         let engine = app.engine()?;
         let mut tx = Transaction::install(targets);
@@ -85,17 +86,23 @@ impl RunWith<&App> for Install {
         if self.json {
             return print_json(&plan);
         }
-        let performed = transaction::confirm_and_apply(
-            &engine,
-            &resolved,
-            &plan,
-            "install",
-            self.yes,
-            self.dry_run,
-        )?;
+        let accepted = if transaction::confirm_plan(&plan, "install", self.yes, self.dry_run)? {
+            transaction::verify_and_apply(
+                app,
+                &host,
+                &manifest.settings,
+                &engine,
+                &resolved,
+                &plan,
+                self.yes,
+            )?
+        } else {
+            None
+        };
+        let performed = accepted.is_some();
         if !self.dry_run {
             let target_names = tx_targets(&tx);
-            let patch = if performed {
+            let mut patch = if performed {
                 let explicit = if self.as_deps {
                     Vec::new()
                 } else {
@@ -112,6 +119,9 @@ impl RunWith<&App> for Install {
                     "install",
                 )?
             };
+            if let Some(accepted) = accepted {
+                accepted.attach(&mut patch);
+            }
             app.record(&patch)?;
         }
         Ok(())

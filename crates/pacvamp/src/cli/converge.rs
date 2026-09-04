@@ -240,9 +240,19 @@ impl Diff {
                 .overwriting(manifest.settings.update_overwrite.iter().cloned());
             tx.ignore_group
                 .extend(manifest.settings.update_ignore_group.iter().cloned());
-            if let Some(plan) = run(host, engine, tx, "install", yes, dry_run)? {
+            if let Some((plan, accepted)) = run(
+                app,
+                host,
+                &manifest.settings,
+                engine,
+                tx,
+                "install",
+                (yes, dry_run),
+            )? {
                 *committed = true;
-                app.record(&transaction::ledger_patch(&plan, &targets, by, false))?;
+                let mut patch = transaction::ledger_patch(&plan, &targets, by, false);
+                accepted.attach(&mut patch);
+                app.record(&patch)?;
             }
         }
         let removes = self.removes();
@@ -251,9 +261,19 @@ impl Diff {
             if let Operation::Remove { recursive, .. } = &mut tx.operation {
                 *recursive = false;
             }
-            if let Some(plan) = run(host, engine, tx, "remove", yes, dry_run)? {
+            if let Some((plan, accepted)) = run(
+                app,
+                host,
+                &manifest.settings,
+                engine,
+                tx,
+                "remove",
+                (yes, dry_run),
+            )? {
                 *committed = true;
-                app.record(&transaction::ledger_patch(&plan, &[], by, true))?;
+                let mut patch = transaction::ledger_patch(&plan, &[], by, true);
+                accepted.attach(&mut patch);
+                app.record(&patch)?;
             }
         }
         let aur: Vec<&str> = self
@@ -276,13 +296,15 @@ impl Diff {
 }
 
 fn run(
+    app: &super::App,
     host: &Host,
+    settings: &crate::manifest::settings::Settings,
     engine: &crate::engine::pacman::PacmanCli,
     tx: Transaction,
     verb: &str,
-    yes: bool,
-    dry_run: bool,
-) -> Result<Option<transaction::Plan>> {
+    confirmation: (bool, bool),
+) -> Result<Option<(transaction::Plan, transaction::AcceptedEvidence)>> {
+    let (yes, dry_run) = confirmation;
     let resolved = engine.plan(&tx)?;
     let mut plan = transaction::plan(
         host,
@@ -306,6 +328,11 @@ fn run(
             },
         )
         .display();
-    let performed = transaction::confirm_and_apply(engine, &resolved, &plan, verb, yes, dry_run)?;
-    Ok(performed.then_some(plan))
+    if !transaction::confirm_plan(&plan, verb, yes, dry_run)? {
+        return Ok(None);
+    }
+    let accepted =
+        transaction::verify_and_apply(app, host, settings, engine, &resolved, &plan, yes)?
+            .expect("a confirmed non-empty plan is applied");
+    Ok(Some((plan, accepted)))
 }

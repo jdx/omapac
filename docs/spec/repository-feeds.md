@@ -144,3 +144,25 @@ the feed key. See `sync-gate.md`.
 4. Use the index for `verify`, for `published_at` in release-age floors,
    and to show evidence in `info`; use advisories and verdicts as policy
    findings in `aur review` and `update`.
+
+### Transaction enforcement
+
+For OPR and custom-repository packages selected by `install`, `apply`, or
+`update`, pacvamp applies the effective `[policy.trust]` settings before
+pacman changes the installed package set:
+
+- `index = "off"` skips index enforcement, `verify` validates an available
+  index and warns when none can be obtained, and `required` refuses missing
+  index evidence. A present but invalid signature, stale sequence, database
+  digest, or package digest is always refused.
+- `provenance` uses the same modes. When present, the provenance envelope is
+  verified with a build key from the signed index and must name the selected
+  package digest. `required` refuses a package without it.
+- With `no_downgrade = true`, a package previously installed at a higher
+  evidence level cannot move to a lower level or to unavailable evidence.
+
+Pacvamp first has pacman cache the resolved transaction, then binds the exact
+repository database and package filenames from pacman's plan to the signed
+index. Accepted index sequences, package digests, build keys, and evidence
+levels are written in the same atomic ledger patch as the completed package
+transaction. Dry runs do not download packages or advance rollback state.
