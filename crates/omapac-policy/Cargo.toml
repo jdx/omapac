@@ -10,4 +10,8 @@ homepage.workspace = true
 authors.workspace = true
 
 [dependencies]
+regex = "1"
 serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
