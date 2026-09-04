@@ -22,14 +22,31 @@ jobs:
           set -euo pipefail
           pacman -Syu --noconfirm ca-certificates curl gnupg
           pacman-key --init
+
+          expected_repository_fingerprint='E5E3DDD7492AC50D42BFEEA8D9D6D838ADC420F3'
+          expected_index_key_id='8C2D61867298C6DC'
+          expected_index_sha256='963e54974176571313edafd82d3ec40926e514b05cfdb29a885e95466d8abfa1'
+
           curl --fail --show-error --silent \
             https://repo.pacvamp.com/keys/repository.asc \
             -o /tmp/pacvamp-repository.asc
+          curl --fail --show-error --silent \
+            https://repo.pacvamp.com/keys/index.pub \
+            -o /tmp/pacvamp-index.pub
 
           fingerprint="$(gpg --show-keys --with-colons \
             /tmp/pacvamp-repository.asc |
             awk -F: "\$1 == \"fpr\" { print \$10; exit }")"
-          test -n "$fingerprint"
+          test "$fingerprint" = "$expected_repository_fingerprint"
+
+          index_key_id="$(sed -n \
+            '1s/^untrusted comment: minisign public key //p' \
+            /tmp/pacvamp-index.pub)"
+          test "$index_key_id" = "$expected_index_key_id"
+          printf '%s  %s\n' \
+            "$expected_index_sha256" /tmp/pacvamp-index.pub |
+            sha256sum --check --strict
+
           pacman-key --add /tmp/pacvamp-repository.asc
           pacman-key --lsign-key "$fingerprint"
 

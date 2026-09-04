@@ -124,8 +124,8 @@ sudo -u pacvamp-registry env GNUPGHOME=/var/lib/pacvamp-registry/gnupg \
 For the canary, all three keys live on this isolated host. Before publishing
 anything users rely on, move the repository GPG key to a separate signer and
 put the index key in hardware-backed storage. Cross-publish both public-key
-fingerprints on `pacvamp.com`; a key downloaded only from the registry it
-authenticates is not a sufficient trust bootstrap.
+fingerprints on the [Pacvamp trust-roots page](/trust); a key downloaded only
+from the registry it authenticates is not a sufficient trust bootstrap.
 
 ## Manual first publish
 
@@ -166,7 +166,7 @@ the VM.
 
 ## Client smoke test
 
-After checking their fingerprints against `pacvamp.com`, import
+After checking their fingerprints against the [Pacvamp trust roots](/trust), import
 `https://repo.pacvamp.com/keys/repository.asc` into pacman's keyring and install
 `https://repo.pacvamp.com/keys/index.pub` as
 `/etc/pacvamp/keys/pacvamp-registry.pub`. Add:

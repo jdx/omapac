@@ -10,8 +10,8 @@ hero:
       text: Explore the CLI
       link: /cli/pacvamp/
     - theme: alt
-      text: Read the design
-      link: https://github.com/jdx/pacvamp/blob/main/PLAN.md
+      text: Verify trust roots
+      link: /trust
 
 features:
   - title: One transaction path
@@ -24,6 +24,8 @@ features:
 
 # Documentation
 
+- [Trust roots](/trust): independently verify the signing keys used by the
+  public Pacvamp registry.
 - [Project plan](https://github.com/jdx/pacvamp/blob/main/PLAN.md): the design, decisions, and implementation plan.
 - [CLI reference](/cli/pacvamp/): generated from the usage specs by `mise run render`.
   - [pacvamp](cli/pacvamp/) the client
