@@ -3,6 +3,7 @@
 
 #![allow(dead_code)]
 
+pub mod aur;
 pub mod http;
 
 use std::path::{Path, PathBuf};

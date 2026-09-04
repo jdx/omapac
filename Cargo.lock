@@ -739,6 +739,7 @@ dependencies = [
  "color-eyre",
  "eyre",
  "jiff",
+ "omapac",
  "omapac-cli-support",
  "omapac-policy",
  "packslip",

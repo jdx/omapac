@@ -1,10 +1,14 @@
 #![forbid(unsafe_code)]
 
+mod advisories;
 mod attest;
+mod feed;
 mod index;
 mod rekor;
 mod sign;
+mod sync_aur;
 mod vendor;
+mod verdict;
 
 use std::ffi::OsString;
 
@@ -37,10 +41,13 @@ struct Cli {
 
 #[derive(usage_rs::Subcommands)]
 enum Commands {
+    Advisories(advisories::Advisories),
     Attest(attest::Attest),
     Index(index::IndexCmd),
     Sign(sign::Sign),
+    SyncAur(sync_aur::SyncAur),
     Vendor(vendor::Vendor),
+    Verdict(verdict::VerdictCmd),
     Version(Version),
 }
 
@@ -50,10 +57,13 @@ fn main() -> Result<()> {
     let argv = omapac_cli_support::argv(&args);
     let cli = omapac_cli_support::unwrap_or_exit(Cli::spec(), &argv, Cli::parse_from_argv(&argv));
     match cli.command {
+        Some(Commands::Advisories(cmd)) => cmd.run_with(()),
         Some(Commands::Attest(cmd)) => cmd.run_with(()),
         Some(Commands::Index(cmd)) => cmd.run_with(()),
         Some(Commands::Sign(cmd)) => cmd.run_with(()),
+        Some(Commands::SyncAur(cmd)) => cmd.run_with(()),
         Some(Commands::Vendor(cmd)) => cmd.run_with(()),
+        Some(Commands::Verdict(cmd)) => cmd.run_with(()),
         Some(Commands::Version(cmd)) => cmd.run_with(BIN),
         None => Ok(()),
     }

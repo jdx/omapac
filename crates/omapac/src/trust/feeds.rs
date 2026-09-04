@@ -186,27 +186,49 @@ pub enum VerdictKind {
 }
 
 impl Verdicts {
-    /// Verdicts on an AUR pkgbase at a commit.
+    /// Current verdicts on an AUR pkgbase at a commit. The feed is an
+    /// append-only audit log, so a reviewer's later verdict supersedes its
+    /// earlier verdict for the same subject.
     pub fn for_commit<'a>(&'a self, pkgbase: &str, commit: &str) -> Vec<&'a Verdict> {
-        self.verdicts
-            .iter()
-            .filter(|v| match &v.subject {
-                VerdictSubject::Commit {
-                    pkgbase: p,
-                    commit: c,
-                } => p == pkgbase && commit.starts_with(c.as_str()),
-                VerdictSubject::Digest { .. } => false,
-            })
-            .collect()
+        current_verdicts(self.verdicts.iter().filter(|v| match &v.subject {
+            VerdictSubject::Commit {
+                pkgbase: p,
+                commit: c,
+            } => p == pkgbase && commit.starts_with(c.as_str()),
+            VerdictSubject::Digest { .. } => false,
+        }))
     }
 
-    /// Verdicts on a package file digest.
+    /// Current verdicts on a package file digest.
     pub fn for_digest<'a>(&'a self, sha256: &str) -> Vec<&'a Verdict> {
-        self.verdicts
-            .iter()
-            .filter(|v| matches!(&v.subject, VerdictSubject::Digest { sha256: s } if s == sha256))
-            .collect()
+        current_verdicts(self.verdicts.iter().filter(|v| match &v.subject {
+            VerdictSubject::Digest { sha256: s } => s == sha256,
+            VerdictSubject::Commit { .. } => false,
+        }))
     }
+}
+
+fn current_verdicts<'a>(matching: impl Iterator<Item = &'a Verdict>) -> Vec<&'a Verdict> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut matching: Vec<_> = matching.collect();
+    matching.reverse();
+    matching.retain(|verdict| {
+        let (subject_kind, subject_owner, subject_value) = match &verdict.subject {
+            VerdictSubject::Commit { pkgbase, commit } => {
+                ("commit", pkgbase.as_str(), commit.as_str())
+            }
+            VerdictSubject::Digest { sha256 } => ("digest", "", sha256.as_str()),
+        };
+        seen.insert((
+            verdict.reviewer.kind.as_str(),
+            verdict.reviewer.id.as_str(),
+            subject_kind,
+            subject_owner,
+            subject_value,
+        ))
+    });
+    matching.reverse();
+    matching
 }
 
 #[cfg(test)]
@@ -251,6 +273,39 @@ mod tests {
         assert!(feed.for_commit("yay", "xyz").is_empty());
         assert_eq!(feed.for_digest("ff").len(), 1);
         assert_eq!(feed.verdicts[0].verdict, VerdictKind::Block);
+    }
+
+    #[test]
+    fn later_verdict_from_the_same_reviewer_supersedes_an_earlier_one() {
+        let feed: Verdicts = serde_json::from_str(
+            r#"{"version":1,"sequence":2,"issued_at":"2026-09-03T00:00:00Z","verdicts":[
+              {"subject":{"pkgbase":"yay","commit":"abc"},"reviewer":{"kind":"static","id":"omapac-policy","version":"1"},"verdict":"block","issued_at":"2026-09-01T00:00:00Z"},
+              {"subject":{"pkgbase":"yay","commit":"abc"},"reviewer":{"kind":"human","id":"alice"},"verdict":"pass","issued_at":"2026-09-01T00:00:00Z"},
+              {"subject":{"pkgbase":"yay","commit":"abc"},"reviewer":{"kind":"static","id":"omapac-policy","version":"2"},"verdict":"pass","issued_at":"2026-09-03T00:00:00Z"}
+            ]}"#,
+        )
+        .unwrap();
+        let verdicts = feed.for_commit("yay", "abcdef");
+        assert_eq!(verdicts.len(), 2);
+        assert!(verdicts.iter().all(|v| v.verdict == VerdictKind::Pass));
+    }
+
+    #[test]
+    fn prefix_matches_do_not_supersede_a_different_commit_subject() {
+        let feed: Verdicts = serde_json::from_str(
+            r#"{"version":1,"sequence":2,"issued_at":"2026-09-03T00:00:00Z","verdicts":[
+              {"subject":{"pkgbase":"yay","commit":"abcdef"},"reviewer":{"kind":"static","id":"policy"},"verdict":"block","issued_at":"2026-09-01T00:00:00Z"},
+              {"subject":{"pkgbase":"yay","commit":"abc"},"reviewer":{"kind":"static","id":"policy"},"verdict":"pass","issued_at":"2026-09-03T00:00:00Z"}
+            ]}"#,
+        )
+        .unwrap();
+        let verdicts = feed.for_commit("yay", "abcdef123456");
+        assert_eq!(verdicts.len(), 2);
+        assert!(
+            verdicts
+                .iter()
+                .any(|verdict| verdict.verdict == VerdictKind::Block)
+        );
     }
 
     #[test]
