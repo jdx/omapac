@@ -607,12 +607,12 @@ a manifest. Arch's own archive is the precedent. Snapshots are retained for 90 d
 and any snapshot that was ever `stable` for a year.
 
 Release manifest: each snapshot has a signed `release.json` recording its id, the Arch
-snapshot and OPR index sequence it was built from, creation time, test suite results
+snapshot and signed index sequence for each included repository, creation time, test suite results
 with logs, promotion times, and whether it was expedited or held. It also contains a
 map keyed by repository name with the SHA-256 digest of each exact sync database and a
 canonical package map keyed by `repo/name` whose value is the selected version and
-`tested` or `snapshot` label. The signed test result records the snapshot id, OPR index
-sequence, repository-qualified `repo/name`, exact package output, selected version, and
+`tested` or `snapshot` label. The signed test result records the snapshot id, repository
+index sequence, repository-qualified `repo/name`, exact package output, selected version, and
 SHA-256 digest of the package bytes it exercised. `tested` is assigned only when the
 snapshot, index sequence, repository, output name, version, and digest all match;
 unexercised siblings from a split PKGBUILD remain `snapshot`. Imported results are held

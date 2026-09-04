@@ -1,0 +1,75 @@
+name: registry deploy
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: registry-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    environment:
+      name: registry
+      url: https://repo.pacvamp.com/healthz
+    env:
+      DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+      SSH_HOST: ${{ vars.REGISTRY_SSH_HOST }}
+      SSH_PORT: ${{ vars.REGISTRY_SSH_PORT || '22' }}
+      SSH_USER: ${{ vars.REGISTRY_SSH_USER }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build publisher binaries
+        run: cargo build --locked --release -p packslip -p pacvamp-repo
+      - name: Build deployment bundle
+        run: |
+          install -Dm755 target/release/packslip registry-bundle/bin/packslip
+          install -Dm755 target/release/pacvamp-repo registry-bundle/bin/pacvamp-repo
+          cp -R deploy registry-bundle/
+          tar -C registry-bundle -czf registry-deploy.tar.gz .
+      - name: Configure pinned SSH host
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.REGISTRY_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.REGISTRY_SSH_KNOWN_HOSTS }}
+        run: |
+          test -n "$SSH_HOST"
+          test -n "$SSH_USER"
+          test -n "$SSH_PRIVATE_KEY"
+          test -n "$SSH_KNOWN_HOSTS"
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" >~/.ssh/registry
+          printf '%s\n' "$SSH_KNOWN_HOSTS" >~/.ssh/known_hosts
+          chmod 0600 ~/.ssh/registry ~/.ssh/known_hosts
+      - name: Deploy exact commit
+        run: |
+          remote="$SSH_USER@$SSH_HOST"
+          remote_dir="/tmp/pacvamp-deploy-$DEPLOY_SHA"
+          ssh -p "$SSH_PORT" -i ~/.ssh/registry -o BatchMode=yes \
+            -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$remote" \
+            "install -d '$remote_dir' && tar -xz -C '$remote_dir'" \
+            <registry-deploy.tar.gz
+          ssh -p "$SSH_PORT" -i ~/.ssh/registry -o BatchMode=yes \
+            -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$remote" \
+            "if test \"\$(id -u)\" = 0; then '$remote_dir/deploy/registry/bin/install' '$remote_dir' '$DEPLOY_SHA'; else sudo -n '$remote_dir/deploy/registry/bin/install' '$remote_dir' '$DEPLOY_SHA'; fi"
+          ssh -p "$SSH_PORT" -i ~/.ssh/registry -o BatchMode=yes \
+            -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$remote" \
+            "rm -rf '$remote_dir'"
+      - name: Verify registry
+        run: |
+          remote="$SSH_USER@$SSH_HOST"
+          ssh -p "$SSH_PORT" -i ~/.ssh/registry -o BatchMode=yes \
+            -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$remote" \
+            "systemctl is-active --quiet caddy && test -L /srv/pacvamp/store/channels/stable"

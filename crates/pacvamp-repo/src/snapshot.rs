@@ -56,9 +56,9 @@ pub struct Cut {
     /// The snapshot id; defaults to the current hour in UTC
     #[usage(long)]
     id: Option<String>,
-    /// The OPR index this snapshot goes with, for its sequence
+    /// A signed repository index included in this snapshot; repeatable
     #[usage(long, value_hint = usage_rs::ValueHint::FilePath)]
-    opr_index: Option<PathBuf>,
+    repo_index: Vec<PathBuf>,
 }
 
 /// Run the test suite on a snapshot and record the result
@@ -638,21 +638,24 @@ fn cut_snapshot(
             }
         }
     }
-    let opr_index_sequence = match &cut.opr_index {
-        Some(path) => {
-            let index: crate::index::Index = serde_json::from_slice(
-                &std::fs::read(path).wrap_err_with(|| format!("reading {}", path.display()))?,
-            )?;
-            index.sequence
+    let mut repository_index_sequences = std::collections::BTreeMap::new();
+    for path in &cut.repo_index {
+        let index: crate::index::Index = serde_json::from_slice(
+            &std::fs::read(path).wrap_err_with(|| format!("reading {}", path.display()))?,
+        )?;
+        if repository_index_sequences
+            .insert(index.repo.clone(), index.sequence)
+            .is_some()
+        {
+            bail!("more than one index supplied for repository {}", index.repo);
         }
-        None => 0,
-    };
+    }
     let release = Release {
         version: 1,
         id: id.to_string(),
         channel: "edge".into(),
         arch_snapshot: id.to_string(),
-        opr_index_sequence,
+        repository_index_sequences,
         created_at: now.to_string(),
         tests: None,
         tested_pkgbases: Vec::new(),

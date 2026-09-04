@@ -19,8 +19,10 @@ pub struct Release {
     pub channel: String,
     /// The Arch mirror snapshot this release was built from.
     pub arch_snapshot: String,
-    /// The OPR index sequence that goes with it.
-    pub opr_index_sequence: u64,
+    /// Signed repository index sequences included in this snapshot, by
+    /// repository name.
+    #[serde(default)]
+    pub repository_index_sequences: std::collections::BTreeMap<String, u64>,
     pub created_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tests: Option<Tests>,
@@ -391,7 +393,7 @@ mod tests {
     #[test]
     fn release_parses() {
         let release: Release = serde_json::from_str(
-            r#"{"version":1,"id":"2026-09-03T06","channel":"stable","arch_snapshot":"2026-09-03T06","opr_index_sequence":1042,
+            r#"{"version":1,"id":"2026-09-03T06","channel":"stable","arch_snapshot":"2026-09-03T06","repository_index_sequences":{"omarchy":1042},
                 "created_at":"2026-09-03T06:00:00Z","tests":{"suite":"omarchy-train","result":"pass"},
                 "tested_pkgbases":["hyprland","omarchy"],"promoted":{"rc":"2026-09-03T08:00:00Z"},"db_digests":{"core":"aa"}}"#,
         )

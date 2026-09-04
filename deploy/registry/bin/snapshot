@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+config="${PACVAMP_REGISTRY_CONFIG:-/etc/pacvamp-registry/registry.env}"
+if [[ -r $config ]]; then
+	set -a
+	# shellcheck source=/dev/null
+	source "$config"
+	set +a
+fi
+
+: "${PACVAMP_REGISTRY_ROOT:?set PACVAMP_REGISTRY_ROOT}"
+: "${PACVAMP_INDEX_KEY:?set PACVAMP_INDEX_KEY}"
+
+sync_root="$PACVAMP_REGISTRY_ROOT/sync"
+store="$PACVAMP_REGISTRY_ROOT/store"
+index="$sync_root/pacvamp/os/x86_64/pacvamp-index.json"
+snapshot_id="${PACVAMP_SNAPSHOT_ID:-$(date -u +%Y-%m-%dT%H)}"
+lock="$PACVAMP_REGISTRY_ROOT/.snapshot.lock"
+
+install -d "$PACVAMP_REGISTRY_ROOT"
+exec 9>"$lock"
+flock --nonblock 9 || {
+	echo "another registry snapshot is running" >&2
+	exit 1
+}
+
+test -f "$index"
+
+pacvamp-repo snapshot \
+	--store "$store" \
+	--key "$PACVAMP_INDEX_KEY" \
+	cut \
+	--from "$sync_root" \
+	--id "$snapshot_id" \
+	--repo-index "$index"
+
+pacvamp-repo snapshot \
+	--store "$store" \
+	--key "$PACVAMP_INDEX_KEY" \
+	test \
+	--id "$snapshot_id"
+
+pacvamp-repo snapshot --store "$store" --key "$PACVAMP_INDEX_KEY" status

@@ -181,12 +181,12 @@ The mirror is a store of immutable snapshots; edge, rc and stable are pointers i
         flag --id help="The snapshot id; defaults to the current hour in UTC" {
             arg <ID>
         }
-        flag --opr-index help="The OPR index this snapshot goes with, for its sequence" {
-            arg <OPR_INDEX>
+        flag --repo-index help="A signed repository index included in this snapshot; repeatable" var=#true {
+            arg <REPO_INDEX>
         }
         flag "-h --help" help="Print help" action=help builtin=#true
         complete from type=dir
-        complete opr_index type=path
+        complete repo_index type=path
     }
     cmd hold help="Hold a snapshot and move pointers off it" {
         flag --id required=#true {

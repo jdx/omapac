@@ -21,6 +21,7 @@ export default defineConfig({
         text: "Get started",
         items: [
           { text: "Overview", link: "/" },
+          { text: "Run a registry", link: "/operations/registry" },
           { text: "Omarchy", link: "/adoption/omarchy" },
           { text: "Repository operators", link: "/adoption/opr" },
           { text: "mise tool channel", link: "/adoption/mise" },

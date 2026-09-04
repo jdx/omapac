@@ -1,0 +1,12 @@
+pkgname=pacvamp-registry-canary
+pkgver=0.0.1
+pkgrel=1
+pkgdesc='End-to-end health check for a Pacvamp registry'
+arch=('any')
+url='https://pacvamp.com'
+license=('MIT')
+
+package() {
+	install -d "$pkgdir/usr/share/pacvamp"
+	printf '%s\n' 'pacvamp registry canary 0.0.1-1' >"$pkgdir/usr/share/pacvamp/registry-canary"
+}

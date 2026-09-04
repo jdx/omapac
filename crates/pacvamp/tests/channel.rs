@@ -10,7 +10,7 @@ use packslip::minisign::SecretKey;
 
 fn release(id: &str, channel: &str, promoted: &str, result: &str) -> String {
     format!(
-        r#"{{"version":1,"id":"{id}","channel":"{channel}","arch_snapshot":"{id}","opr_index_sequence":7,
+        r#"{{"version":1,"id":"{id}","channel":"{channel}","arch_snapshot":"{id}","repository_index_sequences":{{"omarchy":7}},
            "created_at":"{id}:00:00Z","tests":{{"suite":"omarchy-train","result":"{result}"}},
            "tested_pkgbases":["pacman","glibc"],"promoted":{promoted},"db_digests":{{}}}}"#
     )

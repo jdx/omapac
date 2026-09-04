@@ -35,7 +35,7 @@ carries its own copy at `<snapshot_base>/<id>/release.json`.
   "id": "2026-09-03T06",
   "channel": "stable",
   "arch_snapshot": "2026-09-03T06",
-  "opr_index_sequence": 1042,
+  "repository_index_sequences": { "omarchy": 1042 },
   "created_at": "2026-09-03T06:00:00Z",
   "tests": { "suite": "omarchy-train", "commit": "...", "result": "pass", "log_url": "..." },
   "tested_pkgbases": ["hyprland", "omarchy", "..."],
