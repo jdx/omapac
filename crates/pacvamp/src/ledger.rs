@@ -31,12 +31,26 @@ pub struct Entry {
     /// The AUR commit that was built, for AUR packages.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aur_commit: Option<String>,
+    /// Repository evidence accepted before this package was installed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification: Option<Verification>,
     /// Whether the user asked for it, as opposed to a dependency pulled in.
     pub explicit: bool,
     /// Which command recorded it: install, add, apply, update.
     pub by: String,
     /// Unix seconds.
     pub at: i64,
+}
+
+/// Evidence bound to the exact repository package installed by pacman.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Verification {
+    pub index_sequence: u64,
+    pub index_key: String,
+    pub sha256: String,
+    pub level: packslip::model::Level,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_key: Option<String>,
 }
 
 /// The ledger file.
@@ -303,6 +317,7 @@ mod tests {
             tier: Tier::Arch,
             repo: Some("core".into()),
             aur_commit: None,
+            verification: None,
             explicit: true,
             by: "install".into(),
             at: 1_756_800_000,

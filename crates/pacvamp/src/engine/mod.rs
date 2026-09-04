@@ -243,6 +243,9 @@ pub trait Engine {
     /// never changes anything.
     fn plan(&self, tx: &Transaction) -> Result<ResolvedTx>;
 
+    /// Download every package in a resolved transaction without installing.
+    fn download(&self, tx: &ResolvedTx, opts: ApplyOpts) -> Result<Report>;
+
     /// Perform a resolved transaction.
     fn apply(&self, tx: &ResolvedTx, opts: ApplyOpts) -> Result<Report>;
 

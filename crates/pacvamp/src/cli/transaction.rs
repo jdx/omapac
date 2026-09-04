@@ -2,6 +2,7 @@
 //! transaction by trust tier, the policy checks that apply to any
 //! transaction, and the confirm-then-apply step.
 
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::io::Write as _;
 
@@ -12,7 +13,9 @@ use serde::Serialize;
 use super::{check_rank, format_size, trust_rank};
 use crate::engine::{ApplyOpts, Change, Engine, ResolvedTx};
 use crate::host::Host;
+use crate::ledger::Verification;
 use crate::ledger::{Entry, Patch};
+use crate::manifest::settings::{Enforcement, Settings};
 use crate::resolve::Tier;
 use crate::ui;
 
@@ -202,6 +205,14 @@ pub fn confirm_and_apply(
     yes: bool,
     dry_run: bool,
 ) -> Result<bool> {
+    if !confirm_plan(plan, verb, yes, dry_run)? {
+        return Ok(false);
+    }
+    apply_confirmed(engine, resolved, plan, yes)
+}
+
+/// Show and confirm a plan without applying it yet.
+pub fn confirm_plan(plan: &Plan, verb: &str, yes: bool, dry_run: bool) -> Result<bool> {
     print!("{}", render(verb, plan));
     std::io::stdout().flush()?;
     if plan.changes.is_empty() {
@@ -218,7 +229,7 @@ pub fn confirm_and_apply(
             bail!("cancelled");
         }
     }
-    apply_confirmed(engine, resolved, plan, yes)
+    Ok(true)
 }
 
 /// Enforce the unattended warning policy before any side effects begin.
@@ -261,6 +272,299 @@ pub fn apply_confirmed(
     Ok(true)
 }
 
+/// Repository evidence accepted for a resolved transaction. Callers merge
+/// this into the package ledger patch after pacman succeeds, so package state
+/// and rollback state are written atomically.
+#[derive(Debug, Default)]
+pub struct AcceptedEvidence {
+    packages: BTreeMap<String, Verification>,
+    index_sequences: BTreeMap<String, u64>,
+}
+
+impl AcceptedEvidence {
+    pub fn attach(self, patch: &mut Patch) {
+        for (name, verification) in self.packages {
+            if let Some(entry) = patch.upsert.get_mut(&name) {
+                entry.verification = Some(verification);
+            }
+        }
+        patch.index_sequences.extend(self.index_sequences);
+    }
+}
+
+/// Cache, verify, and apply a repository transaction. Verification happens
+/// after confirmation but before pacman can change the installed package set.
+pub fn verify_and_apply(
+    app: &super::App,
+    host: &Host,
+    settings: &Settings,
+    engine: &dyn Engine,
+    resolved: &ResolvedTx,
+    plan: &Plan,
+    yes: bool,
+) -> Result<Option<AcceptedEvidence>> {
+    if plan.changes.is_empty() {
+        return Ok(None);
+    }
+    let evidence = verify_transaction(app, host, settings, engine, resolved)?;
+    apply_confirmed(engine, resolved, plan, yes)?;
+    Ok(Some(evidence))
+}
+
+fn verify_transaction(
+    app: &super::App,
+    host: &Host,
+    settings: &Settings,
+    engine: &dyn Engine,
+    resolved: &ResolvedTx,
+) -> Result<AcceptedEvidence> {
+    let applicable: Vec<_> = resolved
+        .changes
+        .iter()
+        .filter(|change| {
+            change
+                .repo
+                .as_deref()
+                .is_some_and(|repo| matches!(Tier::of_repo(repo), Tier::Opr | Tier::Custom(_)))
+        })
+        .collect();
+    if applicable.is_empty()
+        || (settings.trust_index == Enforcement::Off
+            && settings.trust_provenance == Enforcement::Off)
+    {
+        return Ok(AcceptedEvidence::default());
+    }
+
+    let ledger = app.ledger()?;
+    let mut indexes = BTreeMap::new();
+    for repo in applicable
+        .iter()
+        .filter_map(|change| change.repo.as_deref())
+        .collect::<std::collections::BTreeSet<_>>()
+    {
+        match app.index_readonly(host, repo, false) {
+            Ok(fetched) => {
+                let db = app
+                    .rooted(&host.config.options.db_path())
+                    .join("sync")
+                    .join(&fetched.value.db.file);
+                if !db.is_file() {
+                    bail!("[{repo}] repository database {} is missing", db.display());
+                }
+                let digest = crate::trust::sha256_file(&db)?;
+                if digest != fetched.value.db.sha256 {
+                    bail!(
+                        "[{repo}] repository database does not match signed index sequence {}",
+                        fetched.value.sequence
+                    );
+                }
+                indexes.insert(repo.to_string(), fetched);
+            }
+            Err(err)
+                if settings.trust_index == Enforcement::Required
+                    || settings.trust_provenance == Enforcement::Required =>
+            {
+                return Err(err.wrap_err(format!(
+                    "[{repo}] required transaction evidence unavailable"
+                )));
+            }
+            Err(err) => {
+                let detail = format!("{err:#}");
+                if detail.contains("signature")
+                    || detail.contains("does not verify")
+                    || detail.contains("parsing pacvamp-index.json")
+                    || detail.contains("different repository")
+                    || detail.contains("older than")
+                    || detail.contains("rolled-back")
+                {
+                    return Err(err.wrap_err(format!("[{repo}] transaction index is invalid")));
+                }
+                if settings.trust_no_downgrade
+                    && let Some((change, previous)) = applicable.iter().find_map(|change| {
+                        (change.repo.as_deref() == Some(repo))
+                            .then(|| {
+                                ledger
+                                    .packages
+                                    .get(&change.name)
+                                    .and_then(|entry| entry.verification.as_ref())
+                                    .map(|previous| (*change, previous))
+                            })
+                            .flatten()
+                    })
+                {
+                    bail!(
+                        "{} evidence would downgrade from {} because [{repo}] index is unavailable",
+                        change.name,
+                        previous.level
+                    );
+                }
+                eprintln!("warning: [{repo}] transaction index could not be verified: {err:#}");
+            }
+        }
+    }
+
+    // pacman downloads the already-resolved transaction without installing
+    // it. The subsequent apply consumes these same named cache files.
+    if !indexes.is_empty() {
+        engine.download(
+            resolved,
+            ApplyOpts {
+                dry_run: false,
+                no_confirm: true,
+            },
+        )?;
+    }
+
+    let mut accepted = AcceptedEvidence::default();
+    for change in applicable {
+        let repo = change.repo.as_deref().expect("filtered above");
+        let Some(fetched) = indexes.get(repo) else {
+            continue;
+        };
+        let (_, package) = host.find_sync_in(repo, &change.name)?.ok_or_else(|| {
+            eyre::eyre!(
+                "{} from [{repo}] disappeared from its repository database",
+                change.name
+            )
+        })?;
+        if package.version != change.version {
+            bail!(
+                "{} plan selected {} from [{repo}], but its database now selects {}",
+                change.name,
+                change.version,
+                package.version
+            );
+        }
+        let location_file = change
+            .location
+            .as_deref()
+            .and_then(|url| url.rsplit('/').next());
+        if location_file != Some(package.filename.as_str()) {
+            bail!(
+                "{} plan location is not the exact file named by [{repo}]",
+                change.name
+            );
+        }
+        let Some(indexed) = fetched.value.package(&package.filename) else {
+            if settings.trust_index == Enforcement::Required {
+                bail!(
+                    "{} is not in required [{repo}] index sequence {}",
+                    package.filename,
+                    fetched.value.sequence
+                );
+            }
+            if settings.trust_no_downgrade
+                && let Some(previous) = ledger
+                    .packages
+                    .get(&change.name)
+                    .and_then(|entry| entry.verification.as_ref())
+            {
+                bail!(
+                    "{} evidence would downgrade from {} because it is absent from [{repo}] index sequence {}",
+                    change.name,
+                    previous.level,
+                    fetched.value.sequence
+                );
+            }
+            eprintln!(
+                "warning: {} is not in [{repo}] index sequence {}",
+                package.filename, fetched.value.sequence
+            );
+            continue;
+        };
+        let file = host
+            .config
+            .options
+            .cache_dirs()
+            .into_iter()
+            .map(|dir| app.rooted(&dir).join(&package.filename))
+            .find(|path| path.is_file())
+            .ok_or_else(|| {
+                eyre::eyre!("pacman did not cache {} for verification", package.filename)
+            })?;
+        let (digest, size) = packslip::digest_file(&file)?;
+        if digest != indexed.sha256 || size != indexed.size {
+            bail!(
+                "{} cached package does not match [{repo}] index sequence {}",
+                package.filename,
+                fetched.value.sequence
+            );
+        }
+
+        let provenance_name = format!("{}.provenance.json", package.filename);
+        let publishes_provenance = indexed.evidence.build_provenance
+            && indexed
+                .sidecars
+                .iter()
+                .any(|sidecar| sidecar == &provenance_name);
+        let build_key = if publishes_provenance && settings.trust_provenance != Enforcement::Off {
+            let source = app.feed_source(host, repo).expect("index source exists");
+            let (report, _) = super::verify::check_provenance(
+                &source,
+                &package.filename,
+                &indexed.sha256,
+                &fetched.value.build_keys,
+            );
+            if !report.verified {
+                bail!(
+                    "{} provenance failed: {}",
+                    package.filename,
+                    report.error.as_deref().unwrap_or("unknown error")
+                );
+            }
+            report.build_key
+        } else {
+            if settings.trust_provenance == Enforcement::Required {
+                bail!(
+                    "{} has no required build provenance in [{repo}] index sequence {}",
+                    package.filename,
+                    fetched.value.sequence
+                );
+            }
+            if settings.trust_provenance == Enforcement::Verify {
+                eprintln!(
+                    "warning: {} publishes no build provenance",
+                    package.filename
+                );
+            }
+            None
+        };
+        let level = if build_key.is_some() {
+            packslip::model::Level::L3
+        } else {
+            packslip::model::Level::L2
+        };
+        if settings.trust_no_downgrade
+            && let Some(previous) = ledger
+                .packages
+                .get(&change.name)
+                .and_then(|entry| entry.verification.as_ref())
+            && level < previous.level
+        {
+            bail!(
+                "{} evidence would downgrade from {} to {}",
+                change.name,
+                previous.level,
+                level
+            );
+        }
+        accepted
+            .index_sequences
+            .insert(repo.to_string(), fetched.value.sequence);
+        accepted.packages.insert(
+            change.name.clone(),
+            Verification {
+                index_sequence: fetched.value.sequence,
+                index_key: fetched.key_id.clone(),
+                sha256: indexed.sha256.clone(),
+                level,
+                build_key,
+            },
+        );
+    }
+    Ok(accepted)
+}
+
 /// The ledger patch for a plan that was performed: every installed change
 /// is recorded, explicit when it was a target, and every removal dropped.
 pub fn ledger_patch(plan: &Plan, targets: &[String], by: &str, removing: bool) -> Patch {
@@ -278,6 +582,7 @@ pub fn ledger_patch(plan: &Plan, targets: &[String], by: &str, removing: bool) -
                 tier: change.tier.clone(),
                 repo: change.repo.clone(),
                 aur_commit: None,
+                verification: None,
                 explicit: targets.iter().any(|t| t == &change.name),
                 by: by.to_string(),
                 at,
@@ -329,6 +634,7 @@ pub fn ledger_patch_for_installed(
                 tier: source.map_or(Tier::Foreign, |source| source.tier.clone()),
                 repo: source.map(|source| source.name.clone()),
                 aur_commit: None,
+                verification: None,
                 explicit: roots.contains(name.as_str()) && explicit,
                 by: by.to_string(),
                 at,
