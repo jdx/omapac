@@ -1,28 +1,35 @@
 #!/usr/bin/env bash
 set -eEuo pipefail
-trap 'rc=$?; echo "PACVAMP_VM_FAIL status=$rc line=$LINENO"; sync; systemctl poweroff --no-block; exit "$rc"' ERR
-case "$(systemd-detect-virt --vm)" in qemu|kvm) ;; *) false ;; esac
+fail() {
+	local status=$1 line=$2
+	echo "PACVAMP_VM_FAIL status=$status line=$line"
+	sync
+	systemctl poweroff --no-block
+	exit "$status"
+}
+trap 'fail "$?" "$LINENO"' ERR
+case "$(systemd-detect-virt --vm)" in qemu | kvm) ;; *) false ;; esac
 mkdir -p /var/lib/pacvamp-vm
 if test -f /var/lib/pacvamp-vm/phase1; then
-  test "$(pacman -Q pacvamp-vm-probe)" = 'pacvamp-vm-probe 1-1'
-  test "$(pacvamp-vm-probe)" = 1
-  python - <<'CHECK'
+	test "$(pacman -Q pacvamp-vm-probe)" = 'pacvamp-vm-probe 1-1'
+	test "$(pacvamp-vm-probe)" = 1
+	python - <<'CHECK'
 import json
 state=json.load(open('/var/lib/pacvamp/state.json'))
 assert state['packages']['pacvamp-vm-probe']['version']=='1-1'
 assert not state.get('pending')
 assert state['snapshot']=='2026-09-01T06'
 CHECK
-  echo PACVAMP_VM_PASS
-  sync
-  systemctl poweroff --no-block
-  exit 0
+	echo PACVAMP_VM_PASS
+	sync
+	systemctl poweroff --no-block
+	exit 0
 fi
 ip link set lo up
 python -m http.server 18767 --bind 127.0.0.1 --directory /srv/vm-repos &
 for _ in {1..50}; do
-  if curl -fsS http://127.0.0.1:18767/ >/dev/null; then break; fi
-  sleep 0.1
+	if curl -fsS http://127.0.0.1:18767/ >/dev/null; then break; fi
+	sleep 0.1
 done
 pacman -Syy --noconfirm
 /usr/local/bin/pacvamp-previous install -y pacvamp-vm-probe
@@ -51,16 +58,16 @@ ln -sfn versions/3 /srv/vm-repos/current
 pacvamp update -y --no-aur &
 supervisor=$!
 for _ in {1..100}; do
-  if test -f /run/pacvamp-interrupt-ready; then break; fi
-  kill -0 "$supervisor"
-  sleep 0.1
+	if test -f /run/pacvamp-interrupt-ready; then break; fi
+	kill -0 "$supervisor"
+	sleep 0.1
 done
 test -f /run/pacvamp-interrupt-ready
 kill -KILL "$supervisor"
 wait "$supervisor" || true
 for _ in {1..100}; do
-  if ! test -e /var/lib/pacman/db.lck; then break; fi
-  sleep 0.1
+	if ! test -e /var/lib/pacman/db.lck; then break; fi
+	sleep 0.1
 done
 test ! -e /var/lib/pacman/db.lck
 rm /etc/pacman.d/hooks/99-vm-interrupt.hook

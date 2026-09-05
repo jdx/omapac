@@ -15,16 +15,16 @@ mkdir -p /srv/vm-repos/versions /srv/vm-gpg /etc/pacvamp/keys /etc/pacvamp/conf.
 chmod 700 /srv/vm-gpg
 gpg --homedir /srv/vm-gpg --batch --passphrase '' --quick-generate-key 'Pacvamp VM fixture <fixture@example.invalid>' ed25519 sign 0
 fingerprint=$(gpg --homedir /srv/vm-gpg --with-colons --list-keys | awk -F: '$1=="fpr" {print $10; exit}')
-gpg --homedir /srv/vm-gpg --export > /tmp/vm-public.gpg
+gpg --homedir /srv/vm-gpg --export >/tmp/vm-public.gpg
 pacman-key --init
 pacman-key --add /tmp/vm-public.gpg
 pacman-key --lsign-key "$fingerprint"
 for version in 1 2 3; do
-  stage=$(mktemp -d)
-  mkdir -p "$stage/usr/bin"
-  printf '#!/bin/sh\necho %s\n' "$version" > "$stage/usr/bin/pacvamp-vm-probe"
-  chmod 755 "$stage/usr/bin/pacvamp-vm-probe"
-  cat > "$stage/.PKGINFO" <<META
+	stage=$(mktemp -d)
+	mkdir -p "$stage/usr/bin"
+	printf '#!/bin/sh\necho %s\n' "$version" >"$stage/usr/bin/pacvamp-vm-probe"
+	chmod 755 "$stage/usr/bin/pacvamp-vm-probe"
+	cat >"$stage/.PKGINFO" <<META
 pkgname = pacvamp-vm-probe
 pkgbase = pacvamp-vm-probe
 pkgver = $version-1
@@ -36,20 +36,20 @@ size = 20
 arch = any
 license = MIT
 META
-  dest="/srv/vm-repos/versions/$version/core/os/x86_64"
-  mkdir -p "$dest"
-  package="$dest/pacvamp-vm-probe-$version-1-any.pkg.tar.zst"
-  bsdtar --zstd -cf "$package" -C "$stage" .PKGINFO usr
-  gpg --homedir /srv/vm-gpg --batch --detach-sign "$package"
-  repo-add "$dest/core.db.tar.gz" "$package"
-  touch -d "@170000000$version" "$dest/core.db.tar.gz"
-  rm -rf "$stage"
+	dest="/srv/vm-repos/versions/$version/core/os/x86_64"
+	mkdir -p "$dest"
+	package="$dest/pacvamp-vm-probe-$version-1-any.pkg.tar.zst"
+	bsdtar --zstd -cf "$package" -C "$stage" .PKGINFO usr
+	gpg --homedir /srv/vm-gpg --batch --detach-sign "$package"
+	repo-add "$dest/core.db.tar.gz" "$package"
+	touch -d "@170000000$version" "$dest/core.db.tar.gz"
+	rm -rf "$stage"
 done
 ln -s versions/1 /srv/vm-repos/current
 snapshot=/srv/vm-repos/snapshots/2026-09-01T06
 mkdir -p "$snapshot"
 cp -a /srv/vm-repos/versions/1/core "$snapshot/core"
-cat > "$snapshot/release.json" <<'JSON'
+cat >"$snapshot/release.json" <<'JSON'
 {"version":1,"id":"2026-09-01T06","channel":"stable","arch_snapshot":"2026-09-01T06","repository_index_sequences":{},"created_at":"2026-09-01T06:00:00Z","tested_pkgbases":["pacvamp-vm-probe"],"promoted":{"stable":"2026-09-04T06:00:00Z"},"db_digests":{}}
 JSON
 minisign -G -W -p /etc/pacvamp/keys/vm.pub -s /srv/vm-minisign.key
@@ -62,7 +62,9 @@ LocalFileSigLevel = Required
 [core]
 Include = /etc/pacman.d/mirrorlist
 CONF
-printf '%s\n' 'Server = http://127.0.0.1:18767/current/$repo/os/$arch' >/etc/pacman.d/mirrorlist
+cat >/etc/pacman.d/mirrorlist <<'MIRROR'
+Server = http://127.0.0.1:18767/current/$repo/os/$arch
+MIRROR
 cat >/etc/pacvamp/conf.d/vm.toml <<'CONFIG'
 [channel]
 snapshot_base = "http://127.0.0.1:18767/snapshots"

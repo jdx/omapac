@@ -4,7 +4,10 @@ set -euo pipefail
 repo=$(git rev-parse --show-toplevel)
 cd "$repo"
 for tool in docker qemu-system-x86_64 bsdtar mkfs.ext4 python3; do
-  command -v "$tool" >/dev/null || { echo "missing VM prerequisite: $tool" >&2; exit 1; }
+	command -v "$tool" >/dev/null || {
+		echo "missing VM prerequisite: $tool" >&2
+		exit 1
+	}
 done
 : "${PACVAMP_VM_CURRENT_BIN:=$repo/target/debug/pacvamp}"
 : "${PACVAMP_VM_REPORT_DIR:=$repo/target/vm-results}"
@@ -15,37 +18,37 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/pacvamp-vm.XXXXXX")
 name="pacvamp-vm-$$"
 baseline_checkout=""
 cleanup() {
-  docker rm --force "$name" >/dev/null 2>&1 || true
-  if [ -n "$baseline_checkout" ]; then git worktree remove --force "$baseline_checkout" || true; fi
-  if [ -n "${PACVAMP_VM_KEEP:-}" ]; then
-    echo "retained VM workspace: $work" >&2
-  else
-    # The extracted filesystem contains root-owned private directories.
-    sudo -n python3 - "$work" <<'PY'
+	docker rm --force "$name" >/dev/null 2>&1 || true
+	if [ -n "$baseline_checkout" ]; then git worktree remove --force "$baseline_checkout" || true; fi
+	if [ -n "${PACVAMP_VM_KEEP:-}" ]; then
+		echo "retained VM workspace: $work" >&2
+	else
+		# The extracted filesystem contains root-owned private directories.
+		sudo -n python3 - "$work" <<'PY'
 import pathlib,shutil,sys
 root=pathlib.Path(sys.argv[1])
 assert root.name.startswith('pacvamp-vm.') and not root.is_symlink()
 shutil.rmtree(root)
 PY
-  fi
+	fi
 }
 trap cleanup EXIT
 cp "$PACVAMP_VM_CURRENT_BIN" "$work/current"
 baseline_ref=provided-binary
 baseline_sha=unknown
 if [ -n "${PACVAMP_VM_PREVIOUS_BIN:-}" ]; then
-  cp "$PACVAMP_VM_PREVIOUS_BIN" "$work/previous"
+	cp "$PACVAMP_VM_PREVIOUS_BIN" "$work/previous"
 else
-  baseline_ref=${PACVAMP_VM_BASELINE_REF:-}
-  if [ -z "$baseline_ref" ]; then
-    baseline_ref=$(gh api repos/jdx/pacvamp/releases --jq 'map(select(.draft == false and .prerelease == false)) | first | .tag_name // empty')
-    baseline_ref=${baseline_ref:-origin/main}
-  fi
-  baseline_sha=$(git rev-parse --verify --end-of-options "$baseline_ref^{commit}")
-  baseline_checkout="$work/baseline"
-  git worktree add --detach "$baseline_checkout" "$baseline_sha"
-  (cd "$baseline_checkout" && CARGO_TARGET_DIR="$repo/target/vm-baseline" cargo build --locked -p pacvamp)
-  cp "$repo/target/vm-baseline/debug/pacvamp" "$work/previous"
+	baseline_ref=${PACVAMP_VM_BASELINE_REF:-}
+	if [ -z "$baseline_ref" ]; then
+		baseline_ref=$(gh api repos/jdx/pacvamp/releases --jq 'map(select(.draft == false and .prerelease == false)) | first | .tag_name // empty')
+		baseline_ref=${baseline_ref:-origin/main}
+	fi
+	baseline_sha=$(git rev-parse --verify --end-of-options "$baseline_ref^{commit}")
+	baseline_checkout="$work/baseline"
+	git worktree add --detach "$baseline_checkout" "$baseline_sha"
+	(cd "$baseline_checkout" && CARGO_TARGET_DIR="$repo/target/vm-baseline" cargo build --locked -p pacvamp)
+	cp "$repo/target/vm-baseline/debug/pacvamp" "$work/previous"
 fi
 python3 - "$work" "$report" "$baseline_ref" "$baseline_sha" <<'PY'
 import hashlib,json,pathlib,sys
@@ -70,21 +73,24 @@ mkdir "$work/rootfs"
 sudo -n bsdtar -xpf "$work/rootfs.tar" -C "$work/rootfs"
 truncate -s 6G "$work/root.img"
 sudo -n mkfs.ext4 -q -F -d "$work/rootfs" "$work/root.img"
-acceleration=(-accel tcg,thread=multi -cpu max)
+acceleration=(-accel "tcg,thread=multi" -cpu max)
 if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then acceleration=(-accel kvm -cpu host); fi
-if [[ $work == *,* ]]; then echo 'VM workspace path cannot contain commas' >&2; exit 1; fi
+if [[ $work == *,* ]]; then
+	echo 'VM workspace path cannot contain commas' >&2
+	exit 1
+fi
 for boot in 1 2; do
-  timeout --kill-after=10 240 qemu-system-x86_64 "${acceleration[@]}" -smp 2 -m 2048 \
-    -display none -monitor none -serial stdio -no-reboot \
-    -kernel "$work/vmlinuz" -initrd "$work/initramfs.img" \
-    -append 'root=/dev/vda rw console=ttyS0 systemd.log_level=warning' \
-    -drive "file=$work/root.img,format=raw,if=virtio" >"$report/boot-$boot.log" 2>&1
-  marker=PACVAMP_VM_PHASE1_PASS
-  if [ "$boot" = 2 ]; then marker=PACVAMP_VM_PASS; fi
-  if ! grep -q "$marker" "$report/boot-$boot.log"; then
-    tail -100 "$report/boot-$boot.log" >&2
-    echo "VM boot $boot failed; logs: $report" >&2
-    exit 1
-  fi
+	timeout --kill-after=10 240 qemu-system-x86_64 "${acceleration[@]}" -smp 2 -m 2048 \
+		-display none -monitor none -serial stdio -no-reboot \
+		-kernel "$work/vmlinuz" -initrd "$work/initramfs.img" \
+		-append 'root=/dev/vda rw console=ttyS0 systemd.log_level=warning' \
+		-drive "file=$work/root.img,format=raw,if=virtio" >"$report/boot-$boot.log" 2>&1
+	marker=PACVAMP_VM_PHASE1_PASS
+	if [ "$boot" = 2 ]; then marker=PACVAMP_VM_PASS; fi
+	if ! grep -q "$marker" "$report/boot-$boot.log"; then
+		tail -100 "$report/boot-$boot.log" >&2
+		echo "VM boot $boot failed; logs: $report" >&2
+		exit 1
+	fi
 done
 echo "VM installation, upgrade, interruption, rollback and second-boot persistence passed; logs: $report"
