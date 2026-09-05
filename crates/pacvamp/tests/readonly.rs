@@ -225,3 +225,23 @@ fn help_lists_the_commands() {
         assert!(text.contains(&format!("\n  {command}")), "{text}");
     }
 }
+
+#[test]
+fn doctor_reports_inherited_resource_ceilings() {
+    let root = sysroot();
+    let output = Command::new("prlimit")
+        .args(["--nproc=128:128", "--fsize=1048576:1048576", "--"])
+        .arg(env!("CARGO_BIN_EXE_pacvamp"))
+        .arg("--sysroot")
+        .arg(root.path())
+        .arg("doctor")
+        .output()
+        .unwrap();
+    let out = String::from_utf8_lossy(&output.stdout);
+    let limits = out
+        .lines()
+        .find(|line| line.contains("build-limits"))
+        .unwrap_or_else(|| panic!("{out}\n{}", String::from_utf8_lossy(&output.stderr)));
+    assert!(limits.contains("128 processes/user"), "{limits}");
+    assert!(limits.contains("file 1048576 bytes"), "{limits}");
+}

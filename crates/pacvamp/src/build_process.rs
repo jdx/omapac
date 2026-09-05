@@ -76,21 +76,38 @@ impl Limits {
         }
         Ok(())
     }
-    pub fn apply(&self) -> Result<()> {
+    pub fn effective_kernel_limits(&self) -> Result<KernelLimits> {
         self.validate()?;
+        fn ceiling(resource: Resource, value: u64) -> Result<u64> {
+            let (soft, hard) = getrlimit(resource)?;
+            Ok(value.min(soft).min(hard))
+        }
+        Ok(KernelLimits {
+            memory_bytes: ceiling(Resource::RLIMIT_AS, self.memory_mb * 1024 * 1024)?,
+            cpu_seconds: ceiling(Resource::RLIMIT_CPU, self.cpu_seconds)?,
+            processes: ceiling(Resource::RLIMIT_NPROC, self.processes)?,
+            file_bytes: ceiling(Resource::RLIMIT_FSIZE, self.file_mb * 1024 * 1024)?,
+        })
+    }
+    pub fn apply(&self) -> Result<()> {
+        let effective = self.effective_kernel_limits()?;
         for (resource, value) in [
-            (Resource::RLIMIT_AS, self.memory_mb * 1024 * 1024),
-            (Resource::RLIMIT_CPU, self.cpu_seconds),
-            (Resource::RLIMIT_NPROC, self.processes),
-            (Resource::RLIMIT_FSIZE, self.file_mb * 1024 * 1024),
+            (Resource::RLIMIT_AS, effective.memory_bytes),
+            (Resource::RLIMIT_CPU, effective.cpu_seconds),
+            (Resource::RLIMIT_NPROC, effective.processes),
+            (Resource::RLIMIT_FSIZE, effective.file_bytes),
             (Resource::RLIMIT_CORE, 0),
         ] {
-            let (soft, hard) = getrlimit(resource)?;
-            let ceiling = value.min(soft).min(hard);
-            setrlimit(resource, ceiling, ceiling)?;
+            setrlimit(resource, value, value)?;
         }
         Ok(())
     }
+}
+pub struct KernelLimits {
+    pub memory_bytes: u64,
+    pub cpu_seconds: u64,
+    pub processes: u64,
+    pub file_bytes: u64,
 }
 #[derive(Serialize, Deserialize)]
 pub struct BuildSpec {
@@ -183,20 +200,21 @@ impl ManagedChild {
         let start = Instant::now();
         let mut disk_check = Instant::now();
         let mut unreadable_since: Option<Instant> = None;
-        loop {
+        let check_running = || {
             if self.cancelled.load(Ordering::Relaxed) {
                 bail!("build cancelled");
             }
             if start.elapsed() >= Duration::from_secs(limits.wall_seconds) {
                 bail!("build exceeded wall-clock limit");
             }
+            Ok(())
+        };
+        loop {
+            check_running()?;
             if disk_check.elapsed() >= Duration::from_secs(1) {
-                match disk_bytes(run) {
-                    Ok(bytes) => {
+                match check_disk(run, limits.disk_mb * 1024 * 1024, check_running) {
+                    Ok(()) => {
                         unreadable_since = None;
-                        if bytes > limits.disk_mb * 1024 * 1024 {
-                            bail!("build exceeded disk budget");
-                        }
                     }
                     Err(err)
                         if err
@@ -219,9 +237,7 @@ impl ManagedChild {
             if let Some(status) = self.child.try_wait()? {
                 // Stop lingering writers before the mandatory final accounting pass.
                 let _ = killpg(self.group, Signal::SIGKILL);
-                if disk_bytes(run)? > limits.disk_mb * 1024 * 1024 {
-                    bail!("build exceeded disk budget");
-                }
+                check_disk(run, limits.disk_mb * 1024 * 1024, check_running)?;
                 return Ok(status);
             }
             std::thread::sleep(Duration::from_millis(50));
@@ -241,31 +257,111 @@ impl Drop for ManagedChild {
         }
     }
 }
-fn disk_bytes(path: &Path) -> Result<u64> {
-    let metadata = match std::fs::symlink_metadata(path) {
-        Ok(m) => m,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
-        Err(e) => return Err(e.into()),
+fn accounting_flags() -> nix::fcntl::OFlag {
+    use nix::fcntl::OFlag;
+    OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC
+}
+fn check_disk(path: &Path, budget: u64, check_running: impl FnMut() -> Result<()>) -> Result<()> {
+    let root = nix::dir::Dir::open(path, accounting_flags(), nix::sys::stat::Mode::empty())
+        .map_err(std::io::Error::from)
+        .wrap_err_with(|| format!("accounting build directory {}", path.display()))?;
+    check_disk_dir(root, budget, check_running)
+}
+fn check_disk_dir(
+    root: nix::dir::Dir,
+    budget: u64,
+    mut check_running: impl FnMut() -> Result<()>,
+) -> Result<()> {
+    use nix::{
+        dir::{Dir, OwningIter},
+        errno::Errno,
+        fcntl::AtFlags,
+        sys::stat::{Mode, SFlag, fstat, fstatat},
     };
-    if metadata.is_symlink() {
-        return Ok(0);
+    use std::os::fd::{AsFd as _, OwnedFd};
+    fn frame(dir: Dir) -> std::io::Result<(OwnedFd, OwningIter)> {
+        Ok((dir.as_fd().try_clone_to_owned()?, dir.into_iter()))
     }
-    if metadata.is_file() {
-        return Ok(metadata.len());
+    // Count preallocation as well as sparse logical length. Linux st_blocks
+    // is expressed in 512-byte units, independent of the filesystem block size.
+    fn bytes(stat: &nix::sys::stat::FileStat) -> u64 {
+        (stat.st_size.max(0) as u64).max((stat.st_blocks.max(0) as u64).saturating_mul(512))
     }
-    let mut total = 0u64;
-    if metadata.is_dir() {
-        let entries = match std::fs::read_dir(path) {
-            Ok(entries) => entries,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(0),
-            Err(err) => {
-                return Err(err)
-                    .wrap_err_with(|| format!("accounting build directory {}", path.display()));
-            }
+    let mut total = bytes(&fstat(&root).map_err(std::io::Error::from)?);
+    let mut stack = vec![frame(root)?];
+    while let Some((fd, entries)) = stack.last_mut() {
+        check_running()?;
+        if total > budget {
+            bail!("build exceeded disk budget");
+        }
+        let Some(entry) = entries.next() else {
+            stack.pop();
+            continue;
         };
-        for entry in entries {
-            total = total.saturating_add(disk_bytes(&entry?.path())?);
+        let entry = entry.map_err(std::io::Error::from)?;
+        let name = entry.file_name();
+        if name.to_bytes() == b"." || name.to_bytes() == b".." {
+            continue;
+        }
+        let stat = match fstatat(&*fd, name, AtFlags::AT_SYMLINK_NOFOLLOW) {
+            Ok(stat) => stat,
+            Err(Errno::ENOENT) => continue,
+            Err(err) => return Err(std::io::Error::from(err).into()),
+        };
+        let kind = SFlag::from_bits_truncate(stat.st_mode) & SFlag::S_IFMT;
+        if kind == SFlag::S_IFDIR {
+            // The no-follow open is relative to the already-open parent. A
+            // rename/symlink swap after fstatat cannot redirect traversal.
+            let child = match Dir::openat(&*fd, name, accounting_flags(), Mode::empty()) {
+                Ok(child) => child,
+                Err(Errno::ENOENT | Errno::ENOTDIR | Errno::ELOOP) => continue,
+                Err(err) => {
+                    return Err(std::io::Error::from(err)).wrap_err_with(|| {
+                        format!("accounting build directory {}", name.to_string_lossy())
+                    });
+                }
+            };
+            total = total.saturating_add(bytes(&fstat(&child).map_err(std::io::Error::from)?));
+            stack.push(frame(child)?);
+        } else if kind == SFlag::S_IFREG {
+            total = total.saturating_add(bytes(&stat));
         }
     }
-    Ok(total)
+    Ok(())
+}
+
+#[cfg(test)]
+mod accounting_tests {
+    use super::*;
+    #[test]
+    fn scan_stays_anchored_and_does_not_follow_symlinks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let run = tmp.path().join("run");
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir(&run).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("large"), vec![0; 2 * 1024 * 1024]).unwrap();
+        std::os::unix::fs::symlink(&outside, run.join("link")).unwrap();
+        let root =
+            nix::dir::Dir::open(&run, accounting_flags(), nix::sys::stat::Mode::empty()).unwrap();
+        std::fs::rename(&run, tmp.path().join("original")).unwrap();
+        std::os::unix::fs::symlink(&outside, &run).unwrap();
+        check_disk_dir(root, 1024 * 1024, || Ok(())).unwrap();
+        assert!(check_disk(&run, 1024 * 1024, || Ok(())).is_err());
+    }
+    #[test]
+    fn traversal_checks_cancellation_and_deadlines() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("entry"), b"x").unwrap();
+        let mut checks = 0;
+        let err = check_disk(tmp.path(), u64::MAX, || {
+            checks += 1;
+            if checks == 2 {
+                bail!("build cancelled during traversal");
+            }
+            Ok(())
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("cancelled during traversal"));
+    }
 }

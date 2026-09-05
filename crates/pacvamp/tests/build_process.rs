@@ -239,3 +239,24 @@ fn signal_lifecycle_probe() {
         panic!("termination signal was ignored after supervision");
     }
 }
+
+#[test]
+fn preallocated_storage_counts_even_when_logical_length_is_zero() {
+    use std::os::unix::fs::MetadataExt as _;
+    let dir = tempfile::tempdir().unwrap();
+    let limits = Limits {
+        disk_mb: 1,
+        file_mb: 4,
+        ..Default::default()
+    };
+    let mut child = spawn(
+        dir.path(),
+        "touch reserved && fallocate --keep-size --length 2M reserved",
+        limits.clone(),
+    );
+    let err = child.wait(&limits, dir.path()).unwrap_err();
+    assert!(err.to_string().contains("disk budget"), "{err:#}");
+    let metadata = std::fs::metadata(dir.path().join("reserved")).unwrap();
+    assert_eq!(metadata.len(), 0);
+    assert!(metadata.blocks() * 512 > 1024 * 1024);
+}

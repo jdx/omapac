@@ -34,7 +34,7 @@ indexmap.workspace = true
 jiff.workspace = true
 landlock.workspace = true
 libc.workspace = true
-nix = { workspace = true, features = ["fs", "resource", "signal"] }
+nix = { workspace = true, features = ["dir", "fs", "resource", "signal"] }
 pacvamp-cli-support.workspace = true
 pacvamp-policy.workspace = true
 packslip.workspace = true
