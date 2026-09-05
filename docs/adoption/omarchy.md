@@ -27,40 +27,112 @@ on it. The package installs:
 - `/usr/share/pacvamp/keys/omarchy.pub`, the feed and channel key (or
   ship it in `omarchy-keyring`)
 
-## 2. Shims
+## 2. Ownership and scripted helpers
 
-Turn `omarchy-pkg-add`, `omarchy-pkg-drop`, `omarchy-pkg-aur-add`,
-`omarchy-pkg-install`, `omarchy-pkg-aur-install`, `omarchy-pkg-remove`,
-`omarchy-pkg-present`, and `omarchy-pkg-missing` into one-line shims:
+Keep four integration paths separate:
+
+| Intent | Command / owner | Manifest behavior |
+| --- | --- | --- |
+| Distro base packages and retired packages | Root owns `/etc/pacvamp/conf.d/10-omarchy.toml`; run `pacvamp apply -y` | Updates the installed state from distro declarations |
+| Packages deliberately chosen by a user | Run `pacvamp add <names>` / `pacvamp drop <names>` as that login user | Edits that user's manifest; prompts before applying |
+| Installer, hardware detection, migration, temporary tools | The scripted helpers below use `install -y` / `remove -y` | Does not edit any manifest |
+| Unattended updates | `pacvamp update --no-aur -y`, then AUR update as the build user | Reads policy/holds; does not declare packages |
+
+`omarchy-pkg-add`, `omarchy-pkg-aur-add`, and `omarchy-pkg-drop` already serve
+noninteractive setup/migration callers. Install the tested replacements from
+[`omarchy/`](https://github.com/jdx/pacvamp/tree/main/docs/adoption/omarchy):
 
 ```bash
-exec pacvamp add "$@"          # omarchy-pkg-add
-exec pacvamp add --aur "$@"    # omarchy-pkg-aur-add
-exec pacvamp install -y "$@"   # omarchy-pkg-install
-exec pacvamp present "$@"      # omarchy-pkg-present
+sudo install -m755 docs/adoption/omarchy/omarchy-pkg-{add,aur-add,drop} /usr/local/bin/
 ```
 
-Guards that tested `pacman -Q` use `pacvamp present`.
+Check PATH precedence when replacing the packaged helpers. `pkg-add` runs
+`pacvamp install -y -- "$@"` and verifies each exact package is installed.
+`pkg-aur-add` checks exact installed names, builds only missing ones, and verifies
+the result. `pkg-drop` filters absent and duplicate names before
+`pacvamp remove -y --nosave`; it retains the recursive dependency cleanup of
+`pacman -Rns`. These helpers accept package names, not arbitrary pacman options.
+A missing database or failed post-install check fails the helper.
 
-## 3. The update path, in three moves
+Keep the existing `omarchy-pkg-present` / `omarchy-pkg-missing` helpers until their
+callers are audited: pacvamp's guards also accept virtual providers, and
+`pacvamp missing a b` means **neither** is installed, not “at least one is missing.”
+The replacement installers do not rely on that mixed-list ambiguity.
 
-1. Replace `yay -Sua --noconfirm` in `omarchy-update-aur-pkgs` with
-   `pacvamp update --aur-only -y`. Unattended, every warning denies and
-   skips, so a hostile AUR commit is never built at 3am.
-2. Replace the `pacman -Syu` step with `pacvamp update --no-aur -y`. It
-   waits for the database lock, honours the manifest's overwrite and
-   ignore lists, keeps the `OMARCHY_UPDATE_PACMAN=1` guard variable, and
-   records the snapshot it converged to.
-3. Drop `yay` from the base install. `pacvamp update -y` then runs both.
+Run repository helpers in the caller's existing user context; pacvamp elevates
+only pacman. `HOME` and `XDG_CONFIG_HOME` select the invoking user's policy layer;
+`SUDO_USER` does not redirect it. Never run `sudo pacvamp add` to install a user's
+selection. Automated root installers and migrations should explicitly use
+`HOME=/root XDG_CONFIG_HOME=/var/empty/pacvamp` with that empty config directory
+owned by root, and put mandatory controls in `/etc/pacvamp/managed.toml`.
+Do not inherit another user's `PACVAMP_MANAGED_CONFIG_PATH` into a root service.
+For example, after provisioning the root-owned empty directory:
 
-`omarchy update` also runs `pacvamp apply -y` so the distro manifest
-converges (new base packages installed, retired ones removed).
+```bash
+env -u PACVAMP_MANAGED_CONFIG_PATH HOME=/root XDG_CONFIG_HOME=/var/empty/pacvamp   omarchy-pkg-add networkmanager
+```
 
-## 4. Menus
+AUR builds must run as the intended non-root login/build user, with that user's
+HOME and config. A root installer must select this account explicitly and use
+`runuser -u <account> -- ...`; do not guess it from an inherited environment.
+Preconfigure noninteractive elevation for allowed pacman transactions. Missing
+sudo credentials fail promptly; `-y` does not provide them.
 
-Point the install and remove rows at the pickers: `pacvamp search --pick <terms>`,
-`pacvamp search --aur --pick <terms>`, and `pacvamp remove --pick`.
-`pacvamp aur review --pager <pkg>` is the review screen.
+During migration, keep machine-detected driver selections imperative unless the
+distro deliberately records them in a root-owned machine-specific `conf.d` file.
+Do not import temporary tools into the user's manifest. Retire base packages by
+changing the owning distro declaration to `state = "absent"` before `apply`.
+An imperative removal leaves declarations intact, so a later `apply` can reinstall
+the package. `drop` only removes the user's declaration and preserves lower-layer
+requirements; it is not the scripted removal helper.
+
+## 3. Unattended updates and failures
+
+Preserve Omarchy's snapshot, update lock, logging and migration ordering. Replace
+only the package steps. Tested `omarchy-update-system-pkgs` and
+`omarchy-update-aur-pkgs` replacements are included in the same directory;
+install them after configuring the execution contexts described above:
+
+```bash
+# omarchy-update-system-pkgs, in the established system context:
+pacvamp update --no-aur -y
+# Converge distro declarations before migrations that require them:
+pacvamp apply -y
+# omarchy-update-aur-pkgs, as the intended non-root build user:
+pacvamp update --aur-only -y
+```
+
+Use `set -e` (as Omarchy's update entrypoint already does) and preserve stdout,
+stderr and exit status in the update log. Failed required installs/removals or
+repository updates stop dependent migration work. Do not add `|| true`, retry
+with direct `pacman --noconfirm`, or disable policy to work around a refusal.
+`-y` refuses install/remove warnings instead of presenting a prompt. Repository
+upgrades allow the existing custom-repository warning exception but still enforce
+configured trust checks and other blocking warnings.
+
+Release-age holds and denied AUR candidates may be reported and skipped while
+`update -y` exits successfully. Success therefore does not mean every package was
+upgraded. Retain the `held` / `blocked unattended` / `skipped` reports and their
+retry guidance in Omarchy's status/log view; a migration requiring a specific
+version must verify it explicitly (for example `pacvamp present 'pacman>=7'`)
+before running. Interactive review of a blocked AUR package is a separate user
+action. Do not drop `yay` until these paths and required AUR build dependencies
+have passed an installation/update rehearsal.
+
+## 4. User menus
+
+`omarchy-pkg-install`, `omarchy-pkg-aur-install`, and `omarchy-pkg-remove` are
+interactive pickers, not aliases for the scripted helpers. Keep their selection
+UI and pass the selected package-name array to `pacvamp add -- "${selected[@]}"`,
+`pacvamp add --aur -- "${selected[@]}"`, or `pacvamp drop -- "${selected[@]}"`
+as the login user when the choice is intended to be persistent. Explain that
+`drop` cannot remove a lower-layer requirement. An explicit “remove anyway” action
+can invoke `remove`, with a warning that future convergence may reinstall it.
+
+`pacvamp search --pick <terms>` currently invokes imperative `install`, so it is
+appropriate for a one-time install menu only. `pacvamp aur review --pager <pkg>`
+is the review screen. Do not silently convert existing scripted callers to the
+persistent menu path.
 
 ## 5. Channels
 
