@@ -187,7 +187,7 @@ runuser -u pacvamp-builder -- env \
   PACVAMP_AUR_RPC_BASE=http://127.0.0.1:18763 \
   PACVAMP_AUR_GIT_BASE=file:///srv/pacvamp-aur \
   /usr/local/bin/pacvamp aur build pacvamp-jail-probe
-artifact=/home/pacvamp-builder/.cache/pacvamp/aur/.pacvamp-build/pkgs/pacvamp-jail-probe/pacvamp-jail-probe-1-1-any.pkg.tar.zst
+artifact=$(find /home/pacvamp-builder/.cache/pacvamp/aur/.pacvamp-build/runs -path "*/pkgs/pacvamp-jail-probe-1-1-any.pkg.tar.zst" -print -quit)
 test -f "$artifact"
 test ! -e "$(dirname "$artifact")/verify-only"
 bsdtar -xOf "$artifact" .BUILDINFO | grep '^installed = pacman-' >/dev/null

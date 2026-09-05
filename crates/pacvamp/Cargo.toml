@@ -45,6 +45,7 @@ serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 tempfile.workspace = true
+tar = "0.4"
 toml.workspace = true
 toml_edit.workspace = true
 ureq.workspace = true

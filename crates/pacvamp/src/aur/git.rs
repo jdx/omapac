@@ -53,6 +53,7 @@ impl Checkout {
         if !valid_pkgbase(pkgbase) {
             bail!("invalid AUR package base {pkgbase:?}");
         }
+        let _lock = super::locking::acquire(cache_dir, pkgbase)?;
         let dir = cache_dir.join(pkgbase);
         let checkout = Checkout {
             pkgbase: pkgbase.to_string(),
@@ -143,6 +144,16 @@ impl Checkout {
     /// Move the working tree to an exact commit.
     pub fn checkout(&self, commit: &str) -> Result<()> {
         self.git(&["checkout", "--quiet", "--force", "--detach", commit])?;
+        Ok(())
+    }
+
+    /// Export immutable commit contents without reading or moving the shared worktree.
+    pub fn export(&self, commit: &str, destination: &std::path::Path) -> Result<()> {
+        let bytes = self.git_bytes(&["archive", "--format=tar", commit])?;
+        std::fs::create_dir_all(destination)?;
+        tar::Archive::new(bytes.as_slice())
+            .unpack(destination)
+            .wrap_err("exporting the approved recipe")?;
         Ok(())
     }
 
