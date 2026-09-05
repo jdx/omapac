@@ -110,6 +110,24 @@ Fetches the package's git history and metadata, evaluates the policy findings ag
         arg <ARTIFACT>
     }
 }
+cmd cache help="Inspect retained build data or prune unused runs" subcommand_required=#true {
+    flag "-h --help" help="Print help" action=help builtin=#true
+    cmd status help="Show retained build runs and protected evidence" {
+        flag --json
+        flag "-h --help" help="Print help" action=help builtin=#true
+    }
+    cmd prune help="Remove unused runs older than the retention window or over the size budget" {
+        flag --dry-run help="Preview without deleting anything"
+        flag --older-than-days help="Retain unused runs for this many days (recent runs always have a one-hour grace)" default="30" {
+            arg <OLDER_THAN_DAYS>
+        }
+        flag --max-bytes help="Target total bytes; protected runs can keep usage above this target" {
+            arg <MAX_BYTES>
+        }
+        flag --json
+        flag "-h --help" help="Print help" action=help builtin=#true
+    }
+}
 cmd channel help="Show the channel and snapshot this machine follows, or pin one" {
     long_help #"""
 Show the channel and snapshot this machine follows, or pin one

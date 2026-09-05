@@ -9,6 +9,7 @@ use crate::host::{Host, HostPaths};
 
 mod audit;
 mod aur_cmd;
+mod cache;
 mod channel;
 mod converge;
 mod declare;
@@ -81,6 +82,7 @@ enum Commands {
     Apply(declare::Apply),
     Audit(audit::Audit),
     Aur(aur_cmd::Aur),
+    Cache(cache::Cache),
     Channel(channel::Channel),
     Doctor(doctor::Doctor),
     Drop(declare::Drop),
@@ -149,6 +151,23 @@ pub fn run(args: &[OsString]) -> Result<()> {
             config: cli.config,
             sysroot: cli.sysroot,
         },
+    };
+    // Keep generated artifacts leased through approval, installation, and the
+    // final ledger write, even after the build's options have been dropped.
+    let _cache_lease = if matches!(
+        cli.command.as_ref(),
+        Some(
+            Commands::Aur(_)
+                | Commands::Install(_)
+                | Commands::Update(_)
+                | Commands::Add(_)
+                | Commands::Apply(_)
+                | Commands::Drop(_)
+        )
+    ) {
+        Some(crate::aur::cache::lease(&crate::aur::cache_dir(), false)?)
+    } else {
+        None
     };
     match cli.command {
         Some(command) => command.run_with(&app),
