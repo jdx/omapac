@@ -1,0 +1,61 @@
+name: auto-merge-release
+
+on:
+  schedule:
+    - cron: "0 10 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: auto-merge-release
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    if: github.repository == 'jdx/pacvamp'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: Merge release into main
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ "${GITHUB_EVENT_NAME:-}" != "workflow_dispatch" ]; then
+            latest_tag=$(git describe --tags --match 'v[0-9]*' --abbrev=0 || true)
+            if [ -n "$latest_tag" ]; then
+              tag_time=$(git for-each-ref --format='%(creatordate:unix)' "refs/tags/$latest_tag")
+              min_age=$((7 * 24 * 60 * 60))
+              if [ "$(($(date +%s) - tag_time))" -lt "$min_age" ]; then
+                echo "Latest release $latest_tag is less than 7 days old"
+                exit 0
+              fi
+              if ! git log --format=%s "$latest_tag..HEAD" |
+                grep -Eq '^(fix|feat)(\([^)]+\))?!?: '; then
+                echo "No pending fix or feature commits"
+                exit 0
+              fi
+            fi
+          fi
+
+          pr=$(gh pr list --repo jdx/pacvamp --base main --head release \
+            --state open --json number --jq '.[0].number // empty')
+          if [ -z "$pr" ]; then
+            echo "No open release PR"
+            exit 0
+          fi
+          body=$(gh pr view "$pr" --repo jdx/pacvamp --json body --jq '.body // ""')
+          if [ -z "$(printf '%s' "$body" | tr -d '[:space:]')" ]; then
+            echo "Release PR #$pr has no description; refusing to merge"
+            exit 0
+          fi
+          gh pr merge "$pr" --repo jdx/pacvamp --squash --auto
