@@ -982,3 +982,11 @@ The helper sets kernel limits and prevents process-group escape; the parent
 supervises cancellation and cleans up descendants. Per-process/account limits
 and the sampled disk budget are explicitly distinguished from cgroup quotas.
 See docs/build-controls.md for defaults and cancellation limits.
+
+### Local AUR build receipts
+
+Successful builds retain a local receipt with the recipe commit, verified-source
+inventory, Git source refs, available dependency versions, makepkg digest, build
+policy and output digests. Installation checks the artifact against this receipt
+and records its path and hash in the ledger. Receipts are explicitly local records,
+not publisher attestations or proof of reproducibility.

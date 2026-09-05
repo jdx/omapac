@@ -125,6 +125,11 @@ fn build_runs_both_phases_with_a_scrubbed_environment() {
         .path();
     let pkg = first.join("pkgs/yay-13.0.1-1-x86_64.pkg.tar.zst");
     assert!(pkg.exists(), "{}", pkg.display());
+    let (receipt, reference) = pacvamp::aur::receipt::for_artifact(&pkg).unwrap();
+    assert_eq!(receipt.commit, s.aur.head("yay"));
+    assert!(!receipt.dependencies["pacman"].is_empty());
+    assert!(reference.path.is_file());
+
     assert!(first.join("build/worktree/PKGBUILD").is_file());
     // Untracked cache files must never enter a later approved build.
     std::fs::write(
@@ -140,6 +145,14 @@ fn build_runs_both_phases_with_a_scrubbed_environment() {
     );
     let runs: Vec<_> = std::fs::read_dir(runs).unwrap().collect();
     assert_eq!(runs.len(), 2);
+    std::fs::write(&pkg, "tampered artifact").unwrap();
+    assert!(
+        pacvamp::aur::receipt::for_artifact(&pkg)
+            .unwrap_err()
+            .to_string()
+            .contains("does not match")
+    );
+
     for run in runs {
         assert!(
             !run.unwrap()
@@ -760,4 +773,24 @@ fn exports_raw_reviewed_blobs_without_archive_attributes_or_untracked_files() {
         std::fs::read_to_string(destination.join("version")).unwrap(),
         "$Format:%H$\n"
     );
+}
+
+#[test]
+fn source_inventory_records_links_without_reading_outside_the_tree_and_pins_git_refs() {
+    let s = setup();
+    let source = s.rig.dir.path().join("source-inputs");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::write(source.join("archive"), "downloaded source").unwrap();
+    std::os::unix::fs::symlink("/outside/private", source.join("link")).unwrap();
+    let inventory = pacvamp::aur::receipt::inputs(&source).unwrap();
+    assert_eq!(
+        inventory[Path::new("archive")].sha256.as_ref().unwrap(),
+        &packslip::digest_file(&source.join("archive")).unwrap().0
+    );
+    assert_eq!(
+        inventory[Path::new("link")].link.as_deref(),
+        Some(Path::new("/outside/private"))
+    );
+    let refs = pacvamp::aur::receipt::vcs_refs(&s.aur.dir).unwrap();
+    assert!(refs[Path::new("yay.git")].contains(&s.aur.head("yay")));
 }

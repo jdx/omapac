@@ -15,6 +15,7 @@ fn recovery_keeps_original_evidence_and_never_promotes_uncertain_operations() {
             tier: Tier::Opr,
             repo: Some("omarchy".into()),
             aur_commit: None,
+            build_receipt: None,
             verification: Some(Verification {
                 index_sequence: 7,
                 index_key: "accepted-key".into(),
