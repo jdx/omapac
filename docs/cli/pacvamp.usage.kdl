@@ -1,6 +1,6 @@
 name pacvamp
 bin pacvamp
-version "0.1.0"
+version "0.1.1"
 author "Jeff Dickey <@jdx>"
 about "A trust-focused package manager for pacman-based Linux distributions"
 long_about "pacvamp installs, removes, and updates packages from the Arch mirror, the Omarchy Package Repository, and the AUR through one command, with trust tiers, commit-bound AUR builds, and policy that is stricter when nobody is watching. https://github.com/jdx/pacvamp"

@@ -34,7 +34,7 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
 name = "alpm-db"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "flate2",
  "glob",
@@ -1981,7 +1981,7 @@ dependencies = [
 
 [[package]]
 name = "pacvamp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "alpm-db",
  "base64 0.22.1",
@@ -2013,7 +2013,7 @@ dependencies = [
 
 [[package]]
 name = "pacvamp-cli-support"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "eyre",
  "serde_json",
@@ -2022,7 +2022,7 @@ dependencies = [
 
 [[package]]
 name = "pacvamp-policy"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "regex",
  "serde",
@@ -2031,7 +2031,7 @@ dependencies = [
 
 [[package]]
 name = "pacvamp-repo"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "alpm-db",
  "base64 0.22.1",

@@ -3,7 +3,7 @@
 
 **Usage:** `pacvamp-repo <SUBCOMMAND>`
 
-**Version:** 0.1.0
+**Version:** 0.1.1
 
 **Author:** Jeff Dickey <@jdx>
 
