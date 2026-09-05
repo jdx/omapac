@@ -1,3 +1,4 @@
+wrappers = { cargo = { command = "mbx", env = { MBX_CARGO_SHIM_MODE = "1" } } }
 [env]
 _.path = ["./target/debug"]
 
@@ -9,6 +10,7 @@ cargo-insta = "latest"
 communique = "latest"
 git-cliff = "latest"
 hk = "latest"
+mr-boxington = "latest"
 shellcheck = "latest"
 shfmt = "latest"
 taplo = "latest"

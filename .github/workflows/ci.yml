@@ -17,42 +17,49 @@ env:
   RUSTFLAGS: -D warnings
 
 jobs:
-  test:
+  ci:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-features --all-targets -- -D warnings
-      - run: cargo build --workspace --all-features
-      - run: cargo test --workspace --all-features
-        env:
-          PACVAMP_REQUIRE_JAIL: "1"
-
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
       - uses: jdx/mise-action@v3
-      - run: mise run lint
-      - run: mise run render:check
+        with:
+          install_args: --locked actionlint hk mr-boxington shellcheck shfmt taplo usage
+      - uses: ./.github/actions/mbx
+      - name: Run non-compiling linters
+        run: mise run lint
+        env:
+          HK_SKIP_STEPS: cargo-clippy
+      - parallel:
+          - name: Test and check generated CLI docs
+            run: |
+              mbx test --workspace --all-features
+              mise run render:check
+            env:
+              PACVAMP_REQUIRE_JAIL: "1"
+          - name: Clippy
+            run: mbx clippy --workspace --all-features --all-targets -- -D warnings
+            env:
+              CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-clippy
 
   arch-e2e:
     name: arch-e2e
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo build --locked --workspace --all-features
+      - uses: jdx/mise-action@v3
+        with:
+          install_args: --locked mr-boxington
+      - uses: ./.github/actions/mbx
+      - run: mbx build --locked --workspace --all-features
       - name: Allow nested build namespaces on the disposable runner
         # Ubuntu's host AppArmor restriction also applies inside privileged
         # Docker containers. The clean-image fixture runs bwrap as non-root.
@@ -67,8 +74,7 @@ jobs:
   final:
     permissions: {}
     needs:
-      - test
-      - lint
+      - ci
       - arch-e2e
     runs-on: ubuntu-latest
     timeout-minutes: 1
@@ -78,8 +84,7 @@ jobs:
     steps:
       - name: Check job results
         if: |
-          needs.test.result != 'success' ||
-          needs.lint.result != 'success' ||
+          needs.ci.result != 'success' ||
           needs.arch-e2e.result != 'success'
         run: exit 1
       - run: echo "All CI jobs completed successfully"
