@@ -19,7 +19,7 @@ fn recovery_keeps_original_evidence_and_never_promotes_uncertain_operations() {
                 index_sequence: 7,
                 index_key: "accepted-key".into(),
                 sha256: "accepted-digest".into(),
-                level: packslip::model::Level::L2,
+                level: pacvamp_policy::Level::L2,
                 build_key: None,
             }),
             explicit: true,
