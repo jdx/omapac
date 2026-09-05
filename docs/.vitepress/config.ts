@@ -1,3 +1,4 @@
+import { socialCard, writeSocialCard } from "./social-images.mjs";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,15 +25,11 @@ export default defineConfig({
     ["meta", { property: "og:type", content: "website" }],
     ["meta", { property: "og:site_name", content: "pacvamp" }],
     ["meta", { property: "og:locale", content: "en_US" }],
-    ["meta", { property: "og:image", content: "https://pacvamp.com/og-image.png" }],
     ["meta", { property: "og:image:type", content: "image/png" }],
     ["meta", { property: "og:image:width", content: "1200" }],
     ["meta", { property: "og:image:height", content: "630" }],
-    ["meta", { property: "og:image:alt", content: "pacvamp — a pacman frontend with fangs. Official repos, third-party repos, and AUR — one command, trust tiers built in." }],
     ["meta", { name: "twitter:card", content: "summary_large_image" }],
     ["meta", { name: "twitter:site", content: "@jdxcode" }],
-    ["meta", { name: "twitter:image", content: "https://pacvamp.com/og-image.png" }],
-    ["meta", { name: "twitter:image:alt", content: "pacvamp — a pacman frontend with fangs. Official repos, third-party repos, and AUR — one command, trust tiers built in." }],
     ["link", { rel: "icon", href: "/favicon.ico", sizes: "any" }],
     ["link", { rel: "icon", type: "image/png", sizes: "32x32", href: "/favicon-32x32.png" }],
     ["link", { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" }],
@@ -40,7 +37,15 @@ export default defineConfig({
     ["link", { rel: "manifest", href: "/site.webmanifest" }],
     ["meta", { name: "theme-color", content: "#17112b" }],
   ],
-  transformHead: ({ pageData, title, description: pageDescription }) => {
+  transformHead: ({ pageData, title, description: pageDescription, siteConfig }) => {
+    const heading =
+      pageData.relativePath === "index.md"
+        ? "Trusted packages for pacman systems"
+        : pageData.title || "pacvamp";
+    const card = socialCard(heading);
+    writeSocialCard(siteConfig.outDir, card);
+    const image = new URL(card.path, `${siteUrl}/`).toString();
+    const imageAlt = `${heading} — pacvamp docs`;
     const pagePath = pageData.relativePath
       .replace(/(^|\/)index\.md$/, "$1")
       .replace(/\.md$/, "");
@@ -49,6 +54,10 @@ export default defineConfig({
     return [
       ["link", { rel: "canonical", href: url }],
       ["meta", { property: "og:url", content: url }],
+      ["meta", { property: "og:image", content: image }],
+      ["meta", { property: "og:image:alt", content: imageAlt }],
+      ["meta", { name: "twitter:image", content: image }],
+      ["meta", { name: "twitter:image:alt", content: imageAlt }],
       ["meta", { property: "og:title", content: title }],
       ["meta", { property: "og:description", content: pageDescription }],
       ["meta", { name: "twitter:title", content: title }],
