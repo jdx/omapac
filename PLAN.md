@@ -1024,3 +1024,9 @@ Receipt comparison reports differences in recipe, sources, image, dependencies,
 settings and outputs. Offline replay requires approved commits, retained source
 inputs and matching image fingerprints, and uses the recorded SOURCE_DATE_EPOCH.
 The result is a local comparison, not an independent reproducibility attestation.
+
+Boot acceptance uses a real Arch kernel and ext4 disk under QEMU, signed fixture
+repositories and snapshots, a prior release (or pre-release merged-main baseline),
+interrupted transaction recovery, rollback, and a second boot checking persistence.
+The job fails on missing capabilities or success markers and retains serial logs
+and binary identities. Desktop/distro-wide upgrade matrices remain separate.
