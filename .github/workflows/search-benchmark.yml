@@ -1,0 +1,28 @@
+name: search-benchmark
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: search-benchmark-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  search-benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: jdx/mise-action@v3
+        with:
+          install_args: --locked mr-boxington
+      - uses: ./.github/actions/mbx
+      - run: mbx build --locked --release -p pacvamp
+      - name: Measure fresh-process search and present on an Arch-sized corpus
+        run: python3 benchmarks/search.py --max-indexed-ms 150 --max-rebuild-ms 3000 --max-present-ms 100

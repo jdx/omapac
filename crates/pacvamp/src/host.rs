@@ -39,6 +39,10 @@ pub struct Source {
 }
 
 impl Source {
+    pub(crate) fn database_path(&self) -> &Path {
+        &self.db_path
+    }
+
     /// The sync database, parsed on first use. `None` when pacman has not
     /// downloaded it yet.
     pub fn db(&self) -> Result<Option<&SyncDb>> {

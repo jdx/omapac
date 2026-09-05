@@ -151,10 +151,7 @@ pub fn search(host: &Host, terms: &[String], only_installed: bool) -> Result<Vec
     let installed = host.installed_by_name()?;
     let mut hits = Vec::new();
     for source in &host.sources {
-        let Some(db) = source.db()? else {
-            continue;
-        };
-        for package in &db.packages {
+        for package in crate::search_cache::packages(source)? {
             if !matches(&terms, &package.name, package.desc.as_deref()) {
                 continue;
             }
