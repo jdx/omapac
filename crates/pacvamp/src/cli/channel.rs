@@ -334,6 +334,7 @@ impl RunWith<&App> for Rollback {
                 .display();
             let plan = super::transaction::plan(&host, &resolved, command);
             super::transaction::confirm_and_apply(
+                app,
                 &engine,
                 &resolved,
                 &plan,
@@ -397,6 +398,7 @@ impl RunWith<&App> for Rollback {
                 }
             }
             let performed = super::transaction::confirm_and_apply(
+                app,
                 &engine,
                 &resolved,
                 &plan,
@@ -415,7 +417,11 @@ impl RunWith<&App> for Rollback {
             Ok(())
         })();
         if let Err(err) = result {
-            if retain_pin {
+            if retain_pin
+                || err
+                    .downcast_ref::<super::recover::MutationCompleted>()
+                    .is_some()
+            {
                 return Err(err.wrap_err(
                     "the machine reached the snapshot; retaining its pin after a later bookkeeping failure",
                 ));

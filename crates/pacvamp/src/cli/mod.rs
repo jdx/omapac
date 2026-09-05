@@ -21,6 +21,7 @@ mod ledger_cmd;
 mod list;
 mod pacnew;
 mod present;
+mod recover;
 mod remove;
 mod search;
 mod tools;
@@ -98,6 +99,7 @@ enum Commands {
     Plan(declare::Plan),
     Present(present::Present),
     Remove(remove::Remove),
+    Recover(recover::Recover),
     Rollback(channel::Rollback),
     Search(search::Search),
     Status(declare::Status),

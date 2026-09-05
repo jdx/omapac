@@ -94,7 +94,7 @@ impl RunWith<&App> for Install {
                 &engine,
                 &resolved,
                 &plan,
-                self.yes,
+                ("install", self.yes),
             )?
         } else {
             None

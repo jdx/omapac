@@ -198,6 +198,7 @@ pub fn render(verb: &str, plan: &Plan) -> String {
 /// Unattended runs (`yes`) refuse a plan with warnings: what a human is
 /// warned about, automation is denied. See `PLAN.md`, principle 5.
 pub fn confirm_and_apply(
+    app: &super::App,
     engine: &dyn Engine,
     resolved: &ResolvedTx,
     plan: &Plan,
@@ -208,7 +209,12 @@ pub fn confirm_and_apply(
     if !confirm_plan(plan, verb, yes, dry_run)? {
         return Ok(false);
     }
-    apply_confirmed(engine, resolved, plan, yes)
+    let removing = matches!(
+        resolved.transaction.operation,
+        crate::engine::Operation::Remove { .. }
+    );
+    let patch = intent_patch(app, resolved, plan, verb, removing)?;
+    app.journaled(patch, || apply_confirmed(engine, resolved, plan, yes))
 }
 
 /// Show and confirm a plan without applying it yet.
@@ -272,10 +278,52 @@ pub fn apply_confirmed(
     Ok(true)
 }
 
+fn intent_patch(
+    app: &super::App,
+    resolved: &ResolvedTx,
+    plan: &Plan,
+    by: &str,
+    removing: bool,
+) -> Result<Patch> {
+    let host = app.host()?;
+    let mut explicit = Vec::new();
+    for change in &plan.changes {
+        if host
+            .installed_package(&change.name)?
+            .is_some_and(|p| p.reason == alpm_db::InstallReason::Explicit)
+        {
+            explicit.push(change.name.clone());
+        }
+    }
+    if let crate::engine::Operation::Install {
+        targets,
+        as_deps: false,
+        ..
+    } = &resolved.transaction.operation
+    {
+        explicit.extend(targets.iter().map(|t| t.name.clone()));
+    }
+    let mut patch = ledger_patch(plan, &explicit, by, removing);
+    if let crate::engine::Operation::Install {
+        targets,
+        as_deps: true,
+        ..
+    } = &resolved.transaction.operation
+    {
+        for target in targets {
+            if let Some(entry) = patch.upsert.get_mut(&target.name) {
+                entry.explicit = false;
+                patch.install_reasons.insert(target.name.clone(), false);
+            }
+        }
+    }
+    Ok(patch)
+}
+
 /// Repository evidence accepted for a resolved transaction. Callers merge
 /// this into the package ledger patch after pacman succeeds, so package state
 /// and rollback state are written atomically.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct AcceptedEvidence {
     packages: BTreeMap<String, Verification>,
     index_sequences: BTreeMap<String, u64>,
@@ -301,13 +349,20 @@ pub fn verify_and_apply(
     engine: &dyn Engine,
     resolved: &ResolvedTx,
     plan: &Plan,
-    yes: bool,
+    execution: (&str, bool),
 ) -> Result<Option<AcceptedEvidence>> {
+    let (by, yes) = execution;
     if plan.changes.is_empty() {
         return Ok(None);
     }
     let evidence = verify_transaction(app, host, settings, engine, resolved)?;
-    apply_confirmed(engine, resolved, plan, yes)?;
+    let removing = matches!(
+        resolved.transaction.operation,
+        crate::engine::Operation::Remove { .. }
+    );
+    let mut patch = intent_patch(app, resolved, plan, by, removing)?;
+    evidence.clone().attach(&mut patch);
+    app.journaled(patch, || apply_confirmed(engine, resolved, plan, yes))?;
     Ok(Some(evidence))
 }
 

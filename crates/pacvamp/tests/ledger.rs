@@ -34,8 +34,13 @@ fn install_records_and_remove_forgets() {
     // Dry runs and refused plans record nothing.
     let before = std::fs::read_to_string(&ledger).unwrap();
     rig.run(&["install", "-n", "pacman"], CURL_PLAN, 0);
-    rig.run(&["install", "-y", "pacman"], CURL_PLAN, 2);
     assert_eq!(std::fs::read_to_string(&ledger).unwrap(), before);
+    rig.run(&["install", "-y", "pacman"], CURL_PLAN, 2);
+    let failed = pacvamp::ledger::Ledger::load(&ledger).unwrap();
+    let prior: pacvamp::ledger::Ledger = serde_json::from_str(&before).unwrap();
+    assert_eq!(failed.packages, prior.packages);
+    assert_eq!(failed.pending.len(), 1);
+    assert!(!failed.pending.values().next().unwrap().completed);
 
     // The fake never really installed curl, so the ledger is ahead of the
     // machine: that is drift.
@@ -167,14 +172,11 @@ fn repeated_commands_repair_a_missing_ledger_write() {
     std::fs::remove_file(rig.user_manifest()).unwrap();
     std::fs::remove_file(&ledger).unwrap();
     std::fs::create_dir_all(&ledger).unwrap();
-    let (code, out, _) = rig.run(&["add", "-y", "curl"], CURL_PLAN, 0);
+    let (code, _, _) = rig.run(&["add", "-y", "curl"], CURL_PLAN, 0);
     assert_ne!(code, 0);
-    assert!(out.contains("declared curl"), "{out}");
     assert!(
-        std::fs::read_to_string(rig.user_manifest())
-            .unwrap()
-            .contains("curl = {}"),
-        "a completed package transaction keeps its declaration"
+        !rig.user_manifest().exists(),
+        "failure to journal must precede the package transaction"
     );
 }
 
@@ -258,5 +260,43 @@ fn hidden_ledger_merge_reads_a_patch_from_stdin() {
     assert!(
         !String::from_utf8_lossy(&help.stdout).contains("__ledger"),
         "hidden"
+    );
+}
+
+#[test]
+fn journal_preserves_explicit_as_deps_requests() {
+    let rig = Rig::new();
+    let plan = "pacman\\t7.1.0-1\\tcore\\thttps://m/pacman.pkg\\t1\\n";
+    let (code, _, err) = rig.run(&["install", "-y", "--as-deps", "pacman"], plan, 0);
+    assert_eq!(code, 0, "{err}");
+    let state =
+        pacvamp::ledger::Ledger::load(&rig.root.join("var/lib/pacvamp/state.json")).unwrap();
+    assert!(!state.packages["pacman"].explicit);
+}
+
+#[test]
+fn successful_pacman_keeps_declaration_when_journal_completion_fails() {
+    let rig = Rig::new();
+    let pacman = rig.bin.join("pacman");
+    let script = std::fs::read_to_string(&pacman).unwrap().replace(
+        "exit \"${FAKE_PACMAN_STATUS:-0}\"",
+        "ledger=\"$(dirname \"$FAKE_PACMAN_LOG\")/root/var/lib/pacvamp/state.json\"\nmv \"$ledger\" \"$ledger.prepared\"\nmkdir \"$ledger\"\nexit 0",
+    );
+    std::fs::write(&pacman, script).unwrap();
+    let (code, _, err) = rig.run(&["add", "-y", "curl"], CURL_PLAN, 0);
+    assert_ne!(code, 0);
+    assert!(err.contains("package mutation completed"), "{err}");
+    let pending =
+        pacvamp::ledger::Ledger::load(&rig.root.join("var/lib/pacvamp/state.json.prepared"))
+            .unwrap();
+    assert_eq!(
+        pending.pending.values().next().unwrap().patch.upsert["curl"].by,
+        "add"
+    );
+
+    assert!(
+        std::fs::read_to_string(rig.user_manifest())
+            .unwrap()
+            .contains("curl = {}")
     );
 }

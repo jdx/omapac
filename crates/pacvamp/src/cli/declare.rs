@@ -242,7 +242,11 @@ impl RunWith<&App> for Add {
             )
         })();
         if let Err(err) = result {
-            if committed {
+            if committed
+                || err
+                    .downcast_ref::<super::recover::MutationCompleted>()
+                    .is_some()
+            {
                 for name in declared {
                     println!("declared {name} in {}", paths.user.display());
                 }
@@ -373,6 +377,7 @@ impl RunWith<&App> for Drop {
             )
             .display();
         let performed = super::transaction::confirm_and_apply(
+            app,
             &engine,
             &resolved,
             &plan,
