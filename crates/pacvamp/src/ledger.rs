@@ -69,6 +69,8 @@ pub struct Ledger {
     /// The snapshot id the machine last converged to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snapshot: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub pending: BTreeMap<String, Pending>,
 }
 
 fn schema() -> u32 {
@@ -83,8 +85,17 @@ impl Default for Ledger {
             index_sequence: None,
             index_sequences: BTreeMap::new(),
             snapshot: None,
+            pending: BTreeMap::new(),
         }
     }
+}
+
+/// A durable transaction intent. Only a recorded successful pacman exit marks it completed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Pending {
+    pub at: i64,
+    pub completed: bool,
+    pub patch: Box<Patch>,
 }
 
 /// A change to merge into the ledger.
@@ -100,6 +111,8 @@ pub struct Patch {
     pub index_sequences: BTreeMap<String, u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snapshot: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub pending: BTreeMap<String, Option<Pending>>,
 }
 
 impl Patch {
@@ -109,6 +122,7 @@ impl Patch {
             && self.index_sequence.is_none()
             && self.index_sequences.is_empty()
             && self.snapshot.is_none()
+            && self.pending.is_empty()
     }
 }
 
@@ -146,6 +160,13 @@ impl Ledger {
 
     /// Apply a patch in memory.
     pub fn merge(&mut self, patch: &Patch) {
+        for (id, pending) in &patch.pending {
+            if let Some(pending) = pending {
+                self.pending.insert(id.clone(), pending.clone());
+            } else {
+                self.pending.remove(id);
+            }
+        }
         for name in &patch.remove {
             self.packages.remove(name);
         }
@@ -198,6 +219,7 @@ impl Ledger {
             let _ = std::fs::remove_file(&temp);
             return Err(err);
         }
+        std::fs::File::open(dir)?.sync_all()?;
         Ok(())
     }
 }

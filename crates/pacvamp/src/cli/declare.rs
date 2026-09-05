@@ -373,6 +373,7 @@ impl RunWith<&App> for Drop {
             )
             .display();
         let performed = super::transaction::confirm_and_apply(
+            app,
             &engine,
             &resolved,
             &plan,

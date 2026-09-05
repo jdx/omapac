@@ -487,7 +487,10 @@ impl RunWith<&App> for Update {
                     settings.trust_custom_repos,
                 );
                 transaction::validate_plan(&p, "remove orphans", self.yes)?;
-                let performed = transaction::apply_confirmed(&engine, &resolved, &p, self.yes)?;
+                let performed = app
+                    .journaled(transaction::ledger_patch(&p, &[], "update", true), || {
+                        transaction::apply_confirmed(&engine, &resolved, &p, self.yes)
+                    })?;
                 if performed {
                     app.record(&transaction::ledger_patch(&p, &[], "update", true))?;
                 }
@@ -639,21 +642,6 @@ fn update_aur_package(app: &App, name: &str, yes: bool) -> Result<AurOutcome> {
         }
     }
     let engine = app.engine()?;
-    for (files, as_deps) in [(dependency_files, true), (explicit_files, false)] {
-        if !files.is_empty() {
-            engine.install_files(
-                &crate::engine::FileInstall {
-                    files,
-                    as_deps,
-                    overwrite: Vec::new(),
-                },
-                ApplyOpts {
-                    dry_run: false,
-                    no_confirm: true,
-                },
-            )?;
-        }
-    }
     let mut patch = crate::ledger::Patch::default();
     for (package, explicit) in selected_packages {
         patch.upsert.insert(
@@ -670,6 +658,23 @@ fn update_aur_package(app: &App, name: &str, yes: bool) -> Result<AurOutcome> {
             },
         );
     }
-    app.record(&patch)?;
+    app.journaled(patch, || {
+        for (files, as_deps) in [(dependency_files, true), (explicit_files, false)] {
+            if !files.is_empty() {
+                engine.install_files(
+                    &crate::engine::FileInstall {
+                        files,
+                        as_deps,
+                        overwrite: Vec::new(),
+                    },
+                    ApplyOpts {
+                        dry_run: false,
+                        no_confirm: true,
+                    },
+                )?;
+            }
+        }
+        Ok(())
+    })?;
     Ok(AurOutcome::Updated(prepared.reviewed.target.clone()))
 }

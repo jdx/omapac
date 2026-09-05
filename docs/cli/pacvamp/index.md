@@ -41,6 +41,7 @@
 - [`pacvamp plan [-J --json] [--detailed-exitcode]`](/cli/pacvamp/plan.md)
 - [`pacvamp present <PACKAGES>…`](/cli/pacvamp/present.md)
 - [`pacvamp remove [FLAGS] [PACKAGES]…`](/cli/pacvamp/remove.md)
+- [`pacvamp recover [FLAGS]`](/cli/pacvamp/recover.md)
 - [`pacvamp rollback <FLAGS>`](/cli/pacvamp/rollback.md)
 - [`pacvamp search [FLAGS] <TERMS>…`](/cli/pacvamp/search.md)
 - [`pacvamp status [--missing] [-J --json]`](/cli/pacvamp/status.md)

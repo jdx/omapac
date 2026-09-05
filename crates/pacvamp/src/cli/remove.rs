@@ -125,6 +125,7 @@ impl RunWith<&App> for Remove {
             return print_json(&plan);
         }
         let performed = transaction::confirm_and_apply(
+            app,
             &engine,
             &resolved,
             &plan,

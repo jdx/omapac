@@ -334,6 +334,7 @@ impl RunWith<&App> for Rollback {
                 .display();
             let plan = super::transaction::plan(&host, &resolved, command);
             super::transaction::confirm_and_apply(
+                app,
                 &engine,
                 &resolved,
                 &plan,
@@ -397,6 +398,7 @@ impl RunWith<&App> for Rollback {
                 }
             }
             let performed = super::transaction::confirm_and_apply(
+                app,
                 &engine,
                 &resolved,
                 &plan,

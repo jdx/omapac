@@ -461,6 +461,7 @@ impl App {
             .display();
         let plan = super::transaction::plan(host, &resolved, command);
         let performed = super::transaction::confirm_and_apply(
+            self,
             &engine,
             &resolved,
             &plan,
@@ -559,22 +560,6 @@ impl App {
             selected.push((package, explicit));
         }
         let engine = self.engine()?;
-        for (files, as_deps) in [(dependency_files, true), (explicit_files, false)] {
-            if !files.is_empty() {
-                crate::engine::Engine::install_files(
-                    &engine,
-                    &crate::engine::FileInstall {
-                        files,
-                        as_deps,
-                        overwrite: Vec::new(),
-                    },
-                    crate::engine::ApplyOpts {
-                        dry_run: false,
-                        no_confirm: true,
-                    },
-                )?;
-            }
-        }
         let installed_names = selected
             .iter()
             .map(|(package, _)| package.name.as_str())
@@ -597,7 +582,25 @@ impl App {
                 },
             );
         }
-        self.record(&patch)?;
+        self.journaled(patch, || {
+            for (files, as_deps) in [(dependency_files, true), (explicit_files, false)] {
+                if !files.is_empty() {
+                    crate::engine::Engine::install_files(
+                        &engine,
+                        &crate::engine::FileInstall {
+                            files,
+                            as_deps,
+                            overwrite: Vec::new(),
+                        },
+                        crate::engine::ApplyOpts {
+                            dry_run: false,
+                            no_confirm: true,
+                        },
+                    )?;
+                }
+            }
+            Ok(())
+        })?;
         println!(
             "installed {} {} from AUR commit {}{}",
             installed_names,

@@ -250,6 +250,16 @@ pub(super) fn diagnose_protections(
         Err(err) => add(Status::Warn, "snapshot", format!("active release unavailable or rejected: {err:#}; {}", refresh_hint(refresh))),
     }
     match app.ledger().and_then(|ledger| {
+        if !ledger.pending.is_empty() {
+            add(
+                Status::Warn,
+                "transaction-recovery",
+                format!(
+                    "{} interrupted transaction(s); inspect with pacvamp recover",
+                    ledger.pending.len()
+                ),
+            );
+        }
         let installed = host.installed()?;
         let recorded = installed
             .iter()

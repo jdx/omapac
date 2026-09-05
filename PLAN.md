@@ -962,3 +962,14 @@ Returned artifacts remain available when another build starts.
 Every pull request runs the Arch container end-to-end suite in the arch-e2e job.
 Missing Docker, an unavailable image, or an unenforceable jail fails the job rather
 than skipping it. This covers real pacman and makepkg in addition to the Rust fixtures.
+
+### Interrupted transaction recovery
+
+Before package mutations, persist the intended ledger patch and accepted evidence
+in the root-owned ledger journal. After pacman exits successfully, durably mark
+the transaction completed before merging the patch and clearing the intent.
+Failures and interruptions retain the intent. `pacvamp recover` previews these
+records; `--write` restores only completed records whose installed versions and
+removals still match. Prepared records have uncertain outcomes and are never
+promoted to verified state. `--discard ID` explicitly forgets an inspected intent.
+This recovers bookkeeping, not package contents or failed pacman hooks.

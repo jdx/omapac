@@ -34,8 +34,13 @@ fn install_records_and_remove_forgets() {
     // Dry runs and refused plans record nothing.
     let before = std::fs::read_to_string(&ledger).unwrap();
     rig.run(&["install", "-n", "pacman"], CURL_PLAN, 0);
-    rig.run(&["install", "-y", "pacman"], CURL_PLAN, 2);
     assert_eq!(std::fs::read_to_string(&ledger).unwrap(), before);
+    rig.run(&["install", "-y", "pacman"], CURL_PLAN, 2);
+    let failed = pacvamp::ledger::Ledger::load(&ledger).unwrap();
+    let prior: pacvamp::ledger::Ledger = serde_json::from_str(&before).unwrap();
+    assert_eq!(failed.packages, prior.packages);
+    assert_eq!(failed.pending.len(), 1);
+    assert!(!failed.pending.values().next().unwrap().completed);
 
     // The fake never really installed curl, so the ledger is ahead of the
     // machine: that is drift.
@@ -167,14 +172,11 @@ fn repeated_commands_repair_a_missing_ledger_write() {
     std::fs::remove_file(rig.user_manifest()).unwrap();
     std::fs::remove_file(&ledger).unwrap();
     std::fs::create_dir_all(&ledger).unwrap();
-    let (code, out, _) = rig.run(&["add", "-y", "curl"], CURL_PLAN, 0);
+    let (code, _, _) = rig.run(&["add", "-y", "curl"], CURL_PLAN, 0);
     assert_ne!(code, 0);
-    assert!(out.contains("declared curl"), "{out}");
     assert!(
-        std::fs::read_to_string(rig.user_manifest())
-            .unwrap()
-            .contains("curl = {}"),
-        "a completed package transaction keeps its declaration"
+        !rig.user_manifest().exists(),
+        "failure to journal must precede the package transaction"
     );
 }
 
