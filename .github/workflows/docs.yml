@@ -5,12 +5,14 @@ on:
     branches: [main]
     paths:
       - "docs/**"
+      - "Cargo.toml"
       - "package.json"
       - "bun.lock"
       - ".github/workflows/docs.yml"
   pull_request:
     paths:
       - "docs/**"
+      - "Cargo.toml"
       - "package.json"
       - "bun.lock"
       - ".github/workflows/docs.yml"
@@ -33,6 +35,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun run docs:build
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
       - if: github.event_name != 'pull_request'
         uses: actions/configure-pages@v5
       - if: github.event_name != 'pull_request'

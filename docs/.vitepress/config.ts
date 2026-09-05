@@ -1,5 +1,17 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitepress";
 
+const configDir = dirname(fileURLToPath(import.meta.url));
+const cargoToml = readFileSync(resolve(configDir, "../../Cargo.toml"), "utf8");
+const versionMatch = cargoToml.match(
+  /^\[workspace\.package\][\s\S]*?^\s*version\s*=\s*"([^"]+)"/m,
+);
+if (!versionMatch) {
+  console.warn("Unable to find workspace package version in Cargo.toml");
+}
+const latestVersion = versionMatch?.[1] ?? "0.0.0";
 const siteUrl = "https://pacvamp.com";
 const description =
   "Install trusted packages from distribution repositories and the AUR with policy, provenance, and repeatable system state.";
@@ -73,6 +85,10 @@ export default defineConfig({
       { text: "Client CLI", link: "/cli/pacvamp/" },
       { text: "Repository CLI", link: "/cli/pacvamp-repo/" },
       { text: "Packslip", link: "/spec/packslip" },
+      {
+        text: `v${latestVersion}`,
+        link: "https://github.com/jdx/pacvamp/releases",
+      },
     ],
     sidebar: [
       {
