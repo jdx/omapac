@@ -349,8 +349,9 @@ pub fn verify_and_apply(
     engine: &dyn Engine,
     resolved: &ResolvedTx,
     plan: &Plan,
-    yes: bool,
+    execution: (&str, bool),
 ) -> Result<Option<AcceptedEvidence>> {
+    let (by, yes) = execution;
     if plan.changes.is_empty() {
         return Ok(None);
     }
@@ -359,7 +360,7 @@ pub fn verify_and_apply(
         resolved.transaction.operation,
         crate::engine::Operation::Remove { .. }
     );
-    let mut patch = intent_patch(app, resolved, plan, "transaction", removing)?;
+    let mut patch = intent_patch(app, resolved, plan, by, removing)?;
     evidence.clone().attach(&mut patch);
     app.journaled(patch, || apply_confirmed(engine, resolved, plan, yes))?;
     Ok(Some(evidence))

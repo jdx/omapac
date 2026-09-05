@@ -247,7 +247,7 @@ impl Diff {
                 engine,
                 tx,
                 "install",
-                (yes, dry_run),
+                (by, yes, dry_run),
             )? {
                 *committed = true;
                 let mut patch = transaction::ledger_patch(&plan, &targets, by, false);
@@ -268,7 +268,7 @@ impl Diff {
                 engine,
                 tx,
                 "remove",
-                (yes, dry_run),
+                (by, yes, dry_run),
             )? {
                 *committed = true;
                 let mut patch = transaction::ledger_patch(&plan, &[], by, true);
@@ -302,9 +302,9 @@ fn run(
     engine: &crate::engine::pacman::PacmanCli,
     tx: Transaction,
     verb: &str,
-    confirmation: (bool, bool),
+    confirmation: (&str, bool, bool),
 ) -> Result<Option<(transaction::Plan, transaction::AcceptedEvidence)>> {
-    let (yes, dry_run) = confirmation;
+    let (by, yes, dry_run) = confirmation;
     let resolved = engine.plan(&tx)?;
     let mut plan = transaction::plan(
         host,
@@ -332,7 +332,7 @@ fn run(
         return Ok(None);
     }
     let accepted =
-        transaction::verify_and_apply(app, host, settings, engine, &resolved, &plan, yes)?
+        transaction::verify_and_apply(app, host, settings, engine, &resolved, &plan, (by, yes))?
             .expect("a confirmed non-empty plan is applied");
     Ok(Some((plan, accepted)))
 }

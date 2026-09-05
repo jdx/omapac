@@ -421,7 +421,13 @@ impl RunWith<&App> for Update {
                 && !resolved.is_empty()
             {
                 let accepted = transaction::verify_and_apply(
-                    app, &host, settings, &engine, resolved, p, self.yes,
+                    app,
+                    &host,
+                    settings,
+                    &engine,
+                    resolved,
+                    p,
+                    ("update", self.yes),
                 )?;
                 if let Some(accepted) = accepted {
                     let mut explicit = Vec::new();
