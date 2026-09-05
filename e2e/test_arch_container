@@ -105,7 +105,13 @@ pkgrel=1
 arch=('any')
 if cat /home/pacvamp-builder/credentials; then exit 91; fi
 if echo poison >/tmp/pacvamp-jail-shared; then exit 92; fi
+build() {
+  cat <(printf 'int main(void) { return 0; }\n') >probe.c
+  cc -g probe.c -o probe
+  ./probe
+}
 package() {
+  install -Dm755 "$srcdir/probe" "$pkgdir/usr/bin/pacvamp-jail-probe"
   install -Dm644 /etc/os-release "$pkgdir/usr/share/pacvamp-jail-probe/os-release"
 }
 RECIPE
