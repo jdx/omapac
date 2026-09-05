@@ -990,3 +990,12 @@ inventory, Git source refs, available dependency versions, makepkg digest, build
 policy and output digests. Installation checks the artifact against this receipt
 and records its path and hash in the ledger. Receipts are explicitly local records,
 not publisher attestations or proof of reproducibility.
+
+### Optional clean-chroot backend
+
+aur.chroot selects an immutable Arch image provisioned with devtools, at
+aur.chroot_root. Bubblewrap supplies filesystem and process namespaces around the
+existing jailed helper. Builds resolve required dependencies against the image and
+refuse missing dependencies without modifying the host; provisioning and updating
+the shared image is an explicit administrator operation. There is no silent fallback.
+The mandatory Arch CI job builds a real package through this backend.

@@ -21,9 +21,16 @@ docker image inspect "$image" >/dev/null 2>&1 || docker pull "$image" >/dev/null
 [ -x target/debug/pacvamp ] || skip "target/debug/pacvamp not built"
 
 name="pacvamp-e2e-$$"
-cleanup() { docker rm -f "$name" >/dev/null 2>&1 || true; }
+cleanup() {
+	local status=$?
+	if [ "$status" -ne 0 ] && [ -n "${PACVAMP_E2E_KEEP_ON_FAILURE:-}" ]; then
+		echo "retained failed fixture: $name" >&2
+	else
+		docker rm -f "$name" >/dev/null 2>&1 || true
+	fi
+}
 trap cleanup EXIT
-docker create --name "$name" "$image" sleep 600 >/dev/null
+docker create --privileged --name "$name" "$image" sleep 1200 >/dev/null
 docker cp target/debug/pacvamp "$name:/usr/local/bin/pacvamp"
 docker start "$name" >/dev/null
 run() { docker exec "$name" bash -c "$1"; }
@@ -191,4 +198,70 @@ artifact=$(find /home/pacvamp-builder/.cache/pacvamp/aur/.pacvamp-build/runs -pa
 test -f "$artifact"
 test ! -e "$(dirname "$artifact")/verify-only"
 bsdtar -xOf "$artifact" .BUILDINFO | grep '^installed = pacman-' >/dev/null
+
+# Provision a separate build image, then prove host-only tools stay unavailable.
+pacman -S --noconfirm --needed bubblewrap devtools >/dev/null
+# The outer Docker fixture has no systemd service manager. Keep nspawn in
+# its existing unit while retaining its real namespace and chroot setup.
+systemd-machine-id-setup
+cat >/usr/local/bin/systemd-nspawn <<'NSPAWN'
+#!/usr/bin/env bash
+exec /usr/bin/systemd-nspawn --keep-unit "$@"
+NSPAWN
+chmod 755 /usr/local/bin/systemd-nspawn
+mkdir -p /srv/pacvamp-image
+mkarchroot -C /etc/pacman.conf /srv/pacvamp-image/root base-devel pacman
+# Resolve a synthetic source hostname through a local DNS server. The image
+# deliberately has the systemd-resolved symlink that broke this path previously.
+cat >/srv/pacvamp-aur/dns.py <<'DNS'
+import socketserver, struct
+class DNS(socketserver.BaseRequestHandler):
+    def handle(self):
+        data, sock = self.request
+        end = 12
+        while data[end]:
+            end += data[end] + 1
+        end += 1
+        question = data[12:end + 4]
+        is_a = data[end:end + 2] == b"\x00\x01"
+        answer = b"\xc0\x0c" + struct.pack("!HHIH", 1, 1, 60, 4) + b"\x7f\x00\x00\x01" if is_a else b""
+        sock.sendto(data[:2] + struct.pack("!HHHHH", 0x8180, 1, int(is_a), 0, 0) + question + answer, self.client_address)
+socketserver.UDPServer(("127.0.0.1", 53), DNS).serve_forever()
+DNS
+python /srv/pacvamp-aur/dns.py &
+dns_pid=$!
+cp /etc/resolv.conf /tmp/pacvamp-resolv.conf
+trap 'kill "$rpc_pid" "$dns_pid" 2>/dev/null || true; cat /tmp/pacvamp-resolv.conf >/etc/resolv.conf' EXIT
+printf 'nameserver 127.0.0.1\n' >/etc/resolv.conf
+ln -sf /run/systemd/resolve/stub-resolv.conf /srv/pacvamp-image/root/etc/resolv.conf
+mkdir -p /home/pacvamp-builder/.config/pacvamp
+cat >/home/pacvamp-builder/.config/pacvamp/pacvamp.toml <<'CONFIG'
+[policy.aur]
+chroot = true
+chroot_root = "/srv/pacvamp-image/root"
+CONFIG
+chown -R pacvamp-builder:pacvamp-builder /home/pacvamp-builder/.config
+# A host-only marker under /usr must not be visible inside the image.
+echo host-only >/usr/share/pacvamp-host-only
+mkdir -p /srv/pacvamp-image/root/opt/pacvamp-image-tool
+echo image-only >/srv/pacvamp-image/root/opt/pacvamp-image-tool/marker
+cat >>/srv/pacvamp-aur/work/PKGBUILD <<'RECIPE'
+test -f /opt/pacvamp-image-tool/marker || exit 96
+if [[ $BUILDDIR == *.verify ]]; then
+  curl --noproxy '*' -fsS http://pacvamp-source.test:18763/ >/dev/null || exit 97
+fi
+if test -e /usr/share/pacvamp-host-only; then exit 94; fi
+if touch /usr/share/pacvamp-image-poison; then exit 95; fi
+RECIPE
+runuser -u pacvamp-builder -- git -C /srv/pacvamp-aur/work add PKGBUILD
+runuser -u pacvamp-builder -- git -C /srv/pacvamp-aur/work -c user.name=Fixture -c user.email=fixture@example.com commit -qm 'chroot isolation probes'
+runuser -u pacvamp-builder -- git -C /srv/pacvamp-aur/work push -q /srv/pacvamp-aur/pacvamp-jail-probe.git HEAD:master
+runuser -u pacvamp-builder -- env   PACVAMP_AUR_RPC_BASE=http://127.0.0.1:18763   PACVAMP_AUR_GIT_BASE=file:///srv/pacvamp-aur   /usr/local/bin/pacvamp aur approve --force pacvamp-jail-probe
+runuser -u pacvamp-builder -- env   PACVAMP_AUR_RPC_BASE=http://127.0.0.1:18763   PACVAMP_AUR_GIT_BASE=file:///srv/pacvamp-aur   /usr/local/bin/pacvamp aur build pacvamp-jail-probe
+test ! -e /srv/pacvamp-image/root/usr/share/pacvamp-image-poison
+python - <<'CHECK'
+import glob,json
+receipts=[json.load(open(p)) for p in glob.glob("/home/pacvamp-builder/.cache/pacvamp/aur/.pacvamp-build/runs/*/receipt.json")]
+assert any(r.get("chroot") == "/srv/pacvamp-image/root" for r in receipts)
+CHECK
 PRODUCTION

@@ -794,3 +794,57 @@ fn source_inventory_records_links_without_reading_outside_the_tree_and_pins_git_
     let refs = pacvamp::aur::receipt::vcs_refs(&s.aur.dir).unwrap();
     assert!(refs[Path::new("yay.git")].contains(&s.aur.head("yay")));
 }
+
+#[test]
+fn chroot_checks_image_dependencies_without_installing_host_packages() {
+    let s = setup();
+    let image = s.rig.dir.path().join("image");
+    std::fs::create_dir_all(image.join("usr/bin")).unwrap();
+    std::fs::create_dir_all(image.join("etc")).unwrap();
+    std::fs::create_dir_all(image.join("var/lib/pacman/local")).unwrap();
+    std::fs::write(image.join("usr/bin/makepkg"), "").unwrap();
+    std::fs::write(image.join("usr/bin/bash"), "").unwrap();
+    std::fs::write(
+        image.join("etc/pacman.conf"),
+        "[options]\nArchitecture = x86_64\n",
+    )
+    .unwrap();
+    let srcinfo = YAY_SRCINFO.replace("\tarch = x86_64\n", "\tarch = x86_64\n\tdepends = pacman\n");
+    s.aur.commit(
+        "yay",
+        &[(".SRCINFO", &srcinfo)],
+        "image dependency",
+        "2026-01-02T00:00:00Z",
+    );
+    no_jail(&s);
+    std::fs::write(
+        s.rig.user_manifest(),
+        format!("[policy.aur]\nchroot = true\nchroot_root = {:?}\n", image),
+    )
+    .unwrap();
+    assert_eq!(run(&s, &["aur", "approve", "--force", "yay"], "").0, 0);
+    let (code, _, err) = run(&s, &["aur", "build", "yay"], "");
+    assert_ne!(code, 0);
+    assert!(
+        err.contains("clean chroot is missing build dependencies: pacman"),
+        "{err}"
+    );
+    assert!(
+        s.rig.log().is_empty(),
+        "must not install the image's missing dependencies on the host"
+    );
+}
+
+#[test]
+fn chroot_rejects_the_host_root_and_images_that_link_to_it() {
+    assert!(pacvamp::aur::chroot::host(Path::new("/")).is_err());
+    let dir = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink("/", dir.path().join("root")).unwrap();
+    assert!(
+        pacvamp::aur::chroot::host(&dir.path().join("root"))
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("host root")
+    );
+}
