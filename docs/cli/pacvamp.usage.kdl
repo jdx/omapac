@@ -309,6 +309,9 @@ Dependencies nothing else needs are removed too, like `pacman -Rs`, unless `--ke
 }
 cmd recover help="Inspect interrupted transactions and recover recorded successful operations" {
     flag --write help="Restore completed transactions whose installed versions still match"
+    flag --id help="Inspect or restore only this transaction" {
+        arg <ID>
+    }
     flag --json help="Print pending transaction details as JSON"
     flag --discard help="Discard one inspected journal entry without changing installed packages" {
         arg <DISCARD>
