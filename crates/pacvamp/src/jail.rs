@@ -17,8 +17,10 @@ use serde::{Deserialize, Serialize};
 /// What a jailed command may do.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Spec {
-    /// Directories the command may write under. Everything else is
-    /// read-only.
+    /// Additional read-only inputs, beyond the system runtime paths.
+    #[serde(default)]
+    pub readable: Vec<PathBuf>,
+    /// Directories the command may read and write. Other paths are denied.
     pub writable: Vec<PathBuf>,
     /// Whether the command may use the network.
     pub network: bool,
@@ -75,7 +77,7 @@ impl Spec {
 
     /// Restrict the current process as the spec says. Called by the helper.
     pub fn apply(&self) -> Result<()> {
-        restrict_filesystem(&self.writable, self.network)?;
+        restrict_filesystem(&self.readable, &self.writable, self.network)?;
         if !self.network {
             deny_inet_sockets()?;
         }
@@ -83,7 +85,7 @@ impl Spec {
     }
 }
 
-fn restrict_filesystem(writable: &[PathBuf], network: bool) -> Result<()> {
+fn restrict_filesystem(readable: &[PathBuf], writable: &[PathBuf], network: bool) -> Result<()> {
     use landlock::{
         ABI, Access, AccessFs, AccessNet, Compatible, RulesetAttr, RulesetCreatedAttr,
         RulesetStatus, path_beneath_rules,
@@ -103,6 +105,45 @@ fn restrict_filesystem(writable: &[PathBuf], network: bool) -> Result<()> {
         .map_err(|e| eyre::eyre!("landlock: this kernel cannot enforce the build jail: {e}"))?;
     // Grant only the ordinary character devices, never the whole /dev tree.
     let devices = ["/dev/null", "/dev/zero", "/dev/random", "/dev/urandom"].map(PathBuf::from);
+    // Never grant /, /home, /etc, /proc, /run, or a shared temporary tree.
+    // These paths supply compilers, makepkg, DNS, TLS and package metadata,
+    // without exposing credentials or another process's environment.
+    let runtime = [
+        "/usr",
+        "/bin",
+        "/sbin",
+        "/lib",
+        "/lib64",
+        "/etc/ld.so.cache",
+        "/etc/ld.so.conf",
+        "/etc/ld.so.conf.d",
+        "/etc/passwd",
+        "/etc/group",
+        "/etc/nsswitch.conf",
+        "/etc/hosts",
+        "/etc/resolv.conf",
+        "/etc/gai.conf",
+        "/etc/ssl/certs",
+        "/etc/ca-certificates",
+        "/etc/localtime",
+        "/etc/os-release",
+        "/etc/arch-release",
+        "/etc/makepkg.conf",
+        "/etc/makepkg.conf.d",
+        "/etc/pacman.conf",
+        "/etc/pacman.d/mirrorlist",
+        "/var/lib/pacman/local",
+        "/proc/cpuinfo",
+        "/proc/meminfo",
+    ]
+    .map(PathBuf::from);
+    let reads: Vec<&Path> = runtime
+        .iter()
+        .chain(readable)
+        .chain(&devices)
+        .map(PathBuf::as_path)
+        .filter(|p| p.exists())
+        .collect();
     let existing: Vec<&Path> = writable
         .iter()
         .map(PathBuf::as_path)
@@ -114,7 +155,7 @@ fn restrict_filesystem(writable: &[PathBuf], network: bool) -> Result<()> {
         .filter(|p| p.exists())
         .collect();
     let status = created
-        .add_rules(path_beneath_rules(&["/"], AccessFs::from_read(abi)))
+        .add_rules(path_beneath_rules(&reads, AccessFs::from_read(abi)))
         .map_err(|e| eyre::eyre!("landlock: {e}"))?
         .add_rules(path_beneath_rules(&existing, AccessFs::from_all(abi)))
         .map_err(|e| eyre::eyre!("landlock: {e}"))?
@@ -198,6 +239,7 @@ mod tests {
     #[test]
     fn spec_round_trips() {
         let spec = Spec {
+            readable: vec![],
             writable: vec![PathBuf::from("/tmp/x")],
             network: false,
             program: PathBuf::from("/usr/bin/makepkg"),
