@@ -77,6 +77,15 @@ fn run(
         .env("PATH", format!("{}:/usr/bin:/bin", rig.bin.display()))
         .env("TEST_PACVAMP", env!("CARGO_BIN_EXE_pacvamp"))
         .env("TEST_ROOT", &rig.root)
+        .env(
+            "PACVAMP_AUR_RPC_BASE",
+            std::fs::read_to_string(rig.dir.path().join("rpc-url"))
+                .unwrap_or_else(|_| "http://127.0.0.1:1".into()),
+        )
+        .env(
+            "PACVAMP_AUR_GIT_BASE",
+            format!("file://{}", rig.dir.path().join("aur").display()),
+        )
         .env("TEST_REGISTER_PACKAGE", if register { "1" } else { "0" })
         .env("PACVAMP_TEST_PACMAN", rig.bin.join("pacman"))
         .env("HOME", &rig.home)
@@ -181,4 +190,37 @@ fn unattended_system_update_preserves_declarations_and_stops_on_transaction_fail
         assert_eq!(code == 0, status == 0, "{err}");
         assert!(rig.log().last().unwrap().contains("--noconfirm"));
     }
+}
+
+#[test]
+fn unattended_aur_update_preserves_skipped_package_reports_and_declarations() {
+    use common::aur::{EVIL_INSTALL, EVIL_PKGBUILD, EVIL_SRCINFO, FakeAur};
+    let rig = setup();
+    let aur = FakeAur::new(rig.dir.path());
+    aur.create(
+        "yay",
+        &[
+            ("PKGBUILD", EVIL_PKGBUILD),
+            (".SRCINFO", EVIL_SRCINFO),
+            ("yay.install", EVIL_INSTALL),
+        ],
+        "2026-01-01T00:00:00Z",
+    );
+    let rpc = common::http::serve(vec![(
+        "/rpc/v5/info",
+        include_str!("../fixtures/aur/info.json")
+            .replace("\"Version\":\"13.0.1-1\"", "\"Version\":\"13.0.2-1\""),
+    )]);
+    std::fs::write(rig.dir.path().join("rpc-url"), rpc).unwrap();
+    std::fs::remove_file(rig.root.join("var/lib/pacman/sync/omarchy.db")).unwrap();
+    let (code, err) = run(&rig, "omarchy-update-aur-pkgs", &[], "", 0, true);
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        err.contains("skipped yay") && err.contains("remains: 13.0.1-1"),
+        "{err}"
+    );
+    assert!(
+        rig.log().is_empty(),
+        "a denied recipe must never build or install"
+    );
 }
