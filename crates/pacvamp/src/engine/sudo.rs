@@ -117,7 +117,7 @@ impl Invocation {
 
 /// Quote a word for display, only when a shell would need it. `=` stays
 /// bare so `env K=V` reads as typed.
-fn quote(word: &str) -> String {
+pub(crate) fn quote(word: &str) -> String {
     let safe = |c: char| c.is_ascii_alphanumeric() || "_-./:@%+=,".contains(c);
     if !word.is_empty() && word.chars().all(safe) {
         word.to_string()

@@ -56,6 +56,7 @@ pub struct UpdatePlan {
     pub repo: Option<Plan>,
     pub holds: Vec<Hold>,
     pub aur: Vec<AurCandidate>,
+    pub blocked: Vec<Hold>,
     pub orphans: Vec<String>,
     pub pacnew: Vec<String>,
 }
@@ -193,7 +194,26 @@ impl RunWith<&App> for Update {
                 held_names.push(declared.name.clone());
                 holds.push(Hold {
                     name: declared.name.clone(),
+                    installed: host
+                        .installed_package(&declared.name)?
+                        .map(|p| p.version.clone()),
+                    eligible_at: None,
+                    next_step: format!(
+                        "Review the hold in {} before changing it.",
+                        declared.declared_in.display()
+                    ),
                     reason: format!("held by {}", declared.declared_in.display()),
+                });
+            }
+        }
+        for name in &settings.update_ignore {
+            if !holds.iter().any(|hold| &hold.name == name) {
+                holds.push(Hold {
+                    name: name.clone(),
+                    installed: host.installed_package(name)?.map(|p| p.version.clone()),
+                    reason: "excluded by update.ignore".into(),
+                    eligible_at: None,
+                    next_step: "Review update.ignore in the manifest before changing it.".into(),
                 });
             }
         }
@@ -244,6 +264,26 @@ impl RunWith<&App> for Update {
                 && !settings.update_ignore.contains(&candidate.name)
         });
 
+        // Preview the same unattended policy used during execution. Re-review
+        // immediately before building so a changed upstream cannot reuse this plan.
+        let mut blocked = Vec::new();
+        for candidate in &aur {
+            let (reviewed, lock) = app.review_aur(&candidate.name, None, false)?;
+            let approved = lock
+                .aur
+                .get(&reviewed.pkgbase)
+                .or_else(|| lock.aur.get(&candidate.name))
+                .is_some_and(|entry| entry.commit == reviewed.target);
+            if let Some(hold) = crate::update::aur_blocker(
+                &reviewed,
+                settings,
+                Some(candidate.installed.clone()),
+                approved,
+            ) {
+                blocked.push(hold);
+            }
+        }
+
         let orphans: Vec<String> = host.orphans()?.iter().map(|p| p.name.clone()).collect();
         let etc = app
             .paths
@@ -266,6 +306,7 @@ impl RunWith<&App> for Update {
             }),
             holds: holds.clone(),
             aur: aur.clone(),
+            blocked: blocked.clone(),
             orphans: orphans.clone(),
             pacnew: pacnew.clone(),
         };
@@ -290,7 +331,7 @@ impl RunWith<&App> for Update {
             print!("{}", transaction::render("upgrade", p));
         }
         for hold in &holds {
-            println!("hold: {}: {}", hold.name, hold.reason);
+            println!("hold: {}: {}", hold.name, hold.render());
         }
         if !aur.is_empty() {
             println!("aur: {} package(s) have a newer commit:", aur.len());
@@ -299,6 +340,9 @@ impl RunWith<&App> for Update {
             }
         } else if !self.no_aur {
             println!("aur: nothing newer");
+        }
+        for hold in &blocked {
+            println!("blocked unattended: {}: {}", hold.name, hold.render());
         }
         if !orphans.is_empty() {
             println!(
@@ -474,31 +518,27 @@ enum AurOutcome {
 /// skips it and a clean report approves it; otherwise the user decides.
 fn update_aur_package(app: &App, name: &str, yes: bool) -> Result<AurOutcome> {
     let (reviewed, mut lock) = app.review_aur(name, None, !yes && crate::ui::interactive())?;
-    if !reviewed.evidence.recipe.install_files.is_empty()
-        && app.manifest()?.settings.aur_install_scripts
-            == crate::manifest::settings::InstallScripts::Deny
-    {
-        return Ok(AurOutcome::Skipped(format!(
-            "install scriptlet(s) {} denied by policy",
-            reviewed.evidence.recipe.install_files.join(", ")
-        )));
-    }
+    let settings = app.manifest()?.settings;
+    let installed = app
+        .host()?
+        .installed_package(name)?
+        .map(|p| p.version.clone());
     let approved_here = lock
         .aur
         .get(&reviewed.pkgbase)
         .or_else(|| lock.aur.get(name))
         .is_some_and(|e| e.commit == reviewed.target);
+    if (yes || settings.aur_install_scripts == crate::manifest::settings::InstallScripts::Deny)
+        && let Some(hold) =
+            crate::update::aur_blocker(&reviewed, &settings, installed.clone(), approved_here)
+    {
+        // Interactive warnings still go to the review prompt; script policy cannot be overridden.
+        if yes || !reviewed.evidence.recipe.install_files.is_empty() {
+            return Ok(AurOutcome::Skipped(hold.render()));
+        }
+    }
     if !approved_here {
-        if yes {
-            if reviewed.report.denied() {
-                let reasons: Vec<String> = reviewed
-                    .report
-                    .denials()
-                    .map(|j| j.finding.id.to_string())
-                    .collect();
-                return Ok(AurOutcome::Skipped(reasons.join(", ")));
-            }
-        } else {
+        if !yes {
             print!("{}", super::aur_cmd::render(&reviewed));
             let text = reviewed.review_text()?;
             if !text.is_empty() {
@@ -509,7 +549,12 @@ fn update_aur_package(app: &App, name: &str, yes: bool) -> Result<AurOutcome> {
                 &format!("Approve and update {name} at {}?", &reviewed.target[..12]),
                 false,
             )? {
-                return Ok(AurOutcome::Skipped("not approved".to_string()));
+                return Ok(AurOutcome::Skipped(format!(
+                    "not approved; remains: {}; review with `pacvamp aur review --commit {} -- {}`; waiting alone will not resolve this",
+                    installed.as_deref().unwrap_or("not installed"),
+                    reviewed.target,
+                    crate::engine::sudo::quote(name)
+                )));
             }
         }
         lock.aur.remove(name);
@@ -522,7 +567,12 @@ fn update_aur_package(app: &App, name: &str, yes: bool) -> Result<AurOutcome> {
             true,
         )?
     {
-        return Ok(AurOutcome::Skipped("not approved".to_string()));
+        return Ok(AurOutcome::Skipped(format!(
+            "not approved; remains: {}; review with `pacvamp aur review --commit {} -- {}`; waiting alone will not resolve this",
+            installed.as_deref().unwrap_or("not installed"),
+            reviewed.target,
+            crate::engine::sudo::quote(name)
+        )));
     }
     let prepared = app.prepare_aur(name, Some(&reviewed.target), true, yes)?;
     let files = app.build_aur(&prepared, yes)?;

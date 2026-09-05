@@ -375,12 +375,66 @@ fn aur_upgrade_with_denials_is_skipped_unattended() {
     assert_eq!(code, 0, "a skipped package does not fail the update: {err}");
     assert!(err.contains("skipped yay: "), "{err}");
     assert!(err.contains("checksum-skip"), "{err}");
+    assert!(err.contains("remains: 13.0.1-1"), "{err}");
+    assert!(err.contains("waiting alone will not resolve this"), "{err}");
+    assert!(
+        err.contains(&format!(
+            "pacvamp aur review --commit {} -- yay",
+            s.aur.head("yay")
+        )),
+        "{err}"
+    );
     assert!(err.contains("1 AUR package(s) skipped: yay"), "{err}");
     assert!(!out.contains("updated yay"), "{out}");
     assert!(
         s.rig.log().iter().all(|l| !l.starts_with("makepkg")),
         "nothing built"
     );
+}
+
+#[test]
+fn preview_reports_timed_blockers_without_approving_or_building() {
+    let now = pacvamp::ledger::now();
+    let mut rpc: serde_json::Value = serde_json::from_str(&rpc_with_newer_yay()).unwrap();
+    rpc["results"][0]["LastModified"] = now.into();
+    let s = setup(rpc.to_string());
+    let (code, out, err) = run(&s, &["update", "--aur-only", "--json"], "");
+    assert_eq!(code, 0, "{err}");
+    let plan: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(plan["blocked"][0]["name"], "yay");
+    assert_eq!(plan["blocked"][0]["installed"], "13.0.1-1");
+    assert_eq!(plan["blocked"][0]["eligible_at"], now + 48 * 3600);
+    assert!(
+        plan["blocked"][0]["next_step"]
+            .as_str()
+            .unwrap()
+            .contains(&s.aur.head("yay"))
+    );
+    assert!(!s.rig.home.join(".config/pacvamp/pacvamp.lock").exists());
+    assert!(s.rig.log().is_empty());
+    assert!(!s.rig.root.join("var/lib/pacvamp/state.json").exists());
+
+    let (code, out, err) = run(&s, &["update", "--aur-only", "-n"], "");
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("eligible at"), "{out}");
+
+    // A second, non-age finding means waiting is no longer sufficient.
+    s.aur.commit(
+        "yay",
+        &[(
+            ".SRCINFO",
+            &YAY_SRCINFO.replace(
+                "b77454bce87110180a1b6664c2d260de78124c9894b71101610ba84f551eb0d0",
+                "SKIP",
+            ),
+        )],
+        "skip checksum",
+        "2026-01-02T00:00:00Z",
+    );
+    let (code, out, err) = run(&s, &["update", "--aur-only", "--json"], "");
+    assert_eq!(code, 0, "{err}");
+    let plan: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert!(plan["blocked"][0]["eligible_at"].is_null());
 }
 
 #[test]
