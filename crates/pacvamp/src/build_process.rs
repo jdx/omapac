@@ -265,13 +265,23 @@ fn check_disk(path: &Path, budget: u64, check_running: impl FnMut() -> Result<()
     let root = nix::dir::Dir::open(path, accounting_flags(), nix::sys::stat::Mode::empty())
         .map_err(std::io::Error::from)
         .wrap_err_with(|| format!("accounting build directory {}", path.display()))?;
-    check_disk_dir(root, budget, check_running)
+    check_disk_dir(root, budget, check_running).map(|_| ())
+}
+/// Live cache estimates use the same anchored, no-follow accounting as builds.
+pub(crate) fn disk_size(path: &Path) -> Result<u64> {
+    use nix::errno::Errno;
+    let root = match nix::dir::Dir::open(path, accounting_flags(), nix::sys::stat::Mode::empty()) {
+        Ok(root) => root,
+        Err(Errno::ENOENT | Errno::ENOTDIR | Errno::ELOOP) => return Ok(0),
+        Err(err) => return Err(std::io::Error::from(err).into()),
+    };
+    check_disk_dir(root, u64::MAX, || Ok(()))
 }
 fn check_disk_dir(
     root: nix::dir::Dir,
     budget: u64,
     mut check_running: impl FnMut() -> Result<()>,
-) -> Result<()> {
+) -> Result<u64> {
     use nix::{
         dir::{Dir, OwningIter},
         errno::Errno,
@@ -327,7 +337,7 @@ fn check_disk_dir(
             total = total.saturating_add(bytes(&stat));
         }
     }
-    Ok(())
+    Ok(total)
 }
 
 #[cfg(test)]

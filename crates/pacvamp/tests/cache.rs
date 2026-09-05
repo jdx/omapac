@@ -34,3 +34,31 @@ fn retention_protects_active_recent_and_referenced_runs() {
         ["old"]
     );
 }
+
+#[test]
+fn live_estimates_tolerate_directory_removal() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let run = dir.path().join(".pacvamp-build/runs/live");
+    fs::create_dir_all(&run).unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let done = stop.clone();
+    let writer = std::thread::spawn(move || {
+        while !done.load(Ordering::Relaxed) {
+            fs::create_dir_all(run.join("builddir/subdir")).unwrap();
+            fs::write(run.join("builddir/subdir/file"), b"building").unwrap();
+            fs::remove_dir_all(run.join("builddir")).unwrap();
+        }
+    });
+    let results = (0..500)
+        .map(|_| inventory(dir.path(), &BTreeSet::new(), 30, None))
+        .collect::<Vec<_>>();
+    stop.store(true, Ordering::Relaxed);
+    writer.join().unwrap();
+    for result in results {
+        result.unwrap();
+    }
+}

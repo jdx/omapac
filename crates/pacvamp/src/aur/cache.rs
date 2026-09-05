@@ -37,25 +37,6 @@ pub struct Run {
     pub prune: bool,
 }
 
-fn size(path: &Path) -> Result<u64> {
-    use std::os::unix::fs::MetadataExt as _;
-    let meta = match fs::symlink_metadata(path) {
-        Ok(meta) => meta,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(0),
-        Err(err) => return Err(err.into()),
-    };
-    if meta.is_symlink() {
-        return Ok(0);
-    }
-    let mut bytes = meta.len().max(meta.blocks().saturating_mul(512));
-    if meta.is_dir() {
-        for entry in fs::read_dir(path)? {
-            bytes = bytes.saturating_add(size(&entry?.path())?);
-        }
-    }
-    Ok(bytes)
-}
-
 pub fn inventory(
     cache: &Path,
     protected: &BTreeSet<PathBuf>,
@@ -82,7 +63,7 @@ pub fn inventory(
             .as_secs();
         let referenced = protected.iter().any(|p| p.starts_with(&path));
         runs.push(Run {
-            bytes: size(&path)?,
+            bytes: crate::build_process::disk_size(&path)?,
             path,
             age_seconds,
             protected: referenced || age_seconds < 3600,
