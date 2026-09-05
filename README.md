@@ -59,7 +59,9 @@ crates.io; install its CLI separately. See the
 ```bash
 mise install          # tools
 mise run build        # cargo build
-mise run test         # unit, integration, and e2e tests
+mise run test         # Rust tests and mandatory Arch E2E (requires Docker)
+mise run test:unit    # Rust unit and integration tests only
+mise run test:e2e     # real Arch pacman/makepkg tests (requires Docker)
 mise run lint         # rustfmt, clippy, taplo, shellcheck, shfmt through hk
 mise run render       # regenerate docs/cli
 ```
@@ -67,3 +69,10 @@ mise run render       # regenerate docs/cli
 Integration tests run without pacman, makepkg, gpg, or a network: fakes on a
 temporary PATH, fixture databases, local HTTP servers, and bare git repositories
 stand in for them. The mise plugin test runs when a `mise` binary is on `PATH`.
+
+CI runs the complete Rust suite on both Ubuntu and Arch. The Arch job has real
+`/usr/bin/pacman` installed; integration fixtures explicitly select their fake
+pacman with the `test-pacman` feature. A separate mandatory Arch E2E job tests real
+package installation/removal, dry runs, and jailed builds. `mise run test` and
+`mise run ci` include that E2E harness; missing Docker or container prerequisites
+fail instead of silently skipping it.

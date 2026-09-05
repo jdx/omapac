@@ -46,6 +46,25 @@ jobs:
             env:
               CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-clippy
 
+  arch-rust:
+    name: arch-rust
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: archlinux:base-devel
+      options: --privileged
+    steps:
+      - name: Install the Arch toolchain and test dependencies
+        run: pacman -Syu --noconfirm --needed rust git cmake openssl
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: arch-rust
+      - name: Run the complete Rust suite with real pacman installed
+        run: cargo test --locked --workspace --all-features
+        env:
+          PACVAMP_REQUIRE_JAIL: "1"
+
   arch-e2e:
     name: arch-e2e
     runs-on: ubuntu-latest
@@ -76,6 +95,7 @@ jobs:
     needs:
       - ci
       - arch-e2e
+      - arch-rust
     runs-on: ubuntu-latest
     timeout-minutes: 1
     # Run on success or upstream failure but skip when the workflow is cancelled
@@ -85,6 +105,7 @@ jobs:
       - name: Check job results
         if: |
           needs.ci.result != 'success' ||
-          needs.arch-e2e.result != 'success'
+          needs.arch-e2e.result != 'success' ||
+          needs.arch-rust.result != 'success'
         run: exit 1
       - run: echo "All CI jobs completed successfully"
