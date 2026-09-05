@@ -27,5 +27,7 @@ limits on aggregate memory or CPU.
 
 The supervisor checks the run directory's total regular-file size each second.
 This disk budget can overshoot between checks; it is not a filesystem quota.
-Symlinks are not followed. Metadata command output is capped at 1 MiB per stream.
+Symlinks are not followed. Transient unreadable directories receive a three-second
+grace period for fakeroot permission probes; persistent accounting failures stop
+the build. Metadata command output is capped at 1 MiB per stream.
 Build files and logs remain in the private run directory for diagnosis.

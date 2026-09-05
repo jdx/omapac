@@ -1,5 +1,5 @@
 //! Build process supervision. Limits also apply when filesystem confinement is disabled.
-use eyre::{Result, bail};
+use eyre::{Context as _, Result, bail};
 use nix::sys::{
     resource::{Resource, setrlimit},
     signal::{Signal, killpg},
@@ -146,6 +146,7 @@ impl ManagedChild {
     pub fn wait(&mut self, limits: &Limits, run: &Path) -> Result<ExitStatus> {
         let start = Instant::now();
         let mut disk_check = Instant::now();
+        let mut unreadable_since: Option<Instant> = None;
         loop {
             if self.cancelled.load(Ordering::Relaxed) {
                 bail!("build cancelled");
@@ -154,8 +155,28 @@ impl ManagedChild {
                 bail!("build exceeded wall-clock limit");
             }
             if disk_check.elapsed() >= Duration::from_secs(1) {
-                if disk_bytes(run)? > limits.disk_mb * 1024 * 1024 {
-                    bail!("build exceeded disk budget");
+                match disk_bytes(run) {
+                    Ok(bytes) => {
+                        unreadable_since = None;
+                        if bytes > limits.disk_mb * 1024 * 1024 {
+                            bail!("build exceeded disk budget");
+                        }
+                    }
+                    Err(err)
+                        if err
+                            .chain()
+                            .filter_map(|e| e.downcast_ref::<std::io::Error>())
+                            .any(|e| e.kind() == std::io::ErrorKind::PermissionDenied) =>
+                    {
+                        // fakeroot briefly tests permissions with inaccessible directories.
+                        // A persistently unaccountable tree must still fail closed.
+                        if unreadable_since.get_or_insert_with(Instant::now).elapsed()
+                            >= Duration::from_secs(3)
+                        {
+                            return Err(err).wrap_err("build disk accounting remained unavailable");
+                        }
+                    }
+                    Err(err) => return Err(err),
                 }
                 disk_check = Instant::now();
             }
@@ -189,7 +210,15 @@ fn disk_bytes(path: &Path) -> Result<u64> {
     }
     let mut total = 0u64;
     if metadata.is_dir() {
-        for entry in std::fs::read_dir(path)? {
+        let entries = match std::fs::read_dir(path) {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(err) => {
+                return Err(err)
+                    .wrap_err_with(|| format!("accounting build directory {}", path.display()));
+            }
+        };
+        for entry in entries {
             total = total.saturating_add(disk_bytes(&entry?.path())?);
         }
     }
