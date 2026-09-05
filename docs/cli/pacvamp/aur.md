@@ -12,6 +12,8 @@ Review, approve, and build AUR packages
 
 - [`pacvamp aur approve [FLAGS] <PACKAGE>`](/cli/pacvamp/aur/approve.md)
 - [`pacvamp aur build [FLAGS] <PACKAGE>`](/cli/pacvamp/aur/build.md)
+- [`pacvamp aur compare [--json] <FIRST> <SECOND>`](/cli/pacvamp/aur/compare.md)
 - [`pacvamp aur diff [--commit <COMMIT>] <PACKAGE>`](/cli/pacvamp/aur/diff.md)
+- [`pacvamp aur rebuild <--image <IMAGE>> [--json] <ARTIFACT>`](/cli/pacvamp/aur/rebuild.md)
 - [`pacvamp aur receipt [--json] <ARTIFACT>`](/cli/pacvamp/aur/receipt.md)
 - [`pacvamp aur review [FLAGS] <PACKAGE>`](/cli/pacvamp/aur/review.md)

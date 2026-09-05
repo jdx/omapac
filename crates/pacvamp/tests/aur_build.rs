@@ -855,3 +855,97 @@ fn chroot_rejects_the_host_root_and_images_that_link_to_it() {
             .contains("host root")
     );
 }
+
+#[test]
+fn compare_explains_input_drift_and_checks_artifact_hashes() {
+    let s = setup();
+    no_jail(&s);
+    assert_eq!(run(&s, &["aur", "approve", "yay", "--force"], "").0, 0);
+    let build = || {
+        let (code, out, err) = run(&s, &["aur", "build", "yay", "--json"], "");
+        assert_eq!(code, 0, "{err}");
+        serde_json::from_str::<Vec<std::path::PathBuf>>(&out)
+            .unwrap()
+            .remove(0)
+    };
+    let first = build();
+    let second = build();
+    assert_eq!(
+        run(
+            &s,
+            &[
+                "aur",
+                "compare",
+                first.to_str().unwrap(),
+                second.to_str().unwrap(),
+                "--json"
+            ],
+            ""
+        )
+        .0,
+        0
+    );
+    let receipt_path = second
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("receipt.json");
+    let mut receipt: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&receipt_path).unwrap()).unwrap();
+    receipt["dependencies"]["pacman"] = "different".into();
+    std::fs::write(&receipt_path, serde_json::to_vec(&receipt).unwrap()).unwrap();
+    let (code, out, _) = run(
+        &s,
+        &[
+            "aur",
+            "compare",
+            first.to_str().unwrap(),
+            second.to_str().unwrap(),
+            "--json",
+        ],
+        "",
+    );
+    assert_ne!(code, 0);
+    assert!(out.contains("dependencies"));
+    std::fs::write(&second, b"tampered").unwrap();
+    assert!(
+        run(
+            &s,
+            &[
+                "aur",
+                "compare",
+                first.to_str().unwrap(),
+                second.to_str().unwrap()
+            ],
+            ""
+        )
+        .2
+        .contains("artifact does not match")
+    );
+}
+#[test]
+fn image_fingerprint_covers_contents_and_modes_but_not_runtime_mounts() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join("usr")).unwrap();
+    let file = root.path().join("usr/tool");
+    std::fs::write(&file, b"original").unwrap();
+    let first = pacvamp::aur::receipt::image_digest(root.path()).unwrap();
+    std::fs::create_dir(root.path().join("run")).unwrap();
+    std::fs::write(root.path().join("run/transient"), b"ignored").unwrap();
+    assert_eq!(
+        first,
+        pacvamp::aur::receipt::image_digest(root.path()).unwrap()
+    );
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_ne!(
+        first,
+        pacvamp::aur::receipt::image_digest(root.path()).unwrap()
+    );
+    std::fs::write(file, b"changed").unwrap();
+    assert_ne!(
+        first,
+        pacvamp::aur::receipt::image_digest(root.path()).unwrap()
+    );
+}

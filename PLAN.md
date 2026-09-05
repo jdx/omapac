@@ -1019,3 +1019,8 @@ Optional delegated cgroup v2 supervision adds aggregate memory, task and CPU
 bandwidth limits. An independent pipe watcher kills the group on supervisor death.
 Delegation is an explicit administrator operation; unavailable controllers fail
 closed and normal per-process rlimits remain in force.
+
+Receipt comparison reports differences in recipe, sources, image, dependencies,
+settings and outputs. Offline replay requires approved commits, retained source
+inputs and matching image fingerprints, and uses the recorded SOURCE_DATE_EPOCH.
+The result is a local comparison, not an independent reproducibility attestation.

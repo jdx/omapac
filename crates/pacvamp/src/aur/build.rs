@@ -19,6 +19,8 @@ use crate::manifest::Settings;
 /// How to build.
 #[derive(Debug, Clone)]
 pub struct BuildOpts {
+    pub source_date_epoch: Option<i64>,
+    pub image_sha256: Option<String>,
     pub cgroup_root: Option<PathBuf>,
     pub cache_lease: std::sync::Arc<nix::fcntl::Flock<std::fs::File>>,
     /// Apply the Landlock and seccomp jail to the build phase.
@@ -66,7 +68,13 @@ impl BuildOpts {
         if settings.aur_cgroup_root.is_some() && !settings.aur_jail {
             bail!("cgroup builds require the filesystem jail");
         }
+        let image_sha256 = chroot
+            .as_deref()
+            .map(super::receipt::image_digest)
+            .transpose()?;
         Ok(BuildOpts {
+            source_date_epoch: None,
+            image_sha256,
             cgroup_root: settings.aur_cgroup_root.clone(),
             cache_lease,
             jail: settings.aur_jail,
@@ -138,7 +146,7 @@ pub fn missing_deps(host: &Host, reviewed: &Reviewed, arch: &str) -> Result<Miss
 
 /// Build `reviewed` at its target commit. Returns the package files.
 pub fn build(reviewed: &Reviewed, opts: &BuildOpts) -> Result<Vec<PathBuf>> {
-    build_with_options(reviewed, opts, false)
+    build_with_options(reviewed, opts, false, None)
 }
 
 /// Bootstrap a reviewed split pkgbase whose sibling closes a dependency
@@ -148,14 +156,49 @@ pub fn build_without_dependency_checks(
     reviewed: &Reviewed,
     opts: &BuildOpts,
 ) -> Result<Vec<PathBuf>> {
-    build_with_options(reviewed, opts, true)
+    build_with_options(reviewed, opts, true, None)
+}
+
+/// Replay retained source inputs in an image matching the original receipt.
+pub fn replay(
+    reviewed: &Reviewed,
+    opts: &BuildOpts,
+    reference: &super::receipt::Receipt,
+    sources: &Path,
+) -> Result<Vec<PathBuf>> {
+    if reference.pkgbase != reviewed.pkgbase || reference.commit != reviewed.target {
+        bail!("recipe does not match reference receipt");
+    }
+    if reference.build_network
+        || reference.source_date_epoch.is_none()
+        || reference.image_sha256.is_none()
+    {
+        bail!("replay needs an offline-build receipt with a pinned image and source date");
+    }
+    if opts.image_sha256 != reference.image_sha256 || opts.dependencies != reference.dependencies {
+        bail!("build image differs from reference; use aur compare to inspect other builds");
+    }
+    let mut opts = opts.clone();
+    opts.network = false;
+    opts.source_date_epoch = reference.source_date_epoch;
+    build_with_options(reviewed, &opts, false, Some((reference, sources)))
 }
 
 fn build_with_options(
     reviewed: &Reviewed,
     opts: &BuildOpts,
     without_dependency_checks: bool,
+    replay: Option<(&super::receipt::Receipt, &Path)>,
 ) -> Result<Vec<PathBuf>> {
+    let mut options = opts.clone();
+    if options.source_date_epoch.is_none() {
+        options.source_date_epoch = reviewed
+            .checkout
+            .log(&reviewed.target, 1)?
+            .first()
+            .map(|commit| commit.time);
+    }
+    let opts = &options;
     let checkout = &reviewed.checkout;
     let cache = checkout
         .dir
@@ -176,13 +219,24 @@ fn build_with_options(
     for dir in [&opts.srcdest, &opts.builddir, &opts.logdest, &verifydir] {
         std::fs::create_dir_all(dir).wrap_err_with(|| format!("creating {}", dir.display()))?;
     }
+    if let Some((reference, sources)) = replay {
+        if super::receipt::inputs(sources)? != reference.sources
+            || super::receipt::vcs_refs(sources)? != reference.vcs_refs
+        {
+            bail!("retained source inputs no longer match receipt");
+        }
+        copy_tree(sources, &opts.srcdest)?;
+    }
     checkout.export(&reviewed.target, &verifydir.join("worktree"))?;
     checkout.export(&reviewed.target, &opts.builddir.join("worktree"))?;
 
     // Phase 1 only downloads and verifies sources. Unlike --nobuild,
     // --verifysource does not run prepare() or pkgver() outside the jail.
-    let verify_args = ["--verifysource", "--noconfirm", "--force"];
-    let status = run_makepkg(opts, &verify_args, true, true, &verifydir)
+    let mut verify_args = vec!["--verifysource", "--noconfirm", "--force"];
+    if replay.is_some() {
+        verify_args.push("--holdver");
+    }
+    let status = run_makepkg(opts, &verify_args, replay.is_none(), true, &verifydir)
         .wrap_err("running makepkg --verifysource")?;
     if !status.success() {
         bail!(
@@ -196,6 +250,11 @@ fn build_with_options(
 
     let sources = super::receipt::inputs(&opts.srcdest)?;
     let refs = super::receipt::vcs_refs(&opts.srcdest)?;
+    if let Some((reference, _)) = replay
+        && (sources != reference.sources || refs != reference.vcs_refs)
+    {
+        bail!("verification changed pinned source inputs");
+    }
     // Phase 2 extracts, prepares, builds, and packages inside the jail.
     // --holdver prevents makepkg from updating VCS sources a second time;
     // phase 1 already fetched and verified the exact source state.
@@ -426,6 +485,9 @@ fn spawn_makepkg(
     if opts.chroot.is_some() {
         command.env("PATH", "/usr/bin:/bin");
     }
+    if let Some(epoch) = opts.source_date_epoch {
+        command.env("SOURCE_DATE_EPOCH", epoch.to_string());
+    }
     set_private_home(&mut command, builddir)?;
     if opts.chroot.is_some() {
         let run = opts
@@ -448,6 +510,9 @@ fn spawn_makepkg(
 
     if capture_output {
         command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    } else {
+        use std::os::fd::AsFd as _;
+        command.stdout(Stdio::from(std::io::stderr().as_fd().try_clone_to_owned()?));
     }
     let mut child =
         crate::build_process::ManagedChild::new(command.spawn().wrap_err("starting makepkg")?)?;
