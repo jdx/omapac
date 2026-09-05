@@ -69,15 +69,11 @@ struct Sums {
 }
 
 impl Sums {
-    fn is_empty(&self) -> bool {
-        self.sha256.is_none() && self.sha512.is_none() && self.b2.is_none()
-    }
-
-    fn any_skip(&self) -> bool {
+    fn has_checksum(&self) -> bool {
         [&self.sha256, &self.sha512, &self.b2]
             .into_iter()
             .flatten()
-            .any(|s| s == "SKIP")
+            .any(|s| !s.is_empty() && s != "SKIP")
     }
 }
 
@@ -230,10 +226,10 @@ impl RunWith<()> for Repack {
         }
         let mut unverified = false;
         for u in &upstreams {
-            if u.sums.is_empty() || u.sums.any_skip() {
+            if !u.sums.has_checksum() {
                 if !attest.allow_skip {
                     bail!(
-                        "{} has no checksum (or SKIP) in the PKGBUILD; nothing to attest. Set [attest] allow_skip = true to record it as unverified",
+                        "{} has no non-SKIP checksum in the PKGBUILD; nothing to attest. Set [attest] allow_skip = true to record it as unverified",
                         u.filename
                     );
                 }

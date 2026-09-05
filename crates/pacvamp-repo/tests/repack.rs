@@ -198,11 +198,51 @@ fn signs_a_repackager_packslip_from_the_pkgbuild_sources() {
     assert_eq!(evidence["vendor_attested_by"], "repackager");
     assert_eq!(index["repack_keys"].as_array().unwrap().len(), 1);
 
-    // A PKGBUILD digest that disagrees with the download refuses.
+    // One real digest is sufficient even when another algorithm is SKIP.
+    for (sha256_sum, sha512_sum) in [
+        (sha256(&amd64_deb), "SKIP".into()),
+        ("SKIP".into(), sha512(&amd64_deb)),
+    ] {
+        std::fs::write(
+            pkgdir.join(".SRCINFO"),
+            srcinfo(&base, &sha256_sum, &sha256(&arm64_deb), Some(&sha512_sum)),
+        )
+        .unwrap();
+        let (code, _, err) = rig.run_env(
+            &[
+                "repack",
+                "--pkgdir",
+                "tool-bin",
+                "--key",
+                "repack.key",
+                "--no-log",
+            ],
+            &env,
+        );
+        assert_eq!(code, 0, "{err}");
+        let sidecar: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(pkgdir.join("tool-bin.vendor.json")).unwrap())
+                .unwrap();
+        assert!(
+            !sidecar["evidence"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["kind"] == "none")
+        );
+    }
+
+    // A PKGBUILD digest that disagrees with the download refuses, even if
+    // a different algorithm was skipped.
     std::fs::remove_file(pkgdir.join("tool-bin.vendor.json")).unwrap();
     std::fs::write(
         pkgdir.join(".SRCINFO"),
-        srcinfo(&base, &sha256(b"something else"), &sha256(&arm64_deb), None),
+        srcinfo(
+            &base,
+            &sha256(b"something else"),
+            &sha256(&arm64_deb),
+            Some("SKIP"),
+        ),
     )
     .unwrap();
     let (code, _, err) = rig.run_env(

@@ -100,7 +100,10 @@ evidence = [{ kind = "vendor-signature", detail = "checked by the reviewed bump 
 ```
 
 The command records the hook's declared evidence and its own PKGBUILD checksum
-checks. It refuses missing or `SKIP` checksums unless `[attest] allow_skip = true`.
+checks. Each source needs at least one non-`SKIP` checksum unless
+`[attest] allow_skip = true`; every supplied non-`SKIP` digest must match.
+Downloads have 30-second setup timeouts and a 15-minute body deadline,
+with a 15-minute-30-second overall limit including redirects.
 Repackager attestations earn L1 for declared vendor-signature evidence, otherwise
 L0. Consuming one requires an appropriate `provenance_floor`.
 Moving from vendor to repackager attestation requires `--allow-downgrade`;
