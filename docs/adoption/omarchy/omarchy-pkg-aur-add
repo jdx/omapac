@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Run as the intended build user; never writes package declarations.
+set -euo pipefail
+(($#)) || exit 0
+installed=$(pacman -Qq)
+declare -A present=()
+while IFS= read -r package; do
+	[[ -z $package ]] || present[$package]=1
+done <<<"$installed"
+for package in "$@"; do
+	if [[ -z ${present[$package]:-} ]]; then
+		pacvamp install --aur -y -- "$package"
+	fi
+	pacman -Q "$package" >/dev/null
+done

@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Ignore absent names and remove exact installed names, never providers.
+set -euo pipefail
+(($#)) || exit 0
+installed=$(pacman -Qq)
+declare -A present=() selected=()
+while IFS= read -r package; do
+	[[ -z $package ]] || present[$package]=1
+done <<<"$installed"
+targets=()
+for package in "$@"; do
+	if [[ -n ${present[$package]:-} && -z ${selected[$package]:-} ]]; then
+		targets+=("$package")
+		selected[$package]=1
+	fi
+done
+if ((${#targets[@]})); then
+	pacvamp remove -y --nosave -- "${targets[@]}"
+fi

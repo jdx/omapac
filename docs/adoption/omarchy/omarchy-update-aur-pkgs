@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Run as the intended non-root build user; retain skipped-package reports.
+exec pacvamp update --aur-only -y "$@"

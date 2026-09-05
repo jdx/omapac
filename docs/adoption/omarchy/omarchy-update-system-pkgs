@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Keep the surrounding Omarchy snapshot, log, lock, and migration flow.
+exec pacvamp update --no-aur -y "$@"

@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Imperative, noninteractive repository installs for setup and migrations.
+set -euo pipefail
+(($#)) || exit 0
+pacvamp install -y -- "$@"
+for package in "$@"; do
+	pacman -Q "${package##*/}" >/dev/null
+done
