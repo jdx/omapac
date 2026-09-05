@@ -61,3 +61,25 @@ jobs:
         run: bash e2e/run_all_tests
         env:
           PACVAMP_E2E_CONTAINER: "1"
+
+  # Single fan-in gate, so branch protection can require one stable check and
+  # skipped jobs cannot silently satisfy the required status.
+  final:
+    permissions: {}
+    needs:
+      - test
+      - lint
+      - arch-e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    # Run on success or upstream failure but skip when the workflow is cancelled
+    # — `always()` would override `cancel-in-progress` and waste a runner.
+    if: ${{ !cancelled() }}
+    steps:
+      - name: Check job results
+        if: |
+          needs.test.result != 'success' ||
+          needs.lint.result != 'success' ||
+          needs.arch-e2e.result != 'success'
+        run: exit 1
+      - run: echo "All CI jobs completed successfully"
