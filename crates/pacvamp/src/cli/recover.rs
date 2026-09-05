@@ -82,10 +82,7 @@ impl RunWith<&App> for Recover {
                 vec!["Inspect the package differences and pacman log context; reconcile the host with an explicitly reviewed install/update if needed.".into(),
                      format!("After inspection: pacvamp recover --discard {id} (removes this journal entry only; does not certify package provenance)")]
             };
-            let log = app.paths.sysroot.as_ref().map_or_else(
-                || std::path::PathBuf::from("/var/log/pacman.log"),
-                |root| root.join("var/log/pacman.log"),
-            );
+            let log = app.rooted(&host.config.options.log_file());
             let (logs, log_notice) = log_context(&log, &packages, pending.at);
             let report = RecoveryReport {
                 journal: pending,

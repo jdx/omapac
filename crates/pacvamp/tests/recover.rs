@@ -67,8 +67,9 @@ fn recovery_keeps_original_evidence_and_never_promotes_uncertain_operations() {
             .output()
             .unwrap()
     };
-    std::fs::create_dir_all(rig.root.join("var/log")).unwrap();
-    std::fs::write(rig.root.join("var/log/pacman.log"), "[2026-09-05T12:00:00+0000] [ALPM] upgraded yay (12-1 -> 13.0.1-1)\n[2026-09-05T12:00:00+0000] [ALPM] upgraded yay-extra (1 -> 2)\n").unwrap();
+    rig.write_root("etc/pacman.conf", &common::DEFAULT_CONF.replace("[options]", "[options]\nRootDir = /alternate\nDBPath = /var/lib/pacman\nLogFile = /custom/pacman.log"));
+    std::fs::create_dir_all(rig.root.join("custom")).unwrap();
+    std::fs::write(rig.root.join("custom/pacman.log"), "[2026-09-05T12:00:00+0000] [ALPM] upgraded yay (12-1 -> 13.0.1-1)\n[2026-09-05T12:00:00+0000] [ALPM] upgraded yay-extra (1 -> 2)\n").unwrap();
     let preview = run(&["--json"]);
     assert!(preview.status.success());
     let report: serde_json::Value = serde_json::from_slice(&preview.stdout).unwrap();
