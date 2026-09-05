@@ -34,6 +34,19 @@ pub(super) fn diagnose_protections(
             settings.aur_allow_network_build.len()
         ),
     );
+    add(
+        Status::Ok,
+        "build-limits",
+        format!(
+            "wall {}s, CPU {}s/process, virtual memory {} MiB/process, {} processes/user, file {} MiB, sampled disk {} MiB/run",
+            settings.aur_limits.wall_seconds,
+            settings.aur_limits.cpu_seconds,
+            settings.aur_limits.memory_mb,
+            settings.aur_limits.processes,
+            settings.aur_limits.file_mb,
+            settings.aur_limits.disk_mb
+        ),
+    );
     match crate::jail::probe() {
         Ok(()) => add(Status::Ok, "sandbox-kernel", "running kernel enforces the Landlock and seccomp helper; filesystem reads/writes confined, internet sockets denied".into()),
         Err(err) => add(if settings.aur_jail { Status::Fail } else { Status::Warn }, "sandbox-kernel", format!("unavailable: {err:#}")),

@@ -31,3 +31,25 @@ impl RunWith<&App> for JailExec {
         Err(err).wrap_err_with(|| format!("executing {}", spec.program.display()))
     }
 }
+
+/// Apply build limits and optional filesystem confinement, then execute
+#[derive(Debug, usage_rs::Args)]
+pub struct BuildExec {}
+impl RunWith<&App> for BuildExec {
+    type Output = Result<()>;
+    fn run_with(self, _app: &App) -> Result<()> {
+        let request: crate::build_process::BuildSpec = serde_json::from_reader(std::io::stdin())?;
+        request.limits.apply()?;
+        if request.jail {
+            request.spec.apply()?;
+        }
+        crate::build_process::confine_process_group()?;
+        let mut command = std::process::Command::new(&request.spec.program);
+        let err = command
+            .args(&request.spec.args)
+            .current_dir(&request.spec.cwd)
+            .stdin(std::process::Stdio::null())
+            .exec();
+        Err(err).wrap_err("executing build command")
+    }
+}
