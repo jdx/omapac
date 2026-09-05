@@ -262,3 +262,33 @@ fn hidden_ledger_merge_reads_a_patch_from_stdin() {
         "hidden"
     );
 }
+
+#[test]
+fn journal_preserves_explicit_as_deps_requests() {
+    let rig = Rig::new();
+    let plan = "pacman\\t7.1.0-1\\tcore\\thttps://m/pacman.pkg\\t1\\n";
+    let (code, _, err) = rig.run(&["install", "-y", "--as-deps", "pacman"], plan, 0);
+    assert_eq!(code, 0, "{err}");
+    let state =
+        pacvamp::ledger::Ledger::load(&rig.root.join("var/lib/pacvamp/state.json")).unwrap();
+    assert!(!state.packages["pacman"].explicit);
+}
+
+#[test]
+fn successful_pacman_keeps_declaration_when_journal_completion_fails() {
+    let rig = Rig::new();
+    let pacman = rig.bin.join("pacman");
+    let script = std::fs::read_to_string(&pacman).unwrap().replace(
+        "exit \"${FAKE_PACMAN_STATUS:-0}\"",
+        "ledger=\"$(dirname \"$FAKE_PACMAN_LOG\")/root/var/lib/pacvamp/state.json\"\nrm -f \"$ledger\"\nmkdir \"$ledger\"\nexit 0",
+    );
+    std::fs::write(&pacman, script).unwrap();
+    let (code, _, err) = rig.run(&["add", "-y", "curl"], CURL_PLAN, 0);
+    assert_ne!(code, 0);
+    assert!(err.contains("package mutation completed"), "{err}");
+    assert!(
+        std::fs::read_to_string(rig.user_manifest())
+            .unwrap()
+            .contains("curl = {}")
+    );
+}

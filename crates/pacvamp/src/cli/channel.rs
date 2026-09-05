@@ -417,7 +417,11 @@ impl RunWith<&App> for Rollback {
             Ok(())
         })();
         if let Err(err) = result {
-            if retain_pin {
+            if retain_pin
+                || err
+                    .downcast_ref::<super::recover::MutationCompleted>()
+                    .is_some()
+            {
                 return Err(err.wrap_err(
                     "the machine reached the snapshot; retaining its pin after a later bookkeeping failure",
                 ));

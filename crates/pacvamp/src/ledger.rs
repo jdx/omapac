@@ -113,6 +113,9 @@ pub struct Patch {
     pub snapshot: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub pending: BTreeMap<String, Option<Pending>>,
+    /// Explicit user-requested install reason changes; dependency installs otherwise preserve explicitness.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub install_reasons: BTreeMap<String, bool>,
 }
 
 impl Patch {
@@ -123,6 +126,7 @@ impl Patch {
             && self.index_sequences.is_empty()
             && self.snapshot.is_none()
             && self.pending.is_empty()
+            && self.install_reasons.is_empty()
     }
 }
 
@@ -181,6 +185,11 @@ impl Ledger {
                 entry.at = existing.at;
             }
             self.packages.insert(name.clone(), entry);
+        }
+        for (name, explicit) in &patch.install_reasons {
+            if let Some(entry) = self.packages.get_mut(name) {
+                entry.explicit = *explicit;
+            }
         }
         if let Some(sequence) = patch.index_sequence {
             self.index_sequence = Some(self.index_sequence.unwrap_or(0).max(sequence));

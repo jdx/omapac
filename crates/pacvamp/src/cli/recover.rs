@@ -1,6 +1,6 @@
 use super::App;
 use crate::ledger::{Patch, Pending};
-use eyre::{Result, bail};
+use eyre::{Context as _, Result, bail};
 use usage_rs::RunWith;
 
 /// Inspect interrupted transactions and recover recorded successful operations
@@ -76,6 +76,10 @@ impl RunWith<&App> for Recover {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("package mutation completed; bookkeeping failed; inspect with pacvamp recover")]
+pub(super) struct MutationCompleted;
+
 impl App {
     /// Persist intent before pacman; retain uncertainty on error or interruption.
     pub(super) fn journaled<T>(
@@ -107,10 +111,10 @@ impl App {
         })?;
         pending.completed = true;
         intent.pending.insert(id.clone(), Some(pending));
-        self.record(&intent)?;
+        self.record(&intent).wrap_err(MutationCompleted)?;
         let mut finished = patch;
         finished.pending.insert(id, None);
-        self.record(&finished)?;
+        self.record(&finished).wrap_err(MutationCompleted)?;
         Ok(result)
     }
 }

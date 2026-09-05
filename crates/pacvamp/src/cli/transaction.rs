@@ -303,7 +303,21 @@ fn intent_patch(
     {
         explicit.extend(targets.iter().map(|t| t.name.clone()));
     }
-    Ok(ledger_patch(plan, &explicit, by, removing))
+    let mut patch = ledger_patch(plan, &explicit, by, removing);
+    if let crate::engine::Operation::Install {
+        targets,
+        as_deps: true,
+        ..
+    } = &resolved.transaction.operation
+    {
+        for target in targets {
+            if let Some(entry) = patch.upsert.get_mut(&target.name) {
+                entry.explicit = false;
+                patch.install_reasons.insert(target.name.clone(), false);
+            }
+        }
+    }
+    Ok(patch)
 }
 
 /// Repository evidence accepted for a resolved transaction. Callers merge
