@@ -39,7 +39,11 @@ pub struct Run {
 
 fn size(path: &Path) -> Result<u64> {
     use std::os::unix::fs::MetadataExt as _;
-    let meta = fs::symlink_metadata(path)?;
+    let meta = match fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(err) => return Err(err.into()),
+    };
     if meta.is_symlink() {
         return Ok(0);
     }

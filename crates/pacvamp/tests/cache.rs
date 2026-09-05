@@ -21,6 +21,7 @@ fn retention_protects_active_recent_and_referenced_runs() {
     }
     let active = lease(dir.path(), false).unwrap();
     assert!(lease(dir.path(), true).is_err());
+    assert!(lease(dir.path(), false).is_ok());
     drop(active);
     let _prune = lease(dir.path(), true).unwrap();
     let protected = BTreeSet::from([root.join("installed/receipt.json").canonicalize().unwrap()]);

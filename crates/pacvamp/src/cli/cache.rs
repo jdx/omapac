@@ -61,9 +61,8 @@ impl RunWith<&App> for Prune {
 }
 fn show(app: &App, days: u64, max: Option<u64>, remove: bool, json: bool) -> Result<()> {
     let cache = crate::aur::cache_dir();
-    // Keep enumeration and deletion in the same exclusive scope. Builders keep
-    // a shared lease from run creation through the lifetime of their options.
-    let _lease = crate::aur::cache::lease(&cache, true)?;
+    // Only deletion needs an exclusive lease; previews can run during builds.
+    let _lease = crate::aur::cache::lease(&cache, remove)?;
     let ledger = app.ledger()?;
     let references = ledger
         .packages

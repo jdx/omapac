@@ -14,3 +14,5 @@ the system whose ledger records those builds; a shared cache across independent
 sysroots is not supported.
 
 Commands that may build or install AUR packages hold a shared cache lease through approval, installation, and ledger recording. Pruning cannot remove their artifacts during a long confirmation prompt.
+
+Status and dry runs use shared leases and can inspect a running build. Their sizes are a live estimate; actual pruning takes an exclusive lease and calculates eligibility again.
