@@ -185,6 +185,9 @@ Each name is looked up in the sync databases in repository order, or pinned with
 cmd __jail help="Restrict this process per a JSON spec on stdin, then exec the command" hide=#true {
     flag "-h --help" help="Print help" action=help builtin=#true
 }
+cmd __build help="Apply build limits and optional filesystem confinement, then execute" hide=#true {
+    flag "-h --help" help="Print help" action=help builtin=#true
+}
 cmd __ledger help="Merge a ledger patch from stdin; pacvamp runs this elevated" hide=#true {
     flag "-h --help" help="Print help" action=help builtin=#true
 }
