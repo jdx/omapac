@@ -956,3 +956,9 @@ directories. A competing operation fails with a retry message. Builds export the
 approved Git object rather than copying the mutable checkout, and each invocation
 owns a private run directory containing sources, scratch, logs, and package outputs.
 Returned artifacts remain available when another build starts.
+
+### Required Arch acceptance job
+
+Every pull request runs the Arch container end-to-end suite in the arch-e2e job.
+Missing Docker, an unavailable image, or an unenforceable jail fails the job rather
+than skipping it. This covers real pacman and makepkg in addition to the Rust fixtures.
