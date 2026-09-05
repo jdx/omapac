@@ -41,16 +41,22 @@ impl BuildOpts {
         let makepkg = which::which("makepkg")
             .map_err(|_| eyre::eyre!("makepkg is not on PATH; install base-devel"))?;
         let artifacts = cache_dir.join(".pacvamp-build");
+        let runs = artifacts.join("runs");
+        fs::create_dir_all(&runs)?;
+        let run = tempfile::Builder::new()
+            .prefix(&format!("{pkgbase}-"))
+            .tempdir_in(runs)?
+            .keep();
         Ok(BuildOpts {
             jail: settings.aur_jail,
             network: settings
                 .aur_allow_network_build
                 .iter()
                 .any(|p| p == pkgbase),
-            pkgdest: artifacts.join("pkgs").join(pkgbase),
-            srcdest: artifacts.join("sources").join(pkgbase),
-            builddir: artifacts.join("build").join(pkgbase),
-            logdest: artifacts.join("logs").join(pkgbase),
+            pkgdest: run.join("pkgs"),
+            srcdest: run.join("sources"),
+            builddir: run.join("build"),
+            logdest: run.join("logs"),
             makepkg,
         })
     }
@@ -123,7 +129,11 @@ fn build_with_options(
     without_dependency_checks: bool,
 ) -> Result<Vec<PathBuf>> {
     let checkout = &reviewed.checkout;
-    checkout.checkout(&reviewed.target)?;
+    let cache = checkout
+        .dir
+        .parent()
+        .ok_or_else(|| eyre::eyre!("checkout has no parent"))?;
+    let _lock = super::locking::acquire(cache, &reviewed.pkgbase)?;
     if opts.pkgdest.exists() {
         std::fs::remove_dir_all(&opts.pkgdest).wrap_err("clearing stale package outputs")?;
     }
@@ -138,8 +148,8 @@ fn build_with_options(
     for dir in [&opts.srcdest, &opts.builddir, &opts.logdest, &verifydir] {
         std::fs::create_dir_all(dir).wrap_err_with(|| format!("creating {}", dir.display()))?;
     }
-    copy_tree(&checkout.dir, &verifydir.join("worktree"))?;
-    copy_tree(&checkout.dir, &opts.builddir.join("worktree"))?;
+    checkout.export(&reviewed.target, &verifydir.join("worktree"))?;
+    checkout.export(&reviewed.target, &opts.builddir.join("worktree"))?;
 
     // Phase 1 only downloads and verifies sources. Unlike --nobuild,
     // --verifysource does not run prepare() or pkgver() outside the jail.

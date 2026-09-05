@@ -112,19 +112,42 @@ fn build_runs_both_phases_with_a_scrubbed_environment() {
         log.contains(&"env GITHUB_TOKEN=unset".to_string()),
         "scrubbed: {log:?}"
     );
-    let pkg = s
+    let runs = s
         .rig
         .dir
         .path()
-        .join("cache/pacvamp/aur/.pacvamp-build/pkgs/yay/yay-13.0.1-1-x86_64.pkg.tar.zst");
+        .join("cache/pacvamp/aur/.pacvamp-build/runs");
+    let first = std::fs::read_dir(&runs)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let pkg = first.join("pkgs/yay-13.0.1-1-x86_64.pkg.tar.zst");
     assert!(pkg.exists(), "{}", pkg.display());
+    assert!(first.join("build/worktree/PKGBUILD").is_file());
+    // Untracked cache files must never enter a later approved build.
+    std::fs::write(
+        s.rig.dir.path().join("cache/pacvamp/aur/yay/unreviewed"),
+        "poison",
+    )
+    .unwrap();
+    let (code, _, err) = run(&s, &["aur", "build", "yay"], "");
+    assert_eq!(code, 0, "{err}");
     assert!(
-        s.rig
-            .dir
-            .path()
-            .join("cache/pacvamp/aur/.pacvamp-build/build/yay/worktree/PKGBUILD")
-            .is_file()
+        pkg.exists(),
+        "a later build must not remove returned artifacts"
     );
+    let runs: Vec<_> = std::fs::read_dir(runs).unwrap().collect();
+    assert_eq!(runs.len(), 2);
+    for run in runs {
+        assert!(
+            !run.unwrap()
+                .path()
+                .join("build/worktree/unreviewed")
+                .exists()
+        );
+    }
 }
 
 #[test]
@@ -203,11 +226,18 @@ fn every_build_phase_confines_recipe_code() {
     assert_eq!(code, 0, "{out}\n{err}");
     assert!(!out.contains("fake credential"));
     assert!(!s.rig.dir.path().join("other-build").exists());
-    let phases = s
+    let runs = s
         .rig
         .dir
         .path()
-        .join("cache/pacvamp/aur/.pacvamp-build/logs/yay/phases");
+        .join("cache/pacvamp/aur/.pacvamp-build/runs");
+    let phases = std::fs::read_dir(runs)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path()
+        .join("logs/phases");
     assert_eq!(std::fs::read_to_string(phases).unwrap().lines().count(), 3);
 }
 
@@ -681,5 +711,53 @@ fn aur_dependency_cycles_and_unknown_deps_are_refused() {
     assert!(
         err.contains("dependency libnowhere is in no repository and not on the AUR"),
         "{err}"
+    );
+}
+
+#[test]
+fn concurrent_aur_operation_fails_before_touching_shared_checkout() {
+    use nix::fcntl::{Flock, FlockArg};
+    let s = setup();
+    let dir = s.rig.dir.path().join("cache/pacvamp/aur/.locks");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = std::fs::File::create(dir.join("yay.lock")).unwrap();
+    let held = Flock::lock(file, FlockArg::LockExclusive).unwrap();
+    let (code, _, err) = run(&s, &["aur", "approve", "--force", "yay"], "");
+    assert_ne!(code, 0);
+    assert!(err.contains("yay is busy"), "{err}");
+    assert!(!s.rig.dir.path().join("cache/pacvamp/aur/yay").exists());
+    drop(held);
+    let (code, _, err) = run(&s, &["aur", "approve", "--force", "yay"], "");
+    assert_eq!(code, 0, "{err}");
+}
+
+#[test]
+fn exports_raw_reviewed_blobs_without_archive_attributes_or_untracked_files() {
+    let s = setup();
+    s.aur.commit(
+        "yay",
+        &[
+            (
+                ".gitattributes",
+                "PKGBUILD export-ignore\nversion export-subst\n",
+            ),
+            ("version", "$Format:%H$\n"),
+        ],
+        "archive attributes",
+        "2026-01-02T00:00:00Z",
+    );
+    let checkout = pacvamp::aur::git::Checkout {
+        pkgbase: "yay".into(),
+        dir: s.aur.dir.join("yay.git"),
+    };
+    let destination = s.rig.dir.path().join("export");
+    checkout.export(&s.aur.head("yay"), &destination).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(destination.join("PKGBUILD")).unwrap(),
+        YAY_PKGBUILD
+    );
+    assert_eq!(
+        std::fs::read_to_string(destination.join("version")).unwrap(),
+        "$Format:%H$\n"
     );
 }

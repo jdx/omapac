@@ -948,3 +948,11 @@ Living section. Items move to Decisions when settled.
   has shipped and its overhead is measured.
 - Which makepkg version in OPR's build image supports a PKGBUILD `verify()` function,
   which decides where the vendor re-verification step runs.
+
+### Build concurrency and retained artifacts
+
+AUR cache synchronization and building take a per-pkgbase lock outside recipe-writable
+directories. A competing operation fails with a retry message. Builds export the
+approved Git object rather than copying the mutable checkout, and each invocation
+owns a private run directory containing sources, scratch, logs, and package outputs.
+Returned artifacts remain available when another build starts.

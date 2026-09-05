@@ -53,6 +53,7 @@ impl Checkout {
         if !valid_pkgbase(pkgbase) {
             bail!("invalid AUR package base {pkgbase:?}");
         }
+        let _lock = super::locking::acquire(cache_dir, pkgbase)?;
         let dir = cache_dir.join(pkgbase);
         let checkout = Checkout {
             pkgbase: pkgbase.to_string(),
@@ -144,6 +145,91 @@ impl Checkout {
     pub fn checkout(&self, commit: &str) -> Result<()> {
         self.git(&["checkout", "--quiet", "--force", "--detach", commit])?;
         Ok(())
+    }
+
+    /// Export raw Git blobs, without applying archive attributes or checkout filters.
+    pub fn export(&self, commit: &str, destination: &std::path::Path) -> Result<()> {
+        use std::os::unix::{ffi::OsStringExt as _, fs::PermissionsExt as _};
+        use std::path::Component;
+        let tree = self.bounded_git(&["ls-tree", "-rlz", "--full-tree", commit], 1024 * 1024)?;
+        std::fs::create_dir_all(destination)?;
+        let mut remaining = 64 * 1024 * 1024usize;
+        for entry in tree.split(|b| *b == 0).filter(|e| !e.is_empty()) {
+            let tab = entry
+                .iter()
+                .position(|b| *b == b'\t')
+                .ok_or_else(|| eyre::eyre!("invalid Git tree entry"))?;
+            let header = std::str::from_utf8(&entry[..tab])?;
+            let fields: Vec<_> = header.split_whitespace().collect();
+            if fields.len() != 4 || fields[1] != "blob" {
+                bail!("recipe exports support files and symlinks, not submodules");
+            }
+            let name =
+                std::path::PathBuf::from(std::ffi::OsString::from_vec(entry[tab + 1..].to_vec()));
+            if name
+                .components()
+                .any(|c| !matches!(c, Component::Normal(_)))
+                || name.components().any(|c| c.as_os_str() == ".git")
+            {
+                bail!("unsafe recipe path {}", name.display());
+            }
+            let size: usize = fields[3].parse()?;
+            if size > remaining {
+                bail!("recipe tree exceeds the 64 MiB export limit");
+            }
+            remaining -= size;
+            let bytes = self.bounded_git(&["cat-file", "blob", fields[2]], size)?;
+            let path = destination.join(name);
+            std::fs::create_dir_all(
+                path.parent()
+                    .ok_or_else(|| eyre::eyre!("recipe path has no parent"))?,
+            )?;
+            match fields[0] {
+                "120000" => std::os::unix::fs::symlink(std::ffi::OsString::from_vec(bytes), path)?,
+                "100644" | "100755" => {
+                    std::fs::write(&path, bytes)?;
+                    std::fs::set_permissions(
+                        path,
+                        std::fs::Permissions::from_mode(if fields[0] == "100755" {
+                            0o755
+                        } else {
+                            0o644
+                        }),
+                    )?;
+                }
+                mode => bail!("unsupported recipe file mode {mode}"),
+            }
+        }
+        Ok(())
+    }
+
+    fn bounded_git(&self, args: &[&str], limit: usize) -> Result<Vec<u8>> {
+        use std::io::Read as _;
+        use std::process::Stdio;
+        let mut child = git_command()
+            .arg("-C")
+            .arg(&self.dir)
+            .args(args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()?;
+        let mut bytes = Vec::new();
+        let read = child
+            .stdout
+            .take()
+            .ok_or_else(|| eyre::eyre!("missing git output"))?
+            .take(limit as u64 + 1)
+            .read_to_end(&mut bytes);
+        if read.is_err() || bytes.len() > limit {
+            let _ = child.kill();
+            let _ = child.wait();
+            read?;
+            bail!("Git recipe export exceeds its size limit");
+        }
+        if !child.wait()?.success() {
+            bail!("Git recipe export failed");
+        }
+        Ok(bytes)
     }
 
     /// History from `commit` back, newest first, at most `limit` entries.
@@ -242,7 +328,7 @@ impl Checkout {
     }
 }
 
-fn valid_pkgbase(pkgbase: &str) -> bool {
+pub(super) fn valid_pkgbase(pkgbase: &str) -> bool {
     !pkgbase.is_empty()
         && !pkgbase.starts_with('.')
         && pkgbase.bytes().all(|byte| {

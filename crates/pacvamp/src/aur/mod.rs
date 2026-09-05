@@ -56,3 +56,5 @@ mod tests {
         assert_eq!(format_age(now + 100, now), "just now");
     }
 }
+
+mod locking;
