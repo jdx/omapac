@@ -264,6 +264,31 @@ impl App {
         built: &mut Vec<(String, String, Vec<alpm_db::dep::Dependency>)>,
         yes: bool,
     ) -> Result<Vec<std::path::PathBuf>> {
+        if let Some(root) = crate::aur::chroot::root(&prepared.settings) {
+            let image = crate::aur::chroot::host(&root)?;
+            let missing =
+                crate::aur::build::missing_deps(&image, &prepared.reviewed, &prepared.arch)?;
+            if !missing.repo.is_empty() || !missing.other.is_empty() {
+                let names: Vec<_> = missing
+                    .repo
+                    .iter()
+                    .map(|p| p.name.clone())
+                    .chain(missing.other.iter().map(|p| p.spec()))
+                    .collect();
+                bail!(
+                    "clean chroot is missing build dependencies: {}; provision them in {} before retrying (host packages are not used)",
+                    names.join(", "),
+                    root.display()
+                );
+            }
+            let opts = crate::aur::build::BuildOpts::from_settings(
+                &prepared.settings,
+                &prepared.reviewed.pkgbase,
+                &crate::aur::cache_dir(),
+                &image,
+            )?;
+            return crate::aur::build::build(&prepared.reviewed, &opts);
+        }
         let host = self.host()?;
         let missing = crate::aur::build::missing_deps(&host, &prepared.reviewed, &prepared.arch)?;
         if !missing.other.is_empty() {

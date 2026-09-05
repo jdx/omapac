@@ -50,6 +50,21 @@ pub(super) fn diagnose_protections(
         ),
         Err(err) => add(Status::Fail, "build-limits", format!("{err:#}")),
     }
+    if settings.aur_chroot {
+        match crate::aur::chroot::host(&settings.aur_chroot_root)
+            .and_then(|_| which::which("bwrap").map_err(Into::into))
+        {
+            Ok(_) => add(
+                Status::Ok,
+                "build-chroot",
+                format!(
+                    "image {}; bubblewrap present; namespace startup is checked at build time",
+                    settings.aur_chroot_root.display()
+                ),
+            ),
+            Err(err) => add(Status::Fail, "build-chroot", format!("{err:#}")),
+        }
+    }
     match crate::jail::probe() {
         Ok(()) => add(Status::Ok, "sandbox-kernel", "running kernel enforces the Landlock and seccomp helper; filesystem reads/writes confined, internet sockets denied".into()),
         Err(err) => add(if settings.aur_jail { Status::Fail } else { Status::Warn }, "sandbox-kernel", format!("unavailable: {err:#}")),

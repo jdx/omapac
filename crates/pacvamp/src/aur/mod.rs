@@ -60,3 +60,5 @@ mod tests {
 mod locking;
 
 pub mod receipt;
+
+pub mod chroot;

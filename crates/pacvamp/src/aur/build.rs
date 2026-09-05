@@ -21,6 +21,7 @@ use crate::manifest::Settings;
 pub struct BuildOpts {
     /// Apply the Landlock and seccomp jail to the build phase.
     pub jail: bool,
+    pub chroot: Option<PathBuf>,
     pub limits: crate::build_process::Limits,
     pub dependencies: std::collections::BTreeMap<String, String>,
     /// Allow network during the build phase.
@@ -43,8 +44,15 @@ impl BuildOpts {
         host: &Host,
     ) -> Result<BuildOpts> {
         settings.aur_limits.validate()?;
-        let makepkg = which::which("makepkg")
-            .map_err(|_| eyre::eyre!("makepkg is not on PATH; install base-devel"))?;
+        let chroot = super::chroot::root(settings);
+        let image_host = chroot.as_deref().map(super::chroot::host).transpose()?;
+        let host = image_host.as_ref().unwrap_or(host);
+        let makepkg = if chroot.is_some() {
+            PathBuf::from("/usr/bin/makepkg")
+        } else {
+            which::which("makepkg")
+                .map_err(|_| eyre::eyre!("makepkg is not on PATH; install base-devel"))?
+        };
         let artifacts = cache_dir.join(".pacvamp-build");
         let runs = artifacts.join("runs");
         fs::create_dir_all(&runs)?;
@@ -54,6 +62,7 @@ impl BuildOpts {
             .keep();
         Ok(BuildOpts {
             jail: settings.aur_jail,
+            chroot,
             limits: settings.aur_limits.clone(),
             dependencies: host
                 .installed()?
@@ -342,9 +351,22 @@ fn spawn_makepkg(
         args: args.iter().map(|arg| (*arg).to_string()).collect(),
         cwd: builddir.join("worktree"),
     };
-    let mut command = Command::new(std::env::current_exe()?);
+    let helper = std::env::current_exe()?;
+    let mut command = if let Some(root) = &opts.chroot {
+        super::chroot::command(
+            root,
+            opts.builddir
+                .parent()
+                .ok_or_else(|| eyre::eyre!("missing run directory"))?,
+            &helper,
+            network,
+        )?
+    } else {
+        let mut cmd = Command::new(&helper);
+        cmd.arg("__build");
+        cmd
+    };
     command
-        .arg("__build")
         .env_clear()
         .envs(crate::jail::scrubbed_env())
         .stdin(Stdio::piped())
@@ -357,6 +379,9 @@ fn spawn_makepkg(
         .env("TMPDIR", &scratch)
         .env("TMP", &scratch)
         .env("TEMP", &scratch);
+    if opts.chroot.is_some() {
+        command.env("PATH", "/usr/bin:/bin");
+    }
     set_private_home(&mut command, builddir)?;
     if capture_output {
         command.stdout(Stdio::piped()).stderr(Stdio::piped());

@@ -27,6 +27,8 @@ pub struct Receipt {
     pub commit: String,
     pub at: i64,
     pub jail: bool,
+    #[serde(default)]
+    pub chroot: Option<PathBuf>,
     pub build_network: bool,
     pub limits: crate::build_process::Limits,
     pub makepkg_sha256: String,
@@ -125,9 +127,17 @@ pub fn write(
         commit: reviewed.target.clone(),
         at: crate::ledger::now(),
         jail: opts.jail,
+        chroot: opts.chroot.clone(),
         build_network: opts.network,
         limits: opts.limits.clone(),
-        makepkg_sha256: packslip::digest_file(&opts.makepkg)?.0,
+        makepkg_sha256: packslip::digest_file(
+            &opts
+                .chroot
+                .as_ref()
+                .map(|root| root.join("usr/bin/makepkg"))
+                .unwrap_or_else(|| opts.makepkg.clone()),
+        )?
+        .0,
         dependencies: opts.dependencies.clone(),
         sources,
         vcs_refs: refs,
