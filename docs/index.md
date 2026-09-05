@@ -35,6 +35,10 @@ features:
 
 - [Install Pacvamp](/install): configure the public repository and install the
   signed Arch package.
+- [Import an existing machine](/migration): preview a manifest without granting trust.
+- [Understand blocked updates](/update-policy): retained versions, retry times, and review actions.
+- [Check active protections](/protection-status): kernel support, policy, feeds, and snapshots.
+- [Security acceptance tests](/security-testing): adversarial fixtures and mandatory Linux checks.
 - [Trust roots](/trust): independently verify the signing keys used by the
   public Pacvamp registry.
 - [Project plan](https://github.com/jdx/pacvamp/blob/main/PLAN.md): the design, decisions, and implementation plan.

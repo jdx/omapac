@@ -127,8 +127,9 @@ cmd doctor help="Check that this machine is set up for pacvamp" {
     long_help #"""
 Check that this machine is set up for pacvamp
 
-Reports the pacman binary, the configuration and its repositories with their signature levels against the floor pacvamp expects, sync database freshness, the local database, and how pacvamp would obtain root.
+Reports the pacman binary, the configuration and its repositories with their signature levels against the floor pacvamp expects, sync database freshness, the local database, and how pacvamp would obtain root. Also probes the running kernel's sandbox and reports configured policy, authenticated feed freshness, publisher evidence, and snapshot availability. Uses cached feeds unless --refresh is passed; never changes package or approval state.
 """#
+    flag --refresh help="Fetch signed feeds to check current publisher availability"
     flag "-J --json" help="Print as JSON"
     flag "-h --help" help="Print help" action=help builtin=#true
 }
