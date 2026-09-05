@@ -268,7 +268,22 @@ impl RunWith<&App> for Update {
         // immediately before building so a changed upstream cannot reuse this plan.
         let mut blocked = Vec::new();
         for candidate in &aur {
-            let (reviewed, lock) = app.review_aur(&candidate.name, None, false)?;
+            let (reviewed, lock) = match app.review_aur(&candidate.name, None, false) {
+                Ok(review) => review,
+                Err(err) => {
+                    blocked.push(Hold {
+                        name: candidate.name.clone(),
+                        installed: Some(candidate.installed.clone()),
+                        reason: format!("AUR review unavailable: {err:#}"),
+                        eligible_at: None,
+                        next_step: format!(
+                            "Repair the review error, then run pacvamp aur review -- {}.",
+                            candidate.name
+                        ),
+                    });
+                    continue;
+                }
+            };
             let approved = lock
                 .aur
                 .get(&reviewed.pkgbase)

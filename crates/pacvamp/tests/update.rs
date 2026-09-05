@@ -704,3 +704,35 @@ fn only_one_update_runs_at_a_time() {
     assert_eq!(code, 0, "{err}\n{out}");
     holder.wait().unwrap();
 }
+
+#[test]
+fn unavailable_aur_review_preserves_repo_plan_and_applies_repositories_first() {
+    let s = setup(rpc_with_newer_yay());
+    std::fs::remove_dir_all(s.aur.dir.join("yay.git")).unwrap();
+    let (code, out, err) = run(&s, &["update", "--json"], UPGRADE);
+    assert_eq!(code, 0, "{err}");
+    let plan: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(plan["repo"]["changes"][0]["name"], "pacman");
+    assert_eq!(plan["blocked"][0]["installed"], "13.0.1-1");
+    assert!(plan["blocked"][0]["eligible_at"].is_null());
+    assert!(
+        plan["blocked"][0]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("AUR review unavailable")
+    );
+    assert!(s.rig.log().iter().all(|line| line.contains("--print")));
+
+    let (code, out, err) = run(&s, &["update", "-y", "--no-refresh"], UPGRADE);
+    assert_ne!(
+        code, 0,
+        "unavailable AUR review must still fail: {out} {err}"
+    );
+    let log = s.rig.log();
+    assert!(
+        log.iter()
+            .any(|line| line.contains("-Su") && !line.contains("--print")),
+        "{log:?}"
+    );
+    assert!(!log.iter().any(|line| line.contains("-U ")), "{log:?}");
+}
