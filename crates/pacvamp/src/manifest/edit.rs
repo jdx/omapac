@@ -97,10 +97,21 @@ pub fn import_packages(
     }
     let text = doc.to_string();
     if write && !packages.is_empty() {
-        let parent = path.parent().unwrap_or_else(|| Path::new("."));
+        // Atomic replacement must target the underlying file, not a symlink
+        // maintained by a dotfiles manager. Refuse dangling links rather than
+        // silently replacing them or guessing a missing target.
+        let destination = match std::fs::symlink_metadata(path) {
+            Ok(metadata) if metadata.file_type().is_symlink() => path
+                .canonicalize()
+                .wrap_err_with(|| format!("resolving manifest symlink {}", path.display()))?,
+            Ok(_) => path.to_path_buf(),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => path.to_path_buf(),
+            Err(err) => return Err(err).wrap_err_with(|| format!("inspecting {}", path.display())),
+        };
+        let parent = destination.parent().unwrap_or_else(|| Path::new("."));
         std::fs::create_dir_all(parent)?;
         let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
-        if let Ok(metadata) = std::fs::metadata(path) {
+        if let Ok(metadata) = std::fs::metadata(&destination) {
             temporary
                 .as_file()
                 .set_permissions(metadata.permissions())?;
@@ -108,8 +119,8 @@ pub fn import_packages(
         temporary.write_all(text.as_bytes())?;
         temporary.as_file().sync_all()?;
         temporary
-            .persist(path)
-            .wrap_err_with(|| format!("writing {}", path.display()))?;
+            .persist(&destination)
+            .wrap_err_with(|| format!("writing {}", destination.display()))?;
     }
     Ok(text)
 }
