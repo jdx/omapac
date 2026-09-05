@@ -180,7 +180,7 @@ fn every_build_phase_confines_recipe_code() {
     std::fs::write(&secret, "fake credential").unwrap();
     // Run recipe top-level code on every makepkg invocation, including the
     // network-enabled source phase and the output-listing phase.
-    let script = "#!/bin/bash\nset -euo pipefail\nsource PKGBUILD\ncase \" $* \" in\n *' --verifysource '*) echo verified > \"$SRCDEST/input\";;\n *' --packagelist '*) echo \"$PKGDEST/yay.pkg.tar.zst\";;\n *) test \"$(cat \"$SRCDEST/input\")\" = verified; if echo poison > \"$SRCDEST/input\"; then exit 91; fi; echo package > \"$PKGDEST/yay.pkg.tar.zst\";;\nesac\n";
+    let script = "#!/bin/bash\nset -euo pipefail\nsource PKGBUILD\ntouch \"$PKGDEST/write-probe\"\ncase \" $* \" in\n *' --verifysource '*) echo verified > \"$SRCDEST/input\"; echo planted > \"$PKGDEST/verify-only\";;\n *' --packagelist '*) echo \"$PKGDEST/yay.pkg.tar.zst\";;\n *) test ! -e \"$PKGDEST/verify-only\"; test \"$(cat \"$SRCDEST/input\")\" = verified; if echo poison > \"$SRCDEST/input\"; then exit 91; fi; echo package > \"$PKGDEST/yay.pkg.tar.zst\";;\nesac\n";
     std::fs::write(s.rig.bin.join("makepkg"), script).unwrap();
     let recipe = format!(
         "{YAY_PKGBUILD}\nif cat '{}'; then exit 92; fi\nif cat /proc/$PPID/environ; then exit 93; fi\nif echo poisoned > '{}'; then exit 94; fi\ntest -z \"${{GITHUB_TOKEN:-}}\"\ntest \"$TMPDIR\" = \"$BUILDDIR/tmp\"\necho scratch > \"$TMPDIR/probe\"\necho phase >> \"$LOGDEST/phases\"\n",

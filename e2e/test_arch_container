@@ -120,3 +120,69 @@ test -f /home/pacvamp-builder/build/pkgs/pacvamp-jail-probe-1-1-any.pkg.tar.zst
 bsdtar -xOf /home/pacvamp-builder/build/pkgs/pacvamp-jail-probe-1-1-any.pkg.tar.zst .BUILDINFO | grep '^installed = pacman-' >/dev/null
 test ! -e /tmp/pacvamp-jail-shared
 JAIL
+
+# Also traverse the production aur approve/build path. A broad hand-written
+# __jail spec cannot catch missing grants in spawn_makepkg's verification phase.
+docker exec -i "$name" bash <<'PRODUCTION'
+set -euo pipefail
+pacman -S --noconfirm --needed git python >/dev/null
+mkdir -p /srv/pacvamp-aur/work
+cp /home/pacvamp-builder/build/worktree/PKGBUILD /srv/pacvamp-aur/work/PKGBUILD
+cat >>/srv/pacvamp-aur/work/PKGBUILD <<'RECIPE'
+touch "$PKGDEST/write-probe"
+if [[ $BUILDDIR == *.verify ]]; then
+  echo planted >"$PKGDEST/verify-only"
+else
+  test ! -e "$PKGDEST/verify-only" || exit 93
+fi
+RECIPE
+cat >/srv/pacvamp-aur/work/.SRCINFO <<'SRCINFO'
+pkgbase = pacvamp-jail-probe
+	pkgver = 1
+	pkgrel = 1
+	arch = any
+
+pkgname = pacvamp-jail-probe
+SRCINFO
+git -C /srv/pacvamp-aur/work init --quiet
+git -C /srv/pacvamp-aur/work add PKGBUILD .SRCINFO
+git -C /srv/pacvamp-aur/work -c user.name=Fixture -c user.email=fixture@example.invalid commit --quiet -m fixture
+git clone --quiet --bare /srv/pacvamp-aur/work /srv/pacvamp-aur/pacvamp-jail-probe.git
+chown -R pacvamp-builder:pacvamp-builder /srv/pacvamp-aur
+cat >/srv/pacvamp-aur/rpc.py <<'PYTHON'
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import json
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        package = dict(Name="pacvamp-jail-probe", PackageBase="pacvamp-jail-probe",
+                       Version="1-1", FirstSubmitted=1, LastModified=1,
+                       Maintainer="fixture", Submitter="fixture", NumVotes=100)
+        body = json.dumps(dict(type="multiinfo", results=[package])).encode()
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+HTTPServer(("127.0.0.1", 18763), Handler).serve_forever()
+PYTHON
+python /srv/pacvamp-aur/rpc.py >/srv/pacvamp-aur/rpc.log 2>&1 &
+rpc_pid=$!
+trap 'kill "$rpc_pid"' EXIT
+for attempt in {1..50}; do
+  if curl -fsS http://127.0.0.1:18763 >/dev/null 2>&1; then break; fi
+  sleep 0.1
+done
+runuser -u pacvamp-builder -- env \
+  PACVAMP_AUR_RPC_BASE=http://127.0.0.1:18763 \
+  PACVAMP_AUR_GIT_BASE=file:///srv/pacvamp-aur \
+  /usr/local/bin/pacvamp aur approve --force pacvamp-jail-probe
+runuser -u pacvamp-builder -- env \
+  PACVAMP_AUR_RPC_BASE=http://127.0.0.1:18763 \
+  PACVAMP_AUR_GIT_BASE=file:///srv/pacvamp-aur \
+  /usr/local/bin/pacvamp aur build pacvamp-jail-probe
+artifact=/home/pacvamp-builder/.cache/pacvamp/aur/.pacvamp-build/pkgs/pacvamp-jail-probe/pacvamp-jail-probe-1-1-any.pkg.tar.zst
+test -f "$artifact"
+test ! -e "$(dirname "$artifact")/verify-only"
+bsdtar -xOf "$artifact" .BUILDINFO | grep '^installed = pacman-' >/dev/null
+PRODUCTION
