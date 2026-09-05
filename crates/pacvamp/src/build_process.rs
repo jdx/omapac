@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::process::{Child, ExitStatus};
 use std::sync::{
-    Arc,
+    Arc, Mutex, OnceLock,
     atomic::{AtomicBool, Ordering},
 };
 use std::time::{Duration, Instant};
@@ -120,11 +120,45 @@ pub fn confine_process_group() -> Result<()> {
     Ok(())
 }
 
+// signal-hook retains its OS handler after unregistering callbacks. Keep a
+// permanent conditional default action so signals still terminate the CLI
+// between builds, and share cancellation while any build is supervised.
+struct BuildSignals {
+    active: Mutex<usize>,
+    default_action: Arc<AtomicBool>,
+    cancelled: Arc<AtomicBool>,
+}
+fn build_signals() -> Result<&'static BuildSignals> {
+    static SIGNALS: OnceLock<std::io::Result<BuildSignals>> = OnceLock::new();
+    SIGNALS
+        .get_or_init(|| {
+            let signals = BuildSignals {
+                active: Mutex::new(0),
+                default_action: Arc::new(AtomicBool::new(true)),
+                cancelled: Arc::new(AtomicBool::new(false)),
+            };
+            for sig in [
+                signal_hook::consts::SIGINT,
+                signal_hook::consts::SIGTERM,
+                signal_hook::consts::SIGHUP,
+            ] {
+                signal_hook::flag::register_conditional_default(
+                    sig,
+                    signals.default_action.clone(),
+                )?;
+                signal_hook::flag::register(sig, signals.cancelled.clone())?;
+            }
+            Ok(signals)
+        })
+        .as_ref()
+        .map_err(|err| eyre::eyre!("registering build cancellation signals: {err}"))
+}
+
 pub struct ManagedChild {
     pub child: Child,
     group: Pid,
     cancelled: Arc<AtomicBool>,
-    handlers: Vec<signal_hook::SigId>,
+    signals: Option<&'static BuildSignals>,
 }
 impl ManagedChild {
     pub fn new(child: Child) -> Result<Self> {
@@ -132,17 +166,17 @@ impl ManagedChild {
             group: Pid::from_raw(child.id() as i32),
             child,
             cancelled: Arc::new(AtomicBool::new(false)),
-            handlers: Vec::new(),
+            signals: None,
         };
-        for sig in [
-            signal_hook::consts::SIGINT,
-            signal_hook::consts::SIGTERM,
-            signal_hook::consts::SIGHUP,
-        ] {
-            managed
-                .handlers
-                .push(signal_hook::flag::register(sig, managed.cancelled.clone())?);
+        let signals = build_signals()?;
+        let mut active = signals.active.lock().unwrap_or_else(|err| err.into_inner());
+        if *active == 0 {
+            signals.cancelled.store(false, Ordering::SeqCst);
+            signals.default_action.store(false, Ordering::SeqCst);
         }
+        *active += 1;
+        managed.cancelled = signals.cancelled.clone();
+        managed.signals = Some(signals);
         Ok(managed)
     }
     pub fn wait(&mut self, limits: &Limits, run: &Path) -> Result<ExitStatus> {
@@ -198,8 +232,12 @@ impl Drop for ManagedChild {
     fn drop(&mut self) {
         let _ = killpg(self.group, Signal::SIGKILL);
         let _ = self.child.wait();
-        for handler in self.handlers.drain(..) {
-            signal_hook::low_level::unregister(handler);
+        if let Some(signals) = self.signals {
+            let mut active = signals.active.lock().unwrap_or_else(|err| err.into_inner());
+            *active -= 1;
+            if *active == 0 {
+                signals.default_action.store(true, Ordering::SeqCst);
+            }
         }
     }
 }

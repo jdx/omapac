@@ -179,3 +179,63 @@ fn lower_inherited_limits_are_preserved_without_privilege() {
             <= 128
     );
 }
+
+#[test]
+fn signals_cancel_active_builds_and_terminate_after_supervision() {
+    use std::os::unix::process::ExitStatusExt as _;
+    for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+        for phase in ["active", "after"] {
+            let status = Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "signal_lifecycle_probe", "--ignored"])
+                .env("PACVAMP_TEST_SIGNAL", signal.to_string())
+                .env("PACVAMP_TEST_SIGNAL_PHASE", phase)
+                .process_group(0)
+                .status()
+                .unwrap();
+            if phase == "active" {
+                assert!(status.success(), "active cancellation failed for {signal}");
+            } else {
+                assert_eq!(status.signal(), Some(signal), "signal ignored after build");
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "subprocess probe invoked by signals_cancel_active_builds_and_terminate_after_supervision"]
+fn signal_lifecycle_probe() {
+    use nix::{
+        sys::signal::{Signal, kill},
+        unistd::getpid,
+    };
+    let signal = Signal::try_from(
+        std::env::var("PACVAMP_TEST_SIGNAL")
+            .unwrap()
+            .parse::<i32>()
+            .unwrap(),
+    )
+    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let limits = Limits::default();
+    // Repeated scopes must re-enable cancellation without losing default actions.
+    for _ in 0..2 {
+        let mut child = spawn(dir.path(), "true", limits.clone());
+        assert!(child.wait(&limits, dir.path()).unwrap().success());
+    }
+    if std::env::var("PACVAMP_TEST_SIGNAL_PHASE").unwrap() == "active" {
+        let other = spawn(dir.path(), "sleep 30", limits.clone());
+        let mut child = spawn(dir.path(), "sleep 30", limits.clone());
+        drop(other);
+        kill(getpid(), signal).unwrap();
+        assert!(
+            child
+                .wait(&limits, dir.path())
+                .unwrap_err()
+                .to_string()
+                .contains("cancelled")
+        );
+    } else {
+        kill(getpid(), signal).unwrap();
+        panic!("termination signal was ignored after supervision");
+    }
+}
