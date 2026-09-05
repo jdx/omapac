@@ -81,7 +81,7 @@ pub struct Fetched {
     pub name: String,
     pub sha256: String,
     pub size: u64,
-    pub level: packslip::model::Level,
+    pub level: pacvamp_policy::Level,
     pub channels: Vec<String>,
     pub verified: Verified,
 }
@@ -396,15 +396,25 @@ fn fetch_artifact(
             ),
             64 * 1024 * 1024,
         )?)?;
-        let document = sidecar["document"]
-            .as_str()
-            .ok_or_else(|| eyre::eyre!("{vendor_sidecar}: no document"))?;
-        let signature = sidecar["signature"]
-            .as_str()
-            .ok_or_else(|| eyre::eyre!("{vendor_sidecar}: no signature"))?;
-        let verified =
-            packslip::verify::verify(document.as_bytes(), signature, &vendor_key, &[&staged])
-                .map_err(|e| eyre::eyre!("{vendor_sidecar}: {e}"))?;
+        let bundle = sidecar["bundle"].as_str().ok_or_else(|| {
+            eyre::eyre!(
+                "{vendor_sidecar}: no bundle; republish legacy tool versions with packslip v1"
+            )
+        })?;
+        let trusted_root = packslip::sigstore::trusted_root(None)?;
+        let verified = packslip::verify(
+            bundle,
+            &packslip::Trust::Key(&vendor_key),
+            packslip::Options {
+                require_log: !version.allow_unlogged,
+                trusted_root: &trusted_root,
+            },
+            &[&staged],
+        )
+        .map_err(|e| eyre::eyre!("{vendor_sidecar}: {e}"))?;
+        if verified.project != entry.project {
+            bail!("{vendor_sidecar}: packslip project does not match the index");
+        }
         if verified.version != fetch.version {
             bail!(
                 "{vendor_sidecar}: packslip is for version {}, not {}",

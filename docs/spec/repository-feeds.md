@@ -33,12 +33,15 @@ the repository's `Server` line in `pacman.conf`. pacman ignores them.
       "evidence": {
         "build_provenance": true,
         "vendor_manifest": true,
+        "repackager_manifest": false,
+        "vendor_attested_by": "vendor",
         "verdicts": 2,
         "reproducible": null
       }
     }
   },
-  "build_keys": ["untrusted comment: ...\nRW..."]
+  "build_keys": ["untrusted comment: ...\nRW..."],
+  "repack_keys": ["untrusted comment: ...\nRW..."]
 }
 ```
 
@@ -55,9 +58,16 @@ the repository's `Server` line in `pacman.conf`. pacman ignores them.
   packslip (`.vendor.json`), scan statements (`.scan.json`).
 - `evidence` is what the repository claims; `build_provenance` is set
   only when the envelope verified with an accepted build key at index
-  time. A client shows it and may verify the sidecars behind it.
+  time. `vendor_manifest` means the `.vendor.json` sidecar holds a
+  packslip the vendor signed; `repackager_manifest` means the repository
+  signed one about the vendor's artifacts because the vendor publishes
+  none (see `vendor-pipeline.md`), which is weaker evidence.
+  `vendor_attested_by` repeats which. A client shows it and may verify the
+  sidecars behind it.
 - `build_keys` are the build hosts whose provenance statements the
-  repository accepts.
+  repository accepts. `repack_keys` are the keys the repository signs
+  repackager packslips with; a client verifies such a sidecar against
+  them.
 
 ## `advisories.json`
 

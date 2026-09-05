@@ -50,12 +50,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Build publisher binaries
-        run: cargo build --locked --release -p packslip -p pacvamp -p pacvamp-repo
+        run: |
+          cargo build --locked --release -p pacvamp -p pacvamp-repo
+          cargo install packslip --version '=1.0.0' --locked --root target/packslip-cli
       - name: Build deployment bundle
         run: |
           install -d registry-bundle
           cp -R deploy registry-bundle/
-          install -Dm755 target/release/packslip registry-bundle/bin/packslip
+          install -Dm755 target/packslip-cli/bin/packslip registry-bundle/bin/packslip
           install -Dm755 target/release/pacvamp registry-bundle/deploy/registry/pacvamp/pacvamp
           install -Dm644 LICENSE registry-bundle/deploy/registry/pacvamp/LICENSE
           install -Dm755 target/release/pacvamp-repo registry-bundle/bin/pacvamp-repo

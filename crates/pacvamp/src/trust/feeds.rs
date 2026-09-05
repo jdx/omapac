@@ -21,6 +21,9 @@ pub struct Index {
     /// statements this repository accepts.
     #[serde(default)]
     pub build_keys: Vec<String>,
+    /// Public keys the repository signs repackager packslips with.
+    #[serde(default)]
+    pub repack_keys: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,9 +53,16 @@ pub struct Evidence {
     /// A build provenance statement from an accepted build key.
     #[serde(default)]
     pub build_provenance: bool,
-    /// A verified vendor packslip chained in.
+    /// A verified vendor packslip chained in, signed by the vendor.
     #[serde(default)]
     pub vendor_manifest: bool,
+    /// A packslip about the vendor's artifacts signed by the repository as
+    /// repackager, because the vendor publishes none. Weaker evidence.
+    #[serde(default)]
+    pub repackager_manifest: bool,
+    /// Who signed the packslip: `vendor` or `repackager`.
+    #[serde(default)]
+    pub vendor_attested_by: Option<String>,
     /// How many reviewer verdicts cover the package digest.
     #[serde(default)]
     pub verdicts: u32,

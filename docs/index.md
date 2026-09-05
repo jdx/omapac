@@ -45,7 +45,7 @@ features:
 - [CLI reference](/cli/pacvamp/): generated from the usage specs by `mise run render`.
   - [pacvamp](cli/pacvamp/) the client
   - [pacvamp-repo](cli/pacvamp-repo/) the server side a repository runs
-  - [packslip](cli/packslip/) the vendor release manifest tool
+  - [packslip](https://packslip.dev/cli/) the external vendor release manifest tool
 - [Specifications](/spec/packslip):
   - [packslip](spec/packslip.md): the vendor-neutral signed release manifest.
   - [repository feeds](spec/repository-feeds.md): the signed index, verdicts, and advisories.

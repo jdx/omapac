@@ -50,28 +50,29 @@ fn build_store(tamper: bool) -> Store {
         let content = format!("bytes of {version}");
         std::fs::write(&path, &content).unwrap();
         let created = packslip::create::create(&Request {
-            project: "pkg:github/example/tool",
-            version,
             published_at: Some(published),
             source: None,
             artifacts: vec![ArtifactInput {
-                path: &path,
-                os: None,
-                arch: None,
-                libc: None,
-                provenance: vec![],
+                format: Some("raw".into()),
+                ..ArtifactInput::new(&path)
             }],
             url_base: Some("https://dl.example/"),
-            sbom: None,
-            supersedes: None,
-            key: &vendor_key,
+            read_executables: false,
+            ..Request::new(
+                "github.com/example/tool",
+                version,
+                packslip::Signer::Key {
+                    key: vendor_key.clone(),
+                    log: false,
+                }
+                .identity(),
+            )
         })
         .unwrap();
         let (sha256, size) = packslip::digest_file(&path).unwrap();
         let rel = format!("tools/tool/{version}/{name}");
         let sidecar = serde_json::json!({
-            "document": String::from_utf8(created.document).unwrap(),
-            "signature": created.signature,
+            "bundle": packslip::sigstore::sign(packslip::Signer::Key { key: vendor_key.clone(), log: false }, &created.document).unwrap(),
             "level": "l2", "key_id": "x", "verified_at": published,
         });
         let statement = serde_json::json!({
@@ -117,9 +118,11 @@ fn build_store(tamper: bool) -> Store {
         versions.insert(
             version.to_string(),
             ToolVersion {
+                allow_unlogged: true,
+                list_sequence: None,
                 published_at: published.into(),
                 vetted_at: published.into(),
-                level: packslip::model::Level::L2,
+                level: pacvamp_policy::Level::L2,
                 key_id: "x".into(),
                 vendor_pubkey: String::new(),
                 channels: channels.iter().map(|c| c.to_string()).collect(),
@@ -133,7 +136,7 @@ fn build_store(tamper: bool) -> Store {
     index.tools.insert(
         "tool".into(),
         ToolEntry {
-            project: "pkg:github/example/tool".into(),
+            project: "github.com/example/tool".into(),
             vendor_pubkey: vendor_key.public_key().to_file(),
             versions,
         },
@@ -192,7 +195,7 @@ fn index_and_list() {
         "{out}"
     );
     assert!(
-        out.contains("tool: 3 version(s) from pkg:github/example/tool"),
+        out.contains("tool: 3 version(s) from github.com/example/tool"),
         "{out}"
     );
     let (code, out, _) = run(&s, &["list", "tool"]);

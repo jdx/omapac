@@ -108,7 +108,7 @@ export default defineConfig({
         items: [
           { text: "pacvamp", link: "/cli/pacvamp/" },
           { text: "pacvamp-repo", link: "/cli/pacvamp-repo/" },
-          { text: "packslip", link: "/cli/packslip/" },
+          { text: "packslip", link: "https://packslip.dev/cli/" },
         ],
       },
       {

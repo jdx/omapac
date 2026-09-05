@@ -1,82 +1,116 @@
 # Vendor pipeline
 
-Version 1, draft. How a repository builds a package from a vendor's
-binary release without trusting a checksum file fetched over TLS. This is
-the `pacvamp-repo vendor` command; the document it consumes is a
-[packslip](packslip.md).
+`pacvamp-repo vendor` generates a PKGBUILD from a verified
+[packslip v1](https://packslip.dev/release/v1/) release bundle.
 
 ## Package declaration
 
-A vendor-built package carries `vendor.toml` beside its PKGBUILD:
+Put `vendor.toml` beside the PKGBUILD:
 
 ```toml
 [upstream]
-project = "pkg:github/jdx/mise"
-releases = "https://mise.jdx.dev/.well-known/packslip/mise.json"
-pubkey = "vendor.pub"            # or the base64 line of the minisign key
+project = "github.com/jdx/mise"
 min_release_age = "24h"
-provenance_floor = "l2"          # default
+provenance_floor = "l2"
 
 [artifacts]
 x86_64 = { os = "linux", arch = "x86_64", libc = "gnu" }
 aarch64 = { os = "linux", arch = "aarch64", libc = "gnu" }
 ```
 
-`pubkey` is the pinned vendor identity. It changes only through a
-reviewed commit to the package, which is the trust decision.
+The GitHub project implies its repository workflow identity and GitHub OIDC
+issuer. Use `identity`, `identity_prefix`, and `issuer` for an explicit policy.
+A long-lived key uses `pubkey = "vendor.pub"` instead. Key and identity pins
+cannot be combined. Bundles require a verified transparency log entry unless
+the reviewed declaration sets `allow_unlogged = true`.
 
-## Release list
+For a signed release list, set `releases` to its bundle URL. Non-GitHub
+projects must supply one. Domain project names use a domain/path, such as
+`downloads.example.com/tool`; legacy `pkg:` project URLs are not v1 names.
 
-A vendor advertises releases at a stable URL, signed with the same key
-(`<url>.minisig`):
+## Resolution and policy
 
-```json
-{
-  "project": "pkg:github/jdx/mise",
-  "releases": [
-    { "version": "2026.9.1", "published_at": "2026-09-01T12:00:00Z",
-      "packslip": "https://github.com/jdx/mise/releases/download/v2026.9.1/packslip.json" }
-  ]
-}
+1. Verify the signed list against the configured pin, including its project,
+   expiry, and sequence. Refuse a sequence below the one in `vendor.lock`.
+   Without a list, discover GitHub release assets and parse tags with
+   packslip's tag parser, including monorepo prefixes.
+2. Rank by semver precedence. An unconstrained request honors the signed
+   list's `latest` recommendation when eligible. `--version 20` selects the
+   highest eligible release on the 20 line; an exact version or listed tag
+   can also be requested. Every request excludes yanked releases, enforces
+   `min_release_age`, and excludes prereleases unless `prerelease = true`.
+3. Verify the selected bundle and its digest from the signed list. Require
+   the signed project and version to match the selected release and enforce
+   age again using the signed publication timestamp.
+4. Enforce the evidence floor and no-downgrade against `vendor.lock`.
+   Signer comparisons retain the signing scheme and OIDC issuer. Only
+   GitHub workflow identities from GitHub's issuer ignore their trailing
+   workflow ref; email identities are compared in full.
+5. Select each artifact using packslip's selection rules. Unlabelled
+   artifacts are the default; set `variant = "fips"` to opt into a variant.
+   The most specific platform match wins, then the format preference
+   (tar.zst, tar.xz, tar.gz, tar.bz2, tar, zip, raw, gz, xz, zst, bz2,
+   deb, rpm, appimage); unresolved ties fail. Linux selectors default to
+   GNU libc. An exact `name` selector supports `{version}` substitution.
+   Missing checksums are errors.
+6. With `--write`, persist the protective lock first, then the bundle
+   sidecar, and finally the updated PKGBUILD using atomic writes.
+
+The sidecar is `<pkgbase>.vendor.json`, containing `bundle`, signing scheme,
+signer, evidence level, attestor, verification time, and verified Rekor time.
+The build ships it as `<package>.vendor.json`.
+Without `--write`, report the proposed change; `--json` prints structured output.
+
+`--allow-downgrade` explicitly permits an older list, lower evidence, or
+changed signer. It never permits an expired list or invalid signature.
+GitHub discovery is unsigned and cannot provide signed-list rollback
+protection. Even a signed list may be replayed until expiry at a sequence
+the consumer has not surpassed.
+
+`PACVAMP_REPO_GITHUB_API` overrides the GitHub API base and
+`PACVAMP_REPO_NOW` fixes the clock for tests.
+
+## Evidence and repackaging
+
+Levels belong to Pacvamp, not packslip:
+
+| Level | Meaning |
+| --- | --- |
+| L0 | Checksums without a vendor signature |
+| L1 | Vendor signatures recorded as checked by the repackager |
+| L2 | A verified vendor packslip |
+| L3 | A verified vendor packslip with provenance links for every artifact |
+| L4 | L3 plus reproducible or independently verified builds |
+
+Provenance links alone do not establish a SLSA build level. This command
+records links; it does not verify the linked build provenance.
+
+For vendors without packslips, `pacvamp-repo repack --pkgdir tool --key repack.key`
+downloads the remote sources in `.SRCINFO` (or `makepkg --printsrcinfo`),
+checks their checksums, and signs a packslip as `attested_by: repackager`.
+Use a dedicated repackager key, separate from the build key.
+Publish it with `pacvamp-repo index --repack-key repack.pub`.
+
+```toml
+[upstream]
+project = "downloads.example.com/tool"
+
+[attest]
+evidence = [{ kind = "vendor-signature", detail = "checked by the reviewed bump hook" }]
 ```
 
-The list is signed so a hostile mirror cannot hide a release or point at
-an older one silently; it cannot forge one either way, since the packslip
-must verify too.
+The command records the hook's declared evidence and its own PKGBUILD checksum
+checks. It refuses missing or `SKIP` checksums unless `[attest] allow_skip = true`.
+Repackager attestations earn L1 for declared vendor-signature evidence, otherwise
+L0. Consuming one requires an appropriate `provenance_floor`.
+Moving from vendor to repackager attestation requires `--allow-downgrade`;
+the reverse is an upgrade. The index distinguishes `vendor_manifest` from
+`repackager_manifest` and publishes `repack_keys`.
 
-## What the command does
+## Migration
 
-1. Fetch the release list and its signature; verify with the pinned key;
-   check the project matches.
-2. Pick the release: `--version`, or the newest by `published_at` that is
-   at least `min_release_age` old. Ordering is by publish time, never by
-   parsing version strings.
-3. Fetch the release's packslip and signature; verify with the pinned
-   key; check project and version match the list.
-4. Enforce the evidence floor, and no-downgrade against `vendor.lock`:
-   a lower level or a different key than last time is refused unless
-   `--allow-downgrade`.
-5. Select one artifact per pacman architecture from `[artifacts]`.
-6. With `--write`: set `pkgver` and `pkgrel=1`, replace the
-   `sha256sums_<arch>` arrays (or `sha256sums` for one architecture),
-   write `<pkgbase>.vendor.json` (the packslip document, its signature,
-   the level and key id) for the build to ship as
-   `<package>.vendor.json`, and write `vendor.lock`.
-
-Without `--write` the command reports what it would do; `--json` prints
-the report. `PACVAMP_REPO_NOW` fixes the clock for tests.
-
-## What a client gets
-
-`<package>.vendor.json` travels as a sidecar and the index marks
-`evidence.vendor_manifest`. Together with the build provenance envelope,
-whose `resolvedDependencies` name the same artifact digests, a client can
-chain: repository signature → build provenance → artifact digest →
-vendor packslip → vendor identity, all offline.
-
-## Vendors without a packslip
-
-Not handled by this command. A package for such a vendor keeps its
-hand-maintained checksums and gets no `vendor_manifest` evidence; the
-adoption guide asks vendors to publish a packslip, which is one CI step
-with `packslip create`.
+Regenerate legacy unsigned JSON/minisign release lists and two-file manifests
+as v1 bundles. Existing package locks remain readable. Republish legacy tool
+versions into a fresh tool store: immutable tool versions cannot be overwritten.
+The tool channel currently requires an explicit vendor public key; package
+generation additionally supports keyless identities.

@@ -24,13 +24,13 @@ pacvamp.workspace = true
 pacvamp-cli-support.workspace = true
 pacvamp-policy.workspace = true
 p256.workspace = true
-packslip.workspace = true
+packslip = { workspace = true, features = ["create"] }
+semver.workspace = true
+blake2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+tempfile.workspace = true
 toml.workspace = true
 ureq.workspace = true
 usage_rs.workspace = true
-
-[dev-dependencies]
-tempfile.workspace = true

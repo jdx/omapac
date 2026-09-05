@@ -64,7 +64,7 @@ depends = ["build"]
 shell = "bash -c"
 run = """
 set -euo pipefail
-for bin in pacvamp pacvamp-repo packslip; do
+for bin in pacvamp pacvamp-repo; do
   rm -rf "docs/cli/$bin"
   mkdir -p "docs/cli/$bin"
   "target/debug/$bin" __usage > "docs/cli/$bin.usage.kdl"

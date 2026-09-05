@@ -8,12 +8,12 @@ two projects move in step.
 One step after the artifacts are built:
 
 ```bash
-packslip create --project pkg:github/jdx/mise --version "$VERSION" \
+packslip create --project github.com/jdx/mise --version "$VERSION" \
   --key "$PACKSLIP_KEY" --url-base "https://github.com/jdx/mise/releases/download/v$VERSION/" \
   --source-repo https://github.com/jdx/mise --source-tag "v$VERSION" dist/mise-*
 ```
 
-and upload `packslip.json` and `packslip.json.minisig` as release assets,
+and upload `packslip.sigstore.json` as a release asset,
 plus a signed release list at a stable URL (see
 [the vendor pipeline spec](../spec/vendor-pipeline.md)). mise's existing
 minisign key can sign both. This makes mise the reference adopter and
@@ -25,7 +25,7 @@ When a release carries a packslip and the registry entry (or tool
 option) pins the vendor key, verify the document before trusting a
 checksum, record `provenance = "packslip"` and the evidence level in
 `mise.lock`, and apply no-downgrade on the level. The `packslip` crate
-in this repository is the verifier.
+from crates.io provides verification and artifact selection.
 
 ## 3. The tool channel
 

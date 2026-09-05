@@ -55,7 +55,11 @@ fn attest_then_index_round_trip() {
         std::fs::write(repo.join(name), format!("package {name}")).unwrap();
     }
     std::fs::write(repo.join("a-1-1-x86_64.pkg.tar.zst.sig"), "gpg").unwrap();
-    std::fs::write(repo.join("c-1-1-x86_64.pkg.tar.zst.vendor.json"), "{}").unwrap();
+    std::fs::write(
+        repo.join("c-1-1-x86_64.pkg.tar.zst.vendor.json"),
+        r#"{"bundle":"...","scheme":"sigstore-oidc","level":"l2","key_id":"https://github.com/o/r/.github/workflows/release.yml@refs/tags/v1","verified_at":"2026-09-03T00:00:00Z"}"#,
+    )
+    .unwrap();
 
     let (code, out, err) = repo_cmd(
         d,

@@ -530,9 +530,9 @@ fn verify_transaction(
             None
         };
         let level = if build_key.is_some() {
-            packslip::model::Level::L3
+            pacvamp_policy::Level::L3
         } else {
-            packslip::model::Level::L2
+            pacvamp_policy::Level::L2
         };
         if settings.trust_no_downgrade
             && let Some(previous) = ledger

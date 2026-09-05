@@ -21,7 +21,8 @@ pacvamp-cli-support = { path = "crates/cli-support" }
 pacvamp = { path = "crates/pacvamp" }
 pacvamp-policy = { path = "crates/pacvamp-policy" }
 p256 = { version = "0.13", features = ["ecdsa", "pem"] }
-packslip = { path = "crates/packslip" }
+packslip = { version = "1.0.0", default-features = false }
+semver = "1"
 ratatui = "0.30"
 
 color-eyre = "0.6"
