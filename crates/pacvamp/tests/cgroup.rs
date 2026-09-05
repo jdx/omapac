@@ -45,6 +45,7 @@ fn delegated_group_enforces_memory_and_cleans_descendants() {
     .unwrap();
     let path = group.path.clone();
     let mut child = Command::new(env!("CARGO_BIN_EXE_pacvamp"))
+        .process_group(0)
         .arg("__build")
         .stdin(Stdio::piped())
         .spawn()
@@ -124,6 +125,7 @@ fn supervisor_probe() {
     )
     .unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_pacvamp"))
+        .process_group(0)
         .arg("__build")
         .stdin(Stdio::piped())
         .spawn()
