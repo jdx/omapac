@@ -16,11 +16,17 @@ pub struct Reference {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Input {
+    #[serde(default)]
+    pub mode: Option<u32>,
     pub sha256: Option<String>,
     pub link: Option<PathBuf>,
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Receipt {
+    #[serde(default)]
+    pub source_date_epoch: Option<i64>,
+    #[serde(default)]
+    pub image_sha256: Option<String>,
     pub schema: u32,
     pub claim: String,
     pub pkgbase: String,
@@ -45,6 +51,7 @@ pub fn inputs(root: &Path) -> Result<BTreeMap<PathBuf, Input>> {
             out.insert(
                 path.strip_prefix(root)?.into(),
                 Input {
+                    mode: None,
                     sha256: None,
                     link: Some(std::fs::read_link(path)?),
                 },
@@ -53,6 +60,10 @@ pub fn inputs(root: &Path) -> Result<BTreeMap<PathBuf, Input>> {
             out.insert(
                 path.strip_prefix(root)?.into(),
                 Input {
+                    mode: Some({
+                        use std::os::unix::fs::PermissionsExt as _;
+                        meta.permissions().mode() & 0o7777
+                    }),
                     sha256: Some(packslip::digest_file(path)?.0),
                     link: None,
                 },
@@ -120,7 +131,14 @@ pub fn write(
             .ok_or_else(|| eyre::eyre!("invalid output filename"))?;
         outputs.insert(name.into(), packslip::digest_file(file)?.0);
     }
+    if let Some(root) = &opts.chroot
+        && Some(image_digest(root)?) != opts.image_sha256
+    {
+        bail!("build image changed while building; refusing receipt");
+    }
     let receipt = Receipt {
+        source_date_epoch: opts.source_date_epoch,
+        image_sha256: opts.image_sha256.clone(),
         schema: 1,
         claim: "local observation; not a signed attestation".into(),
         pkgbase: reviewed.pkgbase.clone(),
@@ -181,4 +199,129 @@ pub fn for_artifact(file: &Path) -> Result<(Receipt, Reference)> {
             path,
         },
     ))
+}
+
+/// Hash the image visible to the builder; private entries retain metadata only.
+pub fn image_digest(root: &Path) -> Result<String> {
+    use sha2::{Digest as _, Sha256};
+    use std::{io::Read as _, os::unix::fs::MetadataExt as _};
+    fn visit(
+        root: &Path,
+        path: &Path,
+        out: &mut BTreeMap<PathBuf, serde_json::Value>,
+    ) -> Result<()> {
+        let meta = std::fs::symlink_metadata(path)?;
+        let mut value = serde_json::json!({"mode":meta.mode(),"uid":meta.uid(),"gid":meta.gid(),"mtime":meta.mtime(),"mtime_nsec":meta.mtime_nsec()});
+        if meta.is_symlink() {
+            value["link"] = serde_json::to_value(std::fs::read_link(path)?)?;
+        } else if meta.is_file() {
+            match std::fs::File::open(path) {
+                Ok(mut file) => {
+                    let mut hash = Sha256::new();
+                    let mut buffer = [0; 65536];
+                    loop {
+                        let n = file.read(&mut buffer)?;
+                        if n == 0 {
+                            break;
+                        }
+                        hash.update(&buffer[..n]);
+                    }
+                    value["sha256"] = format!("{:x}", hash.finalize()).into();
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
+                    value["unreadable"] = true.into();
+                    value["size"] = meta.len().into();
+                }
+                Err(err) => return Err(err.into()),
+            }
+        } else if meta.is_dir() {
+            match std::fs::read_dir(path) {
+                Ok(entries) => {
+                    for entry in entries {
+                        visit(root, &entry?.path(), out)?;
+                    }
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
+                    value["unreadable"] = true.into()
+                }
+                Err(err) => return Err(err.into()),
+            }
+        } else {
+            // Sockets and device nodes (for example stale GnuPG agent sockets)
+            // have no stable file contents to hash. Never open them.
+            value["special"] = true.into();
+            value["device"] = meta.rdev().into();
+        }
+        out.insert(path.strip_prefix(root)?.into(), value);
+        Ok(())
+    }
+    let mut inventory = BTreeMap::new();
+    for entry in std::fs::read_dir(root)? {
+        let entry = entry?;
+        if [
+            "dev",
+            "proc",
+            "sys",
+            "run",
+            "tmp",
+            "build",
+            "pacvamp-helper",
+            "pacvamp-cgroup",
+        ]
+        .iter()
+        .any(|reserved| entry.file_name() == *reserved)
+        {
+            continue;
+        }
+        visit(root, &entry.path(), &mut inventory)?;
+    }
+    Ok(format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(&inventory)?)
+    ))
+}
+
+#[derive(Debug, Serialize)]
+pub struct Difference {
+    pub component: String,
+    pub before: serde_json::Value,
+    pub after: serde_json::Value,
+}
+#[derive(Debug, Serialize)]
+pub struct Comparison {
+    pub identical: bool,
+    pub differences: Vec<Difference>,
+    pub claim: &'static str,
+}
+pub fn compare(before: &Receipt, after: &Receipt) -> Result<Comparison> {
+    let a = serde_json::to_value(before)?;
+    let b = serde_json::to_value(after)?;
+    let mut differences = Vec::new();
+    for key in [
+        "pkgbase",
+        "commit",
+        "source_date_epoch",
+        "image_sha256",
+        "jail",
+        "build_network",
+        "limits",
+        "makepkg_sha256",
+        "dependencies",
+        "sources",
+        "vcs_refs",
+        "outputs",
+    ] {
+        if a[key] != b[key] {
+            differences.push(Difference {
+                component: key.into(),
+                before: a[key].clone(),
+                after: b[key].clone(),
+            });
+        }
+    }
+    Ok(Comparison {
+        identical: differences.is_empty(),
+        differences,
+        claim: "local comparison of recorded inputs and outputs; not an independent reproducibility attestation",
+    })
 }

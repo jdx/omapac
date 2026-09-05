@@ -113,6 +113,20 @@ Fetches the package's git history and metadata, evaluates the policy findings ag
         flag "-h --help" help="Print help" action=help builtin=#true
         arg <ARTIFACT>
     }
+    cmd compare help="Compare verified local receipts, including sources, image and package outputs" {
+        flag --json
+        flag "-h --help" help="Print help" action=help builtin=#true
+        arg <FIRST>
+        arg <SECOND>
+    }
+    cmd rebuild help="Rebuild an approved receipt using retained sources and an identical Arch image" {
+        flag --image help="Retained image with the same contents as the original build" required=#true {
+            arg <IMAGE>
+        }
+        flag --json
+        flag "-h --help" help="Print help" action=help builtin=#true
+        arg <ARTIFACT>
+    }
 }
 cmd build-env help="Provision Arch build images with devtools" subcommand_required=#true {
     flag "-h --help" help="Print help" action=help builtin=#true

@@ -255,6 +255,8 @@ pub struct Settings {
     pub aur_jail: bool,
     pub aur_chroot: bool,
     pub aur_chroot_root: std::path::PathBuf,
+    #[serde(skip)]
+    pub aur_chroot_root_managed: bool,
     pub aur_cgroup_root: Option<std::path::PathBuf>,
     pub aur_limits: crate::build_process::Limits,
     pub aur_allow_network_build: Vec<String>,
@@ -290,6 +292,7 @@ impl Default for Settings {
             aur_min_votes: 10,
             aur_jail: true,
             aur_chroot: false,
+            aur_chroot_root_managed: false,
             aur_cgroup_root: None,
             aur_chroot_root: "/var/lib/pacvamp/chroot/root".into(),
             aur_limits: Default::default(),
@@ -431,6 +434,7 @@ impl Settings {
         true_wins!(aur_jail, managed.aur.jail);
         true_wins!(aur_chroot, managed.aur.chroot);
         if let Some(root) = &managed.aur.chroot_root {
+            self.aur_chroot_root_managed = true;
             self.aur_chroot_root = root.clone();
         }
         if let Some(root) = &managed.aur.cgroup_root {

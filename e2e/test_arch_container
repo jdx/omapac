@@ -252,8 +252,9 @@ mkdir -p /srv/pacvamp-image/root/opt/pacvamp-image-tool
 echo image-only >/srv/pacvamp-image/root/opt/pacvamp-image-tool/marker
 cat >>/srv/pacvamp-aur/work/PKGBUILD <<'RECIPE'
 test -f /opt/pacvamp-image-tool/marker || exit 96
-if [[ $BUILDDIR == *.verify ]]; then
+if [[ $BUILDDIR == *.verify && ! -f $SRCDEST/network-verified ]]; then
   curl --noproxy '*' -fsS http://pacvamp-source.test:18763/ >/dev/null || exit 97
+  touch "$SRCDEST/network-verified"
 fi
 if test -e /usr/share/pacvamp-host-only; then exit 94; fi
 if touch /usr/share/pacvamp-image-poison; then exit 95; fi
@@ -271,4 +272,25 @@ import os
 images=[r.get("chroot") for r in receipts if r.get("chroot")]
 assert images and all("pacvamp-image-" in p and not os.path.exists(p) for p in images)
 CHECK
+original=$(python - <<'ORIGINAL'
+import glob,json,os
+for p in glob.glob("/home/pacvamp-builder/.cache/pacvamp/aur/.pacvamp-build/runs/*/receipt.json"):
+    r=json.load(open(p))
+    if r.get("image_sha256"):
+        print(os.path.join(os.path.dirname(p), "pkgs", next(iter(r["outputs"]))))
+        break
+ORIGINAL
+)
+runuser -u pacvamp-builder -- env PACVAMP_AUR_RPC_BASE=http://127.0.0.1:18763 PACVAMP_AUR_GIT_BASE=file:///srv/pacvamp-aur /usr/local/bin/pacvamp aur rebuild "$original" --image /srv/pacvamp-image/root --json >/tmp/rebuild-comparison.json
+python - <<'COMPARE'
+import json
+assert json.load(open("/tmp/rebuild-comparison.json"))["identical"]
+COMPARE
+# Receipt-verified local artifacts are mounted separately from the cloned root.
+runuser -u pacvamp-builder -- env PACVAMP_AUR_RPC_BASE=http://127.0.0.1:18763 PACVAMP_AUR_GIT_BASE=file:///srv/pacvamp-aur /usr/local/bin/pacvamp aur build pacvamp-jail-probe --prepare-image --dependency-artifact "$original" -y
+if pacman --root /srv/pacvamp-image/root -Q pacvamp-jail-probe >/dev/null 2>&1; then
+  echo "dependency artifact leaked into base image" >&2
+  exit 1
+fi
+
 PRODUCTION

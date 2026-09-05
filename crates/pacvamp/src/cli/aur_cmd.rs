@@ -24,6 +24,8 @@ enum AurCommands {
     Diff(Diff),
     Review(Review),
     Receipt(Receipt),
+    Compare(Compare),
+    Rebuild(Rebuild),
 }
 
 /// Build an approved AUR package without installing it
@@ -1034,5 +1036,86 @@ impl RunWith<&App> for Receipt {
             receipt.dependencies.len()
         );
         Ok(())
+    }
+}
+
+/// Compare verified local receipts, including sources, image and package outputs
+#[derive(Debug, usage_rs::Args)]
+pub struct Compare {
+    first: std::path::PathBuf,
+    second: std::path::PathBuf,
+    #[usage(long)]
+    json: bool,
+}
+impl RunWith<&App> for Compare {
+    type Output = Result<()>;
+    fn run_with(self, _: &App) -> Result<()> {
+        let (first, _) = crate::aur::receipt::for_artifact(&self.first)?;
+        let (second, _) = crate::aur::receipt::for_artifact(&self.second)?;
+        comparison_output(&first, &second, self.json)
+    }
+}
+fn comparison_output(
+    first: &crate::aur::receipt::Receipt,
+    second: &crate::aur::receipt::Receipt,
+    json: bool,
+) -> Result<()> {
+    let comparison = crate::aur::receipt::compare(first, second)?;
+    if json {
+        print_json(&comparison)?;
+    } else {
+        println!("{}", comparison.claim);
+        for diff in &comparison.differences {
+            println!(
+                "{} differs:\n  before: {}\n  after: {}",
+                diff.component, diff.before, diff.after
+            );
+        }
+        if comparison.identical {
+            println!("recorded inputs and output hashes match");
+        }
+    }
+    if !comparison.identical {
+        bail!("build records differ");
+    }
+    Ok(())
+}
+/// Rebuild an approved receipt using retained sources and an identical Arch image
+#[derive(Debug, usage_rs::Args)]
+pub struct Rebuild {
+    artifact: std::path::PathBuf,
+    /// Retained image with the same contents as the original build
+    #[usage(long)]
+    image: std::path::PathBuf,
+    #[usage(long)]
+    json: bool,
+}
+impl RunWith<&App> for Rebuild {
+    type Output = Result<()>;
+    fn run_with(self, app: &App) -> Result<()> {
+        let _lease = crate::aur::cache::lease(&crate::aur::cache_dir(), false)?;
+        let (reference, receipt_ref) = crate::aur::receipt::for_artifact(&self.artifact)?;
+        let mut prepared =
+            app.prepare_aur(&reference.pkgbase, Some(&reference.commit), true, false)?;
+        if prepared.settings.aur_chroot_root_managed
+            && prepared.settings.aur_chroot_root.canonicalize()? != self.image.canonicalize()?
+        {
+            bail!("rebuild image differs from the managed image root");
+        }
+        prepared.settings.aur_chroot = true;
+        prepared.settings.aur_chroot_root = self.image;
+        let opts = crate::aur::build::BuildOpts::from_settings(
+            &prepared.settings,
+            &prepared.reviewed.pkgbase,
+            &crate::aur::cache_dir(),
+            &app.host()?,
+        )?;
+        let sources = receipt_ref.path.parent().unwrap().join("sources");
+        let files = crate::aur::build::replay(&prepared.reviewed, &opts, &reference, &sources)?;
+        for file in &files {
+            eprintln!("rebuilt artifact: {}", file.display());
+        }
+        let (rebuilt, _) = crate::aur::receipt::for_artifact(&files[0])?;
+        comparison_output(&reference, &rebuilt, self.json)
     }
 }
