@@ -12,3 +12,5 @@ receipts cause cleanup to fail rather than guess. Only build runs are removed;
 recipe checkouts and synchronization locks remain. Prune each user's cache against
 the system whose ledger records those builds; a shared cache across independent
 sysroots is not supported.
+
+Commands that may build or install AUR packages hold a shared cache lease through approval, installation, and ledger recording. Pruning cannot remove their artifacts during a long confirmation prompt.

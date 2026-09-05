@@ -152,6 +152,23 @@ pub fn run(args: &[OsString]) -> Result<()> {
             sysroot: cli.sysroot,
         },
     };
+    // Keep generated artifacts leased through approval, installation, and the
+    // final ledger write, even after the build's options have been dropped.
+    let _cache_lease = if matches!(
+        cli.command.as_ref(),
+        Some(
+            Commands::Aur(_)
+                | Commands::Install(_)
+                | Commands::Update(_)
+                | Commands::Add(_)
+                | Commands::Apply(_)
+                | Commands::Drop(_)
+        )
+    ) {
+        Some(crate::aur::cache::lease(&crate::aur::cache_dir(), false)?)
+    } else {
+        None
+    };
     match cli.command {
         Some(command) => command.run_with(&app),
         None => Ok(()),
