@@ -124,6 +124,9 @@ fn build_with_options(
 ) -> Result<Vec<PathBuf>> {
     let checkout = &reviewed.checkout;
     checkout.checkout(&reviewed.target)?;
+    if opts.pkgdest.exists() {
+        std::fs::remove_dir_all(&opts.pkgdest).wrap_err("clearing stale package outputs")?;
+    }
     std::fs::create_dir_all(&opts.pkgdest)
         .wrap_err_with(|| format!("creating {}", opts.pkgdest.display()))?;
     let verifydir = path_with_suffix(&opts.builddir, ".verify");
@@ -173,11 +176,32 @@ fn build_with_options(
     // What was built: makepkg knows the file names.
     let output = run_makepkg_output(opts, &["--packagelist"], false, false, &opts.builddir)
         .wrap_err("running makepkg --packagelist")?;
-    let files: Vec<PathBuf> = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(PathBuf::from)
-        .filter(|p| p.exists())
-        .collect();
+    if !output.status.success() {
+        bail!("makepkg --packagelist failed for {}", reviewed.pkgbase);
+    }
+    let destination = opts.pkgdest.canonicalize()?;
+    let mut files = Vec::new();
+    for line in std::str::from_utf8(&output.stdout)?.lines() {
+        let path = PathBuf::from(line);
+        let metadata = match std::fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            // makepkg --packagelist includes optional debug packages even
+            // when no debug symbols were produced. Only existing outputs
+            // can be returned; a build with no outputs still fails below.
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => {
+                return Err(err)
+                    .wrap_err_with(|| format!("reading package output {}", path.display()));
+            }
+        };
+        if !metadata.file_type().is_file() || !path.canonicalize()?.starts_with(&destination) {
+            bail!(
+                "unexpected package output outside the package directory or not a regular file: {}",
+                path.display()
+            );
+        }
+        files.push(path);
+    }
     if files.is_empty() {
         bail!(
             "makepkg reported no package files in {}",
@@ -221,11 +245,20 @@ fn spawn_makepkg(
 ) -> Result<Child> {
     let scratch = builddir.join("tmp");
     std::fs::create_dir_all(&scratch).wrap_err("creating private build scratch directory")?;
-    let mut writable = vec![
-        opts.pkgdest.clone(),
-        builddir.to_path_buf(),
-        opts.logdest.clone(),
-    ];
+    // makepkg checks PKGDEST before source verification too. Give that phase
+    // its own writable destination, destroyed with the verification workspace,
+    // so recipe code cannot plant outputs in the real package directory.
+    let pkgdest = if source_writable {
+        let path = builddir.join("pkgs");
+        std::fs::create_dir_all(&path).wrap_err("creating verification package directory")?;
+        path
+    } else {
+        opts.pkgdest.clone()
+    };
+    let mut writable = vec![builddir.to_path_buf(), opts.logdest.clone()];
+    if !source_writable {
+        writable.push(opts.pkgdest.clone());
+    }
     if source_writable {
         writable.push(opts.srcdest.clone());
     }
@@ -249,7 +282,7 @@ fn spawn_makepkg(
         (command, None)
     };
     command
-        .env("PKGDEST", &opts.pkgdest)
+        .env("PKGDEST", &pkgdest)
         .env("SRCDEST", &opts.srcdest)
         .env("BUILDDIR", builddir)
         .env("LOGDEST", &opts.logdest)

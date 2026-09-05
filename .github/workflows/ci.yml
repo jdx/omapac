@@ -29,6 +29,8 @@ jobs:
       - run: cargo clippy --workspace --all-features --all-targets -- -D warnings
       - run: cargo build --workspace --all-features
       - run: cargo test --workspace --all-features
+        env:
+          PACVAMP_REQUIRE_JAIL: "1"
 
   lint:
     runs-on: ubuntu-latest

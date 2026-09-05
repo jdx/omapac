@@ -47,6 +47,10 @@ fn landlock_available() -> bool {
     let dir = tempfile::tempdir().unwrap();
     let (code, out) = jail(&spec(&[dir.path()], true, "true", dir.path()));
     if code != 0 && out.contains("this kernel cannot enforce") {
+        assert!(
+            std::env::var_os("PACVAMP_REQUIRE_JAIL").is_none(),
+            "sandbox enforcement is mandatory in this test run: {out}"
+        );
         eprintln!("skipping: {out}");
         return false;
     }
