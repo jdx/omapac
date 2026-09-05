@@ -82,6 +82,11 @@ pub fn command(root: &Path, run: &Path, helper: &Path, network: bool) -> Result<
     cmd.args([
         "--dev", "/dev", "--proc", "/proc", "--dir", "/sys", "--dir", "/tmp", "--dir", "/run",
     ]);
+    if network {
+        cmd.arg("--ro-bind")
+            .arg("/etc/resolv.conf")
+            .arg(resolver_destination(root)?);
+    }
     cmd.arg("--bind").arg(run).arg("/build");
     cmd.arg("--ro-bind").arg(helper).arg("/pacvamp-helper");
     cmd.args(["--chdir", "/build", "--", "/pacvamp-helper", "__build"]);
@@ -99,4 +104,65 @@ pub fn inside(path: &Path, run: &Path) -> PathBuf {
         |_| path.to_path_buf(),
         |relative| Path::new("/build").join(relative),
     )
+}
+
+// Resolve image symlinks lexically inside the future namespace, never against
+// the host's /run. The destination can be absent in a fresh runtime mount.
+fn resolver_destination(root: &Path) -> Result<PathBuf> {
+    use std::path::Component;
+    let mut destination = PathBuf::from("/etc/resolv.conf");
+    for _ in 0..16 {
+        let path = root.join(destination.strip_prefix("/")?);
+        let target = match std::fs::read_link(path) {
+            Ok(target) => target,
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::InvalidInput
+                ) =>
+            {
+                return Ok(destination);
+            }
+            Err(err) => return Err(err).wrap_err("reading image resolver link"),
+        };
+        let path = if target.is_absolute() {
+            target
+        } else {
+            destination.parent().unwrap_or(Path::new("/")).join(target)
+        };
+        let mut normalized = PathBuf::from("/");
+        for component in path.components() {
+            match component {
+                Component::Normal(name) => normalized.push(name),
+                Component::ParentDir => {
+                    normalized.pop();
+                }
+                _ => {}
+            }
+        }
+        destination = normalized;
+    }
+    bail!("image resolver symlink chain is too deep")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn resolver_links_stay_inside_the_namespace() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("etc")).unwrap();
+        let link = dir.path().join("etc/resolv.conf");
+        std::os::unix::fs::symlink("../run/systemd/resolve/stub-resolv.conf", &link).unwrap();
+        assert_eq!(
+            resolver_destination(dir.path()).unwrap(),
+            Path::new("/run/systemd/resolve/stub-resolv.conf")
+        );
+        std::fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink("/run/resolv.conf", &link).unwrap();
+        assert_eq!(
+            resolver_destination(dir.path()).unwrap(),
+            Path::new("/run/resolv.conf")
+        );
+    }
 }

@@ -211,6 +211,29 @@ NSPAWN
 chmod 755 /usr/local/bin/systemd-nspawn
 mkdir -p /srv/pacvamp-image
 mkarchroot -C /etc/pacman.conf /srv/pacvamp-image/root base-devel pacman
+# Resolve a synthetic source hostname through a local DNS server. The image
+# deliberately has the systemd-resolved symlink that broke this path previously.
+cat >/srv/pacvamp-aur/dns.py <<'DNS'
+import socketserver, struct
+class DNS(socketserver.BaseRequestHandler):
+    def handle(self):
+        data, sock = self.request
+        end = 12
+        while data[end]:
+            end += data[end] + 1
+        end += 1
+        question = data[12:end + 4]
+        is_a = data[end:end + 2] == b"\x00\x01"
+        answer = b"\xc0\x0c" + struct.pack("!HHIH", 1, 1, 60, 4) + b"\x7f\x00\x00\x01" if is_a else b""
+        sock.sendto(data[:2] + struct.pack("!HHHHH", 0x8180, 1, int(is_a), 0, 0) + question + answer, self.client_address)
+socketserver.UDPServer(("127.0.0.1", 53), DNS).serve_forever()
+DNS
+python /srv/pacvamp-aur/dns.py &
+dns_pid=$!
+cp /etc/resolv.conf /tmp/pacvamp-resolv.conf
+trap 'kill "$rpc_pid" "$dns_pid" 2>/dev/null || true; cat /tmp/pacvamp-resolv.conf >/etc/resolv.conf' EXIT
+printf 'nameserver 127.0.0.1\n' >/etc/resolv.conf
+ln -sf /run/systemd/resolve/stub-resolv.conf /srv/pacvamp-image/root/etc/resolv.conf
 mkdir -p /home/pacvamp-builder/.config/pacvamp
 cat >/home/pacvamp-builder/.config/pacvamp/pacvamp.toml <<'CONFIG'
 [policy.aur]
@@ -224,6 +247,9 @@ mkdir -p /srv/pacvamp-image/root/opt/pacvamp-image-tool
 echo image-only >/srv/pacvamp-image/root/opt/pacvamp-image-tool/marker
 cat >>/srv/pacvamp-aur/work/PKGBUILD <<'RECIPE'
 test -f /opt/pacvamp-image-tool/marker || exit 96
+if [[ $BUILDDIR == *.verify ]]; then
+  curl --noproxy '*' -fsS http://pacvamp-source.test:18763/ >/dev/null || exit 97
+fi
 if test -e /usr/share/pacvamp-host-only; then exit 94; fi
 if touch /usr/share/pacvamp-image-poison; then exit 95; fi
 RECIPE

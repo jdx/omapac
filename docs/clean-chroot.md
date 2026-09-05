@@ -5,6 +5,8 @@ bubblewrap's mount, PID, IPC, user, and (during offline builds) network namespac
 Image paths, including /opt and /var, are mounted read-only. Runtime mounts
 (/dev, /proc, /sys, /run, /tmp) are replaced; each run supplies its own writable
 /build tree.
+Source verification receives the host resolver as a read-only mount at the
+image resolver's target, including systemd-resolved links into /run.
 The regular Landlock/seccomp jail, source-verification separation, and resource
 controls still apply.
 
