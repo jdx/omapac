@@ -28,6 +28,16 @@ fn save(path: &Path, doc: &DocumentMut) -> Result<()> {
 /// Declare `name` in the manifest at `path`, replacing any existing entry.
 pub fn set_package(path: &Path, name: &str, package: &PackageToml) -> Result<()> {
     let mut doc = load(path)?;
+    insert_package(&mut doc, path, name, package)?;
+    save(path, &doc)
+}
+
+fn insert_package(
+    doc: &mut DocumentMut,
+    path: &Path,
+    name: &str,
+    package: &PackageToml,
+) -> Result<()> {
     if !doc.contains_key("packages") {
         doc["packages"] = Item::Table(Table::new());
     }
@@ -60,7 +70,48 @@ pub fn set_package(path: &Path, name: &str, package: &PackageToml) -> Result<()>
     } else {
         bail!("packages in {} must be a table", path.display());
     }
-    save(path, &doc)
+    Ok(())
+}
+
+/// Preview an additive import; optionally persist it in one atomic replacement.
+/// Existing declarations and unrelated settings/comments are preserved.
+pub fn import_packages(
+    path: &Path,
+    packages: &[(String, PackageToml)],
+    write: bool,
+) -> Result<String> {
+    use std::io::Write as _;
+    let mut doc = load(path)?;
+    for (name, package) in packages {
+        if doc
+            .get("packages")
+            .and_then(|table| table.get(name))
+            .is_some()
+        {
+            bail!(
+                "{name} is already declared in {}; rerun the preview",
+                path.display()
+            );
+        }
+        insert_package(&mut doc, path, name, package)?;
+    }
+    let text = doc.to_string();
+    if write && !packages.is_empty() {
+        let parent = path.parent().unwrap_or_else(|| Path::new("."));
+        std::fs::create_dir_all(parent)?;
+        let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+        if let Ok(metadata) = std::fs::metadata(path) {
+            temporary
+                .as_file()
+                .set_permissions(metadata.permissions())?;
+        }
+        temporary.write_all(text.as_bytes())?;
+        temporary.as_file().sync_all()?;
+        temporary
+            .persist(path)
+            .wrap_err_with(|| format!("writing {}", path.display()))?;
+    }
+    Ok(text)
 }
 
 /// Remove `name` from the manifest at `path`. Returns whether it was there.

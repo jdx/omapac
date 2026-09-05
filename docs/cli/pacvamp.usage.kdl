@@ -155,6 +155,17 @@ Looks each name up in the sync databases in repository order and in the local da
     flag "-h --help" help="Print help" action=help builtin=#true
     arg <PACKAGES>... help="Package names"
 }
+cmd import help="Preview a manifest from explicitly installed packages" {
+    long_help #"""
+Preview a manifest from explicitly installed packages
+
+Matches current repositories and queries AUR metadata for foreign packages. Existing declarations are preserved. Unknown foreign packages are skipped; an AUR match is a candidate source, not proof of the installed build's origin. No packages are installed and no approvals or provenance are created.
+"""#
+    flag --write help="Save the proposed additions to the user manifest without installing anything"
+    flag --offline help="Do not query the AUR; foreign packages remain unresolved"
+    flag "-J --json" help="Print the preview as JSON; incompatible with --write"
+    flag "-h --help" help="Print help" action=help builtin=#true
+}
 cmd install help="Install packages from the repositories" {
     long_help #"""
 Install packages from the repositories
