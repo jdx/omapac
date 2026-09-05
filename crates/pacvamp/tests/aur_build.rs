@@ -829,6 +829,13 @@ fn chroot_checks_image_dependencies_without_installing_host_packages() {
         err.contains("clean chroot is missing build dependencies: pacman"),
         "{err}"
     );
+    let (code, _, err) = run(&s, &["aur", "build", "yay", "--prepare-image"], "");
+    assert_ne!(code, 0);
+    assert!(
+        err.contains("image is missing AUR dependencies: pacman"),
+        "{err}"
+    );
+    assert!(err.contains("--dependency-artifact"), "{err}");
     assert!(
         s.rig.log().is_empty(),
         "must not install the image's missing dependencies on the host"
