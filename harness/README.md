@@ -23,3 +23,7 @@ the same contract and lives with the image tooling.
 
 The built-in check alone is `pacvamp-repo snapshot test --id <id>` with
 no `--suite`.
+
+The independent [boot acceptance suite](vm/README.md) creates a real Arch disk,
+exercises package lifecycle and interruption recovery, and boots it again to check
+persistence. It is a mandatory client CI job, separate from snapshot promotion.

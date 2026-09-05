@@ -85,6 +85,7 @@ jobs:
     needs:
       - ci
       - arch-e2e
+      - vm-e2e
     runs-on: ubuntu-latest
     timeout-minutes: 1
     # Run on success or upstream failure but skip when the workflow is cancelled
@@ -94,6 +95,27 @@ jobs:
       - name: Check job results
         if: |
           needs.ci.result != 'success' ||
-          needs.arch-e2e.result != 'success'
+          needs.arch-e2e.result != 'success' ||
+          needs.vm-e2e.result != 'success'
         run: exit 1
       - run: echo "All CI jobs completed successfully"
+  vm-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 libarchive-tools e2fsprogs
+      - run: cargo build --locked --workspace --all-features
+      - name: Boot Arch and exercise package lifecycle across two boots
+        run: bash harness/vm/run
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vm-acceptance-results
+          path: target/vm-results

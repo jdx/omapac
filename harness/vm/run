@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# Boot a real Arch disk twice. All package repositories and keys are fixtures.
+set -euo pipefail
+repo=$(git rev-parse --show-toplevel)
+cd "$repo"
+for tool in docker qemu-system-x86_64 bsdtar mkfs.ext4 python3; do
+  command -v "$tool" >/dev/null || { echo "missing VM prerequisite: $tool" >&2; exit 1; }
+done
+: "${PACVAMP_VM_CURRENT_BIN:=$repo/target/debug/pacvamp}"
+: "${PACVAMP_VM_REPORT_DIR:=$repo/target/vm-results}"
+test -x "$PACVAMP_VM_CURRENT_BIN"
+mkdir -p "$PACVAMP_VM_REPORT_DIR"
+report=$(realpath "$PACVAMP_VM_REPORT_DIR")
+work=$(mktemp -d "${TMPDIR:-/tmp}/pacvamp-vm.XXXXXX")
+name="pacvamp-vm-$$"
+baseline_checkout=""
+cleanup() {
+  docker rm --force "$name" >/dev/null 2>&1 || true
+  if [ -n "$baseline_checkout" ]; then git worktree remove --force "$baseline_checkout" || true; fi
+  if [ -n "${PACVAMP_VM_KEEP:-}" ]; then
+    echo "retained VM workspace: $work" >&2
+  else
+    # The extracted filesystem contains root-owned private directories.
+    sudo -n python3 - "$work" <<'PY'
+import pathlib,shutil,sys
+root=pathlib.Path(sys.argv[1])
+assert root.name.startswith('pacvamp-vm.') and not root.is_symlink()
+shutil.rmtree(root)
+PY
+  fi
+}
+trap cleanup EXIT
+cp "$PACVAMP_VM_CURRENT_BIN" "$work/current"
+baseline_ref=provided-binary
+baseline_sha=unknown
+if [ -n "${PACVAMP_VM_PREVIOUS_BIN:-}" ]; then
+  cp "$PACVAMP_VM_PREVIOUS_BIN" "$work/previous"
+else
+  baseline_ref=${PACVAMP_VM_BASELINE_REF:-}
+  if [ -z "$baseline_ref" ]; then
+    baseline_ref=$(gh api repos/jdx/pacvamp/releases --jq 'map(select(.draft == false and .prerelease == false)) | first | .tag_name // empty')
+    baseline_ref=${baseline_ref:-origin/main}
+  fi
+  baseline_sha=$(git rev-parse --verify --end-of-options "$baseline_ref^{commit}")
+  baseline_checkout="$work/baseline"
+  git worktree add --detach "$baseline_checkout" "$baseline_sha"
+  (cd "$baseline_checkout" && CARGO_TARGET_DIR="$repo/target/vm-baseline" cargo build --locked -p pacvamp)
+  cp "$repo/target/vm-baseline/debug/pacvamp" "$work/previous"
+fi
+python3 - "$work" "$report" "$baseline_ref" "$baseline_sha" <<'PY'
+import hashlib,json,pathlib,sys
+work,report=map(pathlib.Path,sys.argv[1:3])
+record={'baseline_ref':sys.argv[3], 'baseline_commit':sys.argv[4]}
+for name in ['current','previous']:
+    record[name+'_sha256']=hashlib.file_digest(open(work/name,'rb'),'sha256').hexdigest()
+(report/'binaries.json').write_text(json.dumps(record,indent=2)+'\n')
+PY
+docker create --privileged --name "$name" archlinux:base-devel sleep 1800 >/dev/null
+docker cp harness/vm/bootstrap "$name:/bootstrap"
+docker cp harness/vm/guest "$name:/usr/local/bin/pacvamp-vm-test"
+docker cp "$work/current" "$name:/usr/local/bin/pacvamp"
+docker cp "$work/previous" "$name:/usr/local/bin/pacvamp-previous"
+docker start "$name" >/dev/null
+docker exec "$name" bash /bootstrap >"$report/bootstrap.log" 2>&1
+docker cp "$name:/boot/vm-vmlinuz" "$work/vmlinuz"
+docker cp "$name:/boot/vm-initramfs.img" "$work/initramfs.img"
+docker stop --time 1 "$name" >/dev/null
+docker export --output "$work/rootfs.tar" "$name"
+mkdir "$work/rootfs"
+sudo -n bsdtar -xpf "$work/rootfs.tar" -C "$work/rootfs"
+truncate -s 6G "$work/root.img"
+sudo -n mkfs.ext4 -q -F -d "$work/rootfs" "$work/root.img"
+acceleration=(-accel tcg,thread=multi -cpu max)
+if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then acceleration=(-accel kvm -cpu host); fi
+if [[ $work == *,* ]]; then echo 'VM workspace path cannot contain commas' >&2; exit 1; fi
+for boot in 1 2; do
+  timeout --kill-after=10 240 qemu-system-x86_64 "${acceleration[@]}" -smp 2 -m 2048 \
+    -display none -monitor none -serial stdio -no-reboot \
+    -kernel "$work/vmlinuz" -initrd "$work/initramfs.img" \
+    -append 'root=/dev/vda rw console=ttyS0 systemd.log_level=warning' \
+    -drive "file=$work/root.img,format=raw,if=virtio" >"$report/boot-$boot.log" 2>&1
+  marker=PACVAMP_VM_PHASE1_PASS
+  if [ "$boot" = 2 ]; then marker=PACVAMP_VM_PASS; fi
+  if ! grep -q "$marker" "$report/boot-$boot.log"; then
+    tail -100 "$report/boot-$boot.log" >&2
+    echo "VM boot $boot failed; logs: $report" >&2
+    exit 1
+  fi
+done
+echo "VM installation, upgrade, interruption, rollback and second-boot persistence passed; logs: $report"

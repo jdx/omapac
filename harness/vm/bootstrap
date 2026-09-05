@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+set -euo pipefail
+pacman -Syu --noconfirm linux mkinitcpio python minisign gnupg >/dev/null
+cat >/tmp/vm-mkinitcpio.conf <<'CONFIG'
+MODULES=(virtio_pci virtio_blk ext4)
+BINARIES=()
+FILES=()
+HOOKS=(base udev block filesystems)
+CONFIG
+kernels=(/usr/lib/modules/*/vmlinuz)
+kernel_dir=$(dirname "${kernels[0]}")
+mkinitcpio -c /tmp/vm-mkinitcpio.conf -k "$(basename "$kernel_dir")" -g /boot/vm-initramfs.img
+cp "${kernels[0]}" /boot/vm-vmlinuz
+mkdir -p /srv/vm-repos/versions /srv/vm-gpg /etc/pacvamp/keys /etc/pacvamp/conf.d
+chmod 700 /srv/vm-gpg
+gpg --homedir /srv/vm-gpg --batch --passphrase '' --quick-generate-key 'Pacvamp VM fixture <fixture@example.invalid>' ed25519 sign 0
+fingerprint=$(gpg --homedir /srv/vm-gpg --with-colons --list-keys | awk -F: '$1=="fpr" {print $10; exit}')
+gpg --homedir /srv/vm-gpg --export > /tmp/vm-public.gpg
+pacman-key --init
+pacman-key --add /tmp/vm-public.gpg
+pacman-key --lsign-key "$fingerprint"
+for version in 1 2 3; do
+  stage=$(mktemp -d)
+  mkdir -p "$stage/usr/bin"
+  printf '#!/bin/sh\necho %s\n' "$version" > "$stage/usr/bin/pacvamp-vm-probe"
+  chmod 755 "$stage/usr/bin/pacvamp-vm-probe"
+  cat > "$stage/.PKGINFO" <<META
+pkgname = pacvamp-vm-probe
+pkgbase = pacvamp-vm-probe
+pkgver = $version-1
+pkgdesc = VM transaction fixture
+url = https://example.invalid
+builddate = 1700000000
+packager = Pacvamp VM fixture
+size = 20
+arch = any
+license = MIT
+META
+  dest="/srv/vm-repos/versions/$version/core/os/x86_64"
+  mkdir -p "$dest"
+  package="$dest/pacvamp-vm-probe-$version-1-any.pkg.tar.zst"
+  bsdtar --zstd -cf "$package" -C "$stage" .PKGINFO usr
+  gpg --homedir /srv/vm-gpg --batch --detach-sign "$package"
+  repo-add "$dest/core.db.tar.gz" "$package"
+  touch -d "@170000000$version" "$dest/core.db.tar.gz"
+  rm -rf "$stage"
+done
+ln -s versions/1 /srv/vm-repos/current
+snapshot=/srv/vm-repos/snapshots/2026-09-01T06
+mkdir -p "$snapshot"
+cp -a /srv/vm-repos/versions/1/core "$snapshot/core"
+cat > "$snapshot/release.json" <<'JSON'
+{"version":1,"id":"2026-09-01T06","channel":"stable","arch_snapshot":"2026-09-01T06","repository_index_sequences":{},"created_at":"2026-09-01T06:00:00Z","tested_pkgbases":["pacvamp-vm-probe"],"promoted":{"stable":"2026-09-04T06:00:00Z"},"db_digests":{}}
+JSON
+minisign -G -W -p /etc/pacvamp/keys/vm.pub -s /srv/vm-minisign.key
+minisign -S -s /srv/vm-minisign.key -m "$snapshot/release.json"
+cat >/etc/pacman.conf <<'CONF'
+[options]
+Architecture = auto
+SigLevel = Required DatabaseOptional
+LocalFileSigLevel = Required
+[core]
+Include = /etc/pacman.d/mirrorlist
+CONF
+printf '%s\n' 'Server = http://127.0.0.1:18767/current/$repo/os/$arch' >/etc/pacman.d/mirrorlist
+cat >/etc/pacvamp/conf.d/vm.toml <<'CONFIG'
+[channel]
+snapshot_base = "http://127.0.0.1:18767/snapshots"
+CONFIG
+rm -f /var/lib/pacman/sync/* /var/lib/pacman/db.lck
+rm -rf /var/cache/pacman/pkg/*
+mkdir -p /etc/systemd/system/multi-user.target.wants
+cat >/etc/systemd/system/pacvamp-vm.service <<'UNIT'
+[Unit]
+Description=Pacvamp boot acceptance tests
+After=local-fs.target
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/pacvamp-vm-test
+StandardOutput=journal+console
+StandardError=journal+console
+TimeoutStartSec=180
+[Install]
+WantedBy=multi-user.target
+UNIT
+ln -s ../pacvamp-vm.service /etc/systemd/system/multi-user.target.wants/pacvamp-vm.service
+systemctl set-default multi-user.target
+printf '%s\n' 'pacvamp-vm' >/etc/hostname
+ln -sf /usr/share/zoneinfo/UTC /etc/localtime
+printf '%s\n' 'LANG=C.UTF-8' >/etc/locale.conf
+systemctl mask systemd-firstboot.service
+
+rm -f /.dockerenv /run/.containerenv /run/systemd/container
