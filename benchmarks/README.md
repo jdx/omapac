@@ -38,7 +38,9 @@ separate hosts/sysroots, and each record set is keyed by database device, inode,
 size, nanosecond modification and change times, and a schema version. Atomic
 replacement invalidates even when size and mtime are preserved. In-place changes,
 removal, corruption and schema mismatches also cause a fresh read or empty result.
-A database that changes during parsing aborts the search with retry guidance.
+Cache hits and misses recheck the database identity after cache I/O, retrying up
+to three times when a refresh overlaps the read. A database that keeps changing
+or changes during parsing aborts the search with retry guidance.
 
 Writes use an atomic rename, so concurrent searches never read a partial index.
 Missing/unwritable caches fall back to database parsing. Indexes are disposable

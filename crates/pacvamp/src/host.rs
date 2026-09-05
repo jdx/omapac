@@ -39,6 +39,7 @@ pub struct Source {
 }
 
 impl Source {
+    /// The authoritative sync database path, including the configured sysroot.
     pub(crate) fn database_path(&self) -> &Path {
         &self.db_path
     }

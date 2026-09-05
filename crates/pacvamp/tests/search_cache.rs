@@ -1,12 +1,14 @@
 mod common;
 use common::Rig;
 
+/// Run a fresh CLI process against the fixture's isolated databases and cache.
 fn search(rig: &Rig) -> String {
     let (code, out, err) = rig.run(&["search", "--json", "pacman"], "", 0);
     assert_eq!(code, 0, "{err}");
     out
 }
 
+/// Locate the per-repository indexes created by a fixture search.
 fn caches(rig: &Rig) -> Vec<std::path::PathBuf> {
     std::fs::read_dir(rig.home.join(".cache/pacvamp/search-v1"))
         .unwrap()
@@ -14,6 +16,7 @@ fn caches(rig: &Rig) -> Vec<std::path::PathBuf> {
         .collect()
 }
 
+/// Valid indexes are reused unchanged; malformed and outdated indexes are rebuilt.
 #[test]
 fn reuse_corruption_and_schema_fallback_preserve_results() {
     let rig = Rig::new();
@@ -46,6 +49,7 @@ fn reuse_corruption_and_schema_fallback_preserve_results() {
     assert_eq!(search(&rig), first);
 }
 
+/// Refreshes invalidate cached records even when a replacement preserves mtime.
 #[test]
 fn replacing_database_with_preserved_mtime_invalidates_and_removal_drops_results() {
     let rig = Rig::new();
@@ -69,6 +73,7 @@ fn replacing_database_with_preserved_mtime_invalidates_and_removal_drops_results
     assert!(!search(&rig).contains("pacman"));
 }
 
+/// Unavailable storage and concurrent index publication preserve search availability.
 #[test]
 fn unavailable_cache_and_concurrent_writers_do_not_break_search() {
     let rig = Rig::new();
@@ -84,6 +89,7 @@ fn unavailable_cache_and_concurrent_writers_do_not_break_search() {
     assert_eq!(search(&rig), expected);
 }
 
+/// Inodes detect identical-size replacements while installed versions remain uncached.
 #[test]
 fn same_size_atomic_replacement_and_live_installed_versions_are_detected() {
     let rig = Rig::new();
@@ -124,4 +130,66 @@ fn same_size_atomic_replacement_and_live_installed_versions_are_detected() {
     std::fs::write(desc, text).unwrap();
     let hits: serde_json::Value = serde_json::from_str(&search(&rig)).unwrap();
     assert_eq!(hits[0]["installed"], "9.0-1");
+}
+
+/// A FIFO holds cache I/O open while a refresh replaces or removes the database.
+#[test]
+fn refresh_during_cache_read_never_returns_the_old_index() {
+    use std::io::Write as _;
+    for remove in [false, true] {
+        let rig = Rig::new();
+        search(&rig);
+        let cache = caches(&rig)
+            .into_iter()
+            .find(|path| {
+                let index: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+                index["packages"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|p| p["name"] == "pacman")
+            })
+            .unwrap();
+        let bytes = std::fs::read(&cache).unwrap();
+        std::fs::remove_file(&cache).unwrap();
+        nix::unistd::mkfifo(
+            &cache,
+            nix::sys::stat::Mode::S_IRUSR | nix::sys::stat::Mode::S_IWUSR,
+        )
+        .unwrap();
+        let output = std::thread::scope(|scope| {
+            let reader = scope.spawn(|| search(&rig));
+            // Opening the writer completes only once the CLI has sampled the
+            // database identity and opened the FIFO for its cache read.
+            let mut writer = std::fs::File::options().write(true).open(&cache).unwrap();
+            let database = rig.root.join("var/lib/pacman/sync/core.db");
+            if remove {
+                std::fs::remove_file(database).unwrap();
+            } else {
+                let replacement = database.with_extension("new");
+                std::fs::copy(common::fixtures().join("sync/omarchy.db"), &replacement).unwrap();
+                std::fs::rename(replacement, database).unwrap();
+            }
+            // A retry sees a regular stale cache, not another blocking FIFO.
+            std::fs::remove_file(&cache).unwrap();
+            std::fs::write(&cache, &bytes).unwrap();
+            writer.write_all(&bytes).unwrap();
+            drop(writer);
+            reader.join().unwrap()
+        });
+        let hits: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert!(
+            hits.as_array()
+                .unwrap()
+                .iter()
+                .all(|p| p["name"] != "pacman"),
+            "stale cache returned after refresh: {output}"
+        );
+        assert_eq!(
+            search(&rig),
+            output,
+            "the retry must use the refreshed identity"
+        );
+    }
 }

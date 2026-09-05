@@ -30,6 +30,7 @@ struct Identity {
 }
 
 impl Identity {
+    /// Sample the Linux file identity used to detect replacement and in-place edits.
     fn read(path: &Path) -> std::io::Result<Self> {
         let meta = path.metadata()?;
         Ok(Self {
@@ -49,6 +50,7 @@ struct Index {
     packages: Vec<Package>,
 }
 
+/// Namespace indexes by canonical database path within the invoking user's cache.
 fn cache_path(database: &Path) -> Option<PathBuf> {
     let home = std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
@@ -59,6 +61,7 @@ fn cache_path(database: &Path) -> Option<PathBuf> {
     Some(home.join("pacvamp/search-v1").join(format!("{key:x}.json")))
 }
 
+/// Read a bounded index only when its schema and sampled database identity match.
 fn read(path: &Path, identity: &Identity) -> Option<Vec<Package>> {
     let mut bytes = Vec::new();
     std::fs::File::open(path)
@@ -73,6 +76,7 @@ fn read(path: &Path, identity: &Identity) -> Option<Vec<Package>> {
     (index.schema == SCHEMA && index.identity == *identity).then_some(index.packages)
 }
 
+/// Publish a complete disposable index by atomic rename, retaining size limits.
 fn write(path: &Path, index: &Index) -> Result<()> {
     let parent = path.parent().expect("cache file has a parent");
     std::fs::create_dir_all(parent)?;
@@ -86,45 +90,59 @@ fn write(path: &Path, index: &Index) -> Result<()> {
     Ok(())
 }
 
+/// Return search records from a revalidated cache or a stable database parse.
 pub(crate) fn packages(source: &Source) -> Result<Vec<Package>> {
     let database = source.database_path();
-    let identity = match Identity::read(database) {
-        Ok(identity) => identity,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => {
-            return Err(error).wrap_err_with(|| format!("reading {}", database.display()));
+    // A continuously refreshing database must not keep a menu query spinning.
+    for _ in 0..3 {
+        let identity = match Identity::read(database) {
+            Ok(identity) => identity,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => {
+                return Err(error).wrap_err_with(|| format!("reading {}", database.display()));
+            }
+        };
+        let cache = cache_path(database);
+        let cached = cache.as_deref().and_then(|path| read(path, &identity));
+        // Cache I/O can overlap a pacman refresh. Restart from a fresh identity
+        // on both hits and misses rather than returning or parsing against the old one.
+        if Identity::read(database).ok().as_ref() != Some(&identity) {
+            continue;
         }
-    };
-    let cache = cache_path(database);
-    if let Some(packages) = cache.as_deref().and_then(|path| read(path, &identity)) {
-        return Ok(packages);
+        if let Some(packages) = cached {
+            return Ok(packages);
+        }
+        // Parse anew rather than using Source's in-process cell: a refresh may have
+        // replaced a database since another command populated that cell.
+        let db = alpm_db::SyncDb::read(database, &source.name)
+            .wrap_err_with(|| format!("reading {}", database.display()))?;
+        if Identity::read(database)? != identity {
+            bail!(
+                "{} changed during search; retry after the repository refresh",
+                database.display()
+            );
+        }
+        let index = Index {
+            schema: SCHEMA,
+            identity,
+            packages: db
+                .packages
+                .into_iter()
+                .map(|p| Package {
+                    name: p.name,
+                    version: p.version,
+                    desc: p.desc,
+                })
+                .collect(),
+        };
+        if let Some(path) = cache {
+            // An unwritable/full cache must not make package search unavailable.
+            let _ = write(&path, &index);
+        }
+        return Ok(index.packages);
     }
-    // Parse anew rather than using Source's in-process cell: a refresh may have
-    // replaced a database since another command populated that cell.
-    let db = alpm_db::SyncDb::read(database, &source.name)
-        .wrap_err_with(|| format!("reading {}", database.display()))?;
-    if Identity::read(database)? != identity {
-        bail!(
-            "{} changed during search; retry after the repository refresh",
-            database.display()
-        );
-    }
-    let index = Index {
-        schema: SCHEMA,
-        identity,
-        packages: db
-            .packages
-            .into_iter()
-            .map(|p| Package {
-                name: p.name,
-                version: p.version,
-                desc: p.desc,
-            })
-            .collect(),
-    };
-    if let Some(path) = cache {
-        // An unwritable/full cache must not make package search unavailable.
-        let _ = write(&path, &index);
-    }
-    Ok(index.packages)
+    bail!(
+        "{} changed during search; retry after the repository refresh",
+        database.display()
+    )
 }

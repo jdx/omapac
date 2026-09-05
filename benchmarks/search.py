@@ -52,6 +52,7 @@ def corpus(root):
 
 
 def main():
+    """Measure fresh CLI processes and enforce optional startup latency budgets."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=Path("target/release/pacvamp"))
     parser.add_argument("--sysroot", type=Path, help="use an existing ALPM sysroot instead of the generated corpus")
@@ -72,6 +73,7 @@ def main():
         env.pop("PACVAMP_MANAGED_CONFIG_PATH", None)
 
         def run(*command):
+            """Return wall-clock milliseconds and stdout for a successful CLI invocation."""
             start = time.perf_counter_ns()
             result = subprocess.run([str(binary), "--sysroot", str(root), *command], env=env, capture_output=True, check=True)
             return (time.perf_counter_ns() - start) / 1_000_000, result.stdout
