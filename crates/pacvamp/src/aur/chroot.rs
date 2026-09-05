@@ -53,39 +53,38 @@ pub fn command(root: &Path, run: &Path, helper: &Path, network: bool) -> Result<
     if !network {
         cmd.arg("--unshare-net");
     }
-    for name in ["usr", "etc"] {
-        cmd.arg("--ro-bind")
-            .arg(root.join(name))
-            .arg(format!("/{name}"));
+    for entry in std::fs::read_dir(root)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if [
+            "dev",
+            "proc",
+            "sys",
+            "run",
+            "tmp",
+            "build",
+            "pacvamp-helper",
+        ]
+        .iter()
+        .any(|reserved| name == *reserved)
+        {
+            continue;
+        }
+        let destination = Path::new("/").join(&name);
+        if entry.file_type()?.is_symlink() {
+            cmd.arg("--symlink")
+                .arg(std::fs::read_link(entry.path())?)
+                .arg(destination);
+        } else {
+            cmd.arg("--ro-bind").arg(entry.path()).arg(destination);
+        }
     }
     cmd.args([
-        "--symlink",
-        "usr/bin",
-        "/bin",
-        "--symlink",
-        "usr/bin",
-        "/sbin",
-        "--symlink",
-        "usr/lib",
-        "/lib",
-        "--symlink",
-        "usr/lib",
-        "/lib64",
-        "--dev",
-        "/dev",
-        "--proc",
-        "/proc",
-        "--dir",
-        "/tmp",
-        "--dir",
-        "/run",
+        "--dev", "/dev", "--proc", "/proc", "--dir", "/sys", "--dir", "/tmp", "--dir", "/run",
     ]);
-    cmd.arg("--ro-bind")
-        .arg(root.join("var/lib/pacman"))
-        .arg("/var/lib/pacman");
-    cmd.arg("--bind").arg(run).arg(run);
+    cmd.arg("--bind").arg(run).arg("/build");
     cmd.arg("--ro-bind").arg(helper).arg("/pacvamp-helper");
-    cmd.args(["--", "/pacvamp-helper", "__build"]);
+    cmd.args(["--chdir", "/build", "--", "/pacvamp-helper", "__build"]);
     Ok(cmd)
 }
 
@@ -93,4 +92,11 @@ pub fn root(settings: &crate::manifest::Settings) -> Option<PathBuf> {
     settings
         .aur_chroot
         .then(|| settings.aur_chroot_root.clone())
+}
+
+pub fn inside(path: &Path, run: &Path) -> PathBuf {
+    path.strip_prefix(run).map_or_else(
+        |_| path.to_path_buf(),
+        |relative| Path::new("/build").join(relative),
+    )
 }

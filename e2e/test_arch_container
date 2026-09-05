@@ -21,7 +21,14 @@ docker image inspect "$image" >/dev/null 2>&1 || docker pull "$image" >/dev/null
 [ -x target/debug/pacvamp ] || skip "target/debug/pacvamp not built"
 
 name="pacvamp-e2e-$$"
-cleanup() { docker rm -f "$name" >/dev/null 2>&1 || true; }
+cleanup() {
+	local status=$?
+	if [ "$status" -ne 0 ] && [ -n "${PACVAMP_E2E_KEEP_ON_FAILURE:-}" ]; then
+		echo "retained failed fixture: $name" >&2
+	else
+		docker rm -f "$name" >/dev/null 2>&1 || true
+	fi
+}
 trap cleanup EXIT
 docker create --privileged --name "$name" "$image" sleep 1200 >/dev/null
 docker cp target/debug/pacvamp "$name:/usr/local/bin/pacvamp"
@@ -194,8 +201,16 @@ bsdtar -xOf "$artifact" .BUILDINFO | grep '^installed = pacman-' >/dev/null
 
 # Provision a separate build image, then prove host-only tools stay unavailable.
 pacman -S --noconfirm --needed bubblewrap devtools >/dev/null
+# The outer Docker fixture has no systemd service manager. Keep nspawn in
+# its existing unit while retaining its real namespace and chroot setup.
+systemd-machine-id-setup
+cat >/usr/local/bin/systemd-nspawn <<'NSPAWN'
+#!/usr/bin/env bash
+exec /usr/bin/systemd-nspawn --keep-unit "$@"
+NSPAWN
+chmod 755 /usr/local/bin/systemd-nspawn
 mkdir -p /srv/pacvamp-image
-mkarchroot /srv/pacvamp-image/root base-devel pacman
+mkarchroot -C /etc/pacman.conf /srv/pacvamp-image/root base-devel pacman
 mkdir -p /home/pacvamp-builder/.config/pacvamp
 cat >/home/pacvamp-builder/.config/pacvamp/pacvamp.toml <<'CONFIG'
 [policy.aur]
@@ -205,7 +220,10 @@ CONFIG
 chown -R pacvamp-builder:pacvamp-builder /home/pacvamp-builder/.config
 # A host-only marker under /usr must not be visible inside the image.
 echo host-only >/usr/share/pacvamp-host-only
+mkdir -p /srv/pacvamp-image/root/opt/pacvamp-image-tool
+echo image-only >/srv/pacvamp-image/root/opt/pacvamp-image-tool/marker
 cat >>/srv/pacvamp-aur/work/PKGBUILD <<'RECIPE'
+test -f /opt/pacvamp-image-tool/marker || exit 96
 if test -e /usr/share/pacvamp-host-only; then exit 94; fi
 if touch /usr/share/pacvamp-image-poison; then exit 95; fi
 RECIPE

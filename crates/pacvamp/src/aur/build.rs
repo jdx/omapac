@@ -215,6 +215,19 @@ fn build_with_options(
     let mut files = Vec::new();
     for line in std::str::from_utf8(&output.stdout)?.lines() {
         let path = PathBuf::from(line);
+        let path = if opts.chroot.is_some() {
+            path.strip_prefix("/build").map_or_else(
+                |_| path.clone(),
+                |relative| {
+                    opts.builddir
+                        .parent()
+                        .unwrap_or(&opts.builddir)
+                        .join(relative)
+                },
+            )
+        } else {
+            path
+        };
         let metadata = match std::fs::symlink_metadata(&path) {
             Ok(metadata) => metadata,
             // makepkg --packagelist includes optional debug packages even
@@ -343,7 +356,7 @@ fn spawn_makepkg(
     if source_writable {
         writable.push(opts.srcdest.clone());
     }
-    let spec = Spec {
+    let mut spec = Spec {
         readable: vec![opts.srcdest.clone(), opts.makepkg.clone()],
         writable,
         network,
@@ -351,6 +364,25 @@ fn spawn_makepkg(
         args: args.iter().map(|arg| (*arg).to_string()).collect(),
         cwd: builddir.join("worktree"),
     };
+    if opts.chroot.is_some() {
+        let run = opts
+            .builddir
+            .parent()
+            .ok_or_else(|| eyre::eyre!("missing run directory"))?;
+        spec.cwd = super::chroot::inside(&spec.cwd, run);
+        spec.readable = spec
+            .readable
+            .iter()
+            .map(|p| super::chroot::inside(p, run))
+            .collect();
+        // The full readable root is the isolated image, never the host root.
+        spec.readable.push(PathBuf::from("/"));
+        spec.writable = spec
+            .writable
+            .iter()
+            .map(|p| super::chroot::inside(p, run))
+            .collect();
+    }
     let helper = std::env::current_exe()?;
     let mut command = if let Some(root) = &opts.chroot {
         super::chroot::command(
@@ -383,6 +415,25 @@ fn spawn_makepkg(
         command.env("PATH", "/usr/bin:/bin");
     }
     set_private_home(&mut command, builddir)?;
+    if opts.chroot.is_some() {
+        let run = opts
+            .builddir
+            .parent()
+            .ok_or_else(|| eyre::eyre!("missing run directory"))?;
+        let env: Vec<_> = command
+            .get_envs()
+            .filter_map(|(key, value)| {
+                let value = value?;
+                let path = Path::new(value);
+                path.starts_with(run)
+                    .then(|| (key.to_os_string(), super::chroot::inside(path, run)))
+            })
+            .collect();
+        for (key, value) in env {
+            command.env(key, value);
+        }
+    }
+
     if capture_output {
         command.stdout(Stdio::piped()).stderr(Stdio::piped());
     }

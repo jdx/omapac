@@ -2,7 +2,9 @@
 
 The optional backend builds against an independently provisioned Arch image using
 bubblewrap's mount, PID, IPC, user, and (during offline builds) network namespaces.
-The image is mounted read-only; each run supplies its own writable build tree.
+Image paths, including /opt and /var, are mounted read-only. Runtime mounts
+(/dev, /proc, /sys, /run, /tmp) are replaced; each run supplies its own writable
+/build tree.
 The regular Landlock/seccomp jail, source-verification separation, and resource
 controls still apply.
 
