@@ -4,7 +4,7 @@
 //! `pkgname = name` section per package overrides or extends them. Keys
 //! are `\tkey = value`, repeated for lists, and may carry an architecture
 //! suffix (`source_x86_64`). This parser needs no bash and never executes
-//! anything, which is what `safe` mode relies on.
+//! anything. The `plan` command uses this static metadata.
 
 use std::collections::BTreeSet;
 

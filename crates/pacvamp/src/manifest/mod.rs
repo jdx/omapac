@@ -180,6 +180,10 @@ impl Manifest {
                 .wrap_err_with(|| format!("reading {}", path.display()))?;
             let floor: ManagedToml =
                 toml::from_str(&text).wrap_err_with(|| format!("parsing {}", path.display()))?;
+            floor
+                .policy
+                .validate()
+                .wrap_err_with(|| format!("parsing {}", path.display()))?;
             settings.apply_managed(&floor.policy);
             managed.push(path.clone());
         }
@@ -213,6 +217,10 @@ fn read_layer(path: &Path) -> Result<LayerToml> {
         std::fs::read_to_string(path).wrap_err_with(|| format!("reading {}", path.display()))?;
     let layer: LayerToml =
         toml::from_str(&text).wrap_err_with(|| format!("parsing {}", path.display()))?;
+    layer
+        .policy
+        .validate()
+        .wrap_err_with(|| format!("parsing {}", path.display()))?;
     for (name, value) in &layer.packages {
         if let PackageValue::Table(table) = value
             && table.source == Source::Aur

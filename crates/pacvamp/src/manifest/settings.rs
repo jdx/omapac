@@ -171,6 +171,23 @@ pub struct PolicyToml {
     pub scanner: ScannerToml,
 }
 
+impl PolicyToml {
+    /// Reject unsupported controls in every layer, before overrides can hide them.
+    pub(super) fn validate(&self) -> eyre::Result<()> {
+        if self.safe.is_some() {
+            eyre::bail!(
+                "policy.safe is not supported; remove it (including safe = false); use plan for a non-executing preview"
+            );
+        }
+        if self.scanner.socket_token.is_some() {
+            eyre::bail!(
+                "policy.scanner.socket_token is not supported; remove it; external malicious-package lookups are not performed"
+            );
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct AurToml {
@@ -247,7 +264,6 @@ pub struct UpdateToml {
 pub struct Settings {
     pub mode: Mode,
     pub paranoid: bool,
-    pub safe: bool,
     pub aur_min_commit_age: Age,
     pub aur_min_package_age: Age,
     pub aur_min_votes: u32,
@@ -267,7 +283,6 @@ pub struct Settings {
     pub trust_no_downgrade: bool,
     pub trust_advisories: Advisories,
     pub trust_custom_repos: CustomRepos,
-    pub scanner_socket_token: Option<String>,
     pub update_overwrite: Vec<String>,
     pub update_ignore: Vec<String>,
     pub update_ignore_group: Vec<String>,
@@ -282,7 +297,6 @@ impl Default for Settings {
         Settings {
             mode: Mode::Warn,
             paranoid: false,
-            safe: false,
             aur_min_commit_age: Age::hours(48),
             aur_min_package_age: Age::days(14),
             aur_min_votes: 10,
@@ -311,7 +325,6 @@ impl Default for Settings {
             trust_no_downgrade: true,
             trust_advisories: Advisories::On,
             trust_custom_repos: CustomRepos::Warn,
-            scanner_socket_token: None,
             update_overwrite: Vec::new(),
             update_ignore: Vec::new(),
             update_ignore_group: Vec::new(),
@@ -349,7 +362,6 @@ impl Settings {
         }
         set!(mode, policy.mode);
         set!(paranoid, policy.paranoid);
-        set!(safe, policy.safe);
         set!(aur_min_commit_age, policy.aur.min_commit_age);
         set!(aur_min_package_age, policy.aur.min_package_age);
         set!(aur_min_votes, policy.aur.min_votes);
@@ -381,10 +393,6 @@ impl Settings {
         set!(trust_no_downgrade, policy.trust.no_downgrade);
         set!(trust_advisories, policy.trust.advisories);
         set!(trust_custom_repos, policy.trust.custom_repos);
-        set!(
-            scanner_socket_token,
-            policy.scanner.socket_token.clone().map(Some)
-        );
         append_unique(&mut self.update_overwrite, &update.overwrite);
         append_unique(&mut self.update_ignore, &update.ignore);
         append_unique(&mut self.update_ignore_group, &update.ignore_group);
@@ -408,17 +416,9 @@ impl Settings {
                 }
             };
         }
-        macro_rules! managed_wins {
-            ($field:ident, $value:expr) => {
-                if let Some(value) = $value {
-                    self.$field = value;
-                }
-            };
-        }
         // ranked: the enums derive Ord in strictness order, so max works.
         max!(mode, managed.mode);
         true_wins!(paranoid, managed.paranoid);
-        true_wins!(safe, managed.safe);
         max!(aur_min_commit_age, managed.aur.min_commit_age);
         max!(aur_min_package_age, managed.aur.min_package_age);
         max!(aur_min_votes, managed.aur.min_votes);
@@ -448,10 +448,6 @@ impl Settings {
         true_wins!(trust_no_downgrade, managed.trust.no_downgrade);
         max!(trust_advisories, managed.trust.advisories);
         max!(trust_custom_repos, managed.trust.custom_repos);
-        managed_wins!(
-            scanner_socket_token,
-            managed.scanner.socket_token.clone().map(Some)
-        );
         if self.paranoid {
             self.harden();
         }
