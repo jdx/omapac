@@ -1,6 +1,6 @@
 name pacvamp-repo
 bin pacvamp-repo
-version "0.1.0"
+version "0.1.1"
 author "Jeff Dickey <@jdx>"
 about "Server-side tooling for a repository that serves pacvamp clients"
 long_about #"""
