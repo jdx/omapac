@@ -67,6 +67,18 @@ impl RunWith<&App> for Build {
             let host = crate::aur::chroot::host(&root)?;
             let missing =
                 crate::aur::build::missing_deps(&host, &prepared.reviewed, &prepared.arch)?;
+            if !missing.other.is_empty() && self.dependency_artifact.is_empty() {
+                bail!(
+                    "image is missing AUR dependencies: {}; supply reviewed --dependency-artifact files or provision the base image {} before retrying",
+                    missing
+                        .other
+                        .iter()
+                        .map(|dep| dep.spec())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    root.display()
+                );
+            }
             let packages = missing
                 .repo
                 .iter()
@@ -82,6 +94,15 @@ impl RunWith<&App> for Build {
                 &self.dependency_artifact,
                 self.yes,
             )?;
+            let ready = crate::aur::chroot::host(&image.root)?;
+            let remaining =
+                crate::aur::build::missing_deps(&ready, &prepared.reviewed, &prepared.arch)?;
+            if !remaining.repo.is_empty() || !remaining.other.is_empty() {
+                bail!(
+                    "prepared image still lacks build dependencies; supply matching --dependency-artifact files or provision the base image {} before retrying",
+                    root.display()
+                );
+            }
             prepared.settings.aur_chroot_root = image.root.clone();
             Some(image)
         } else {
