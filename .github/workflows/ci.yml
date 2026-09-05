@@ -50,6 +50,8 @@ jobs:
     name: arch-rust
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      CARGO_HOME: /tmp/arch-cargo
     container:
       image: archlinux:base-devel
       options: --privileged
@@ -61,7 +63,12 @@ jobs:
         with:
           key: arch-rust
       - name: Run the complete Rust suite with real pacman installed
-        run: cargo test --locked --workspace --all-features
+        # Fixtures exercise sudo elevation and permission failures as a normal user.
+        run: |
+          useradd --create-home pacvamp-test
+          mkdir -p "$CARGO_HOME"
+          chown -R pacvamp-test:pacvamp-test "$GITHUB_WORKSPACE" "$CARGO_HOME"
+          runuser -u pacvamp-test -- cargo test --locked --workspace --all-features
         env:
           PACVAMP_REQUIRE_JAIL: "1"
 
