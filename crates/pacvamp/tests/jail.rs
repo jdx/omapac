@@ -77,11 +77,11 @@ fn writes_are_confined_to_the_allowed_directories() {
     assert_ne!(code, 0, "writing outside the jail must fail");
     assert!(!forbidden.join("out.txt").exists());
 
-    // Reading elsewhere is fine.
+    // System compiler/runtime paths remain readable.
     let (code, out) = jail(&spec(
         &[&allowed],
         true,
-        "cat /etc/hostname >/dev/null || cat /proc/version >/dev/null; : >/dev/null",
+        "cat /etc/passwd >/dev/null && : >/dev/null",
         &allowed,
     ));
     assert_eq!(code, 0, "{out}");
@@ -103,6 +103,107 @@ fn network_is_refused_unless_granted() {
     );
     let (code, out) = jail(&spec(&[dir.path()], true, &script, dir.path()));
     assert_eq!(code, 0, "granted network works: {out}");
+}
+
+#[test]
+fn process_substitution_and_executable_links_need_no_proc_tree_grant() {
+    if !landlock_available() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let (code, out) = jail(&spec(
+        &[dir.path()],
+        false,
+        "set -e; cat <(printf substitution); readlink /proc/self/exe; if cat /proc/$PPID/environ; then exit 91; fi",
+        dir.path(),
+    ));
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("substitution"), "{out}");
+    assert!(out.contains("readlink"), "{out}");
+}
+
+#[test]
+fn openssl_can_load_public_configuration_without_exposing_private_files() {
+    if !landlock_available() {
+        return;
+    }
+    if which::which("openssl").is_err() {
+        assert!(
+            std::env::var_os("PACVAMP_REQUIRE_JAIL").is_none(),
+            "openssl required in CI"
+        );
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let (code, out) = jail(&spec(
+        &[dir.path()],
+        false,
+        "openssl req -new -newkey rsa:2048 -nodes -subj /CN=pacvamp-test -keyout key.pem -out request.pem",
+        dir.path(),
+    ));
+    assert_eq!(code, 0, "{out}");
+    assert!(dir.path().join("request.pem").is_file());
+}
+
+#[test]
+fn credentials_and_shared_scratch_are_inaccessible_even_with_network() {
+    if !landlock_available() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let build = dir.path().join("build");
+    let secret = dir.path().join("credentials");
+    std::fs::create_dir(&build).unwrap();
+    std::fs::write(&secret, "fake credential").unwrap();
+    std::os::unix::fs::symlink(&secret, build.join("link")).unwrap();
+    for network in [false, true] {
+        for path in [&secret, &build.join("link")] {
+            let (code, out) = jail(&spec(
+                &[&build],
+                network,
+                &format!("cat '{}'", path.display()),
+                &build,
+            ));
+            assert_ne!(code, 0, "credential read succeeded: {out}");
+            assert!(!out.contains("fake credential"));
+        }
+        let target = dir.path().join("another-build");
+        let (code, out) = jail(&spec(
+            &[&build],
+            network,
+            &format!("echo poisoned > '{}'", target.display()),
+            &build,
+        ));
+        assert_ne!(code, 0, "shared scratch write succeeded: {out}");
+        assert!(!target.exists());
+    }
+}
+
+#[test]
+fn declared_sources_are_readable_but_not_writable() {
+    if !landlock_available() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let build = dir.path().join("build");
+    let source = dir.path().join("source");
+    std::fs::create_dir(&build).unwrap();
+    std::fs::write(&source, "verified source").unwrap();
+    let mut request = spec(
+        &[&build],
+        false,
+        &format!(
+            "cat '{}' && ! echo poisoned > '{}'",
+            source.display(),
+            source.display()
+        ),
+        &build,
+    );
+    request["readable"] = serde_json::json!([source]);
+    let (code, out) = jail(&request);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("verified source"));
+    assert_eq!(std::fs::read_to_string(source).unwrap(), "verified source");
 }
 
 #[test]

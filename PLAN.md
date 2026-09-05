@@ -343,26 +343,26 @@ summary, and the git diff of PKGBUILD and install files between the approved and
 target commits. `pacvamp aur approve <pkg> [--commit]` records approval in the lock so a
 later unattended run proceeds.
 
-**Jailed builds.** makepkg runs as the invoking user, never root, in three phases so the
+**Jailed builds.** makepkg runs as the invoking user, never root, in two phases so the
 jail can differ. The first phase runs `makepkg --verifysource` under Landlock plus
 seccomp with network allowed and writes limited to the source cache and a disposable
 verification workspace. That workspace is destroyed before later phases, so top-level
 PKGBUILD code cannot rewrite the reviewed recipe or plant build inputs. Every phase,
-including this network-enabled phase, receives a minimal environment with tokens,
-credentials, agent sockets, and the invoking user's home removed. This confines
+including this network-enabled phase, receives an environment with known secret variables and agent socket variables
+removed, and a private HOME. Filesystem access is separately restricted. This confines
 top-level PKGBUILD code while downloading sources and verifying checksums.
-The second phase runs `makepkg --nobuild` in a network-denied jail, with the verified
-source cache mounted read-only, to extract sources and execute the untrusted `prepare()`
-function. The final `makepkg --noextract` phase uses the same network-denied jail for the
-build and package functions, with writes limited to the build directory and the
-environment scrubbed of tokens and agent sockets. Packages that
+The second phase runs `makepkg --holdver` in a network-denied jail, with the verified
+source cache read-only, to extract, prepare, build, and package. Writable paths are
+the private build tree, package output, and logs. TMPDIR, TMP, and TEMP point into
+the build tree; shared `/tmp`, `/var/tmp`, and `/dev/shm` are not writable. Packages that
 legitimately need network in `build()` get an explicit grant in
 `aur.allow_network_build`, or in the OPR package manifest for OPR-built packages. An
 AUR grant records the approved commit, becomes invalid when the candidate commit
 changes, and must then be reviewed and approved again. Even with network enabled,
 Landlock limits reads to the build tree, the declared source cache, and the read-only
 system compiler/runtime paths needed by makepkg; the rest of the invoking user's home,
-credentials, agent sockets, and unrelated system data remain inaccessible. If the
+credential files and unrelated system data remain unreadable. This is a filesystem
+and internet-socket boundary, not a complete process or Unix-socket namespace. If the
 kernel cannot enforce the jail, the build fails instead of running unjailed. This is
 the same Landlock strategy mise and aube already implement. An optional devtools
 chroot sits behind `aur.chroot`.

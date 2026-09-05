@@ -219,18 +219,18 @@ fn spawn_makepkg(
     builddir: &Path,
     capture_output: bool,
 ) -> Result<Child> {
+    let scratch = builddir.join("tmp");
+    std::fs::create_dir_all(&scratch).wrap_err("creating private build scratch directory")?;
     let mut writable = vec![
         opts.pkgdest.clone(),
         builddir.to_path_buf(),
         opts.logdest.clone(),
-        PathBuf::from("/tmp"),
-        PathBuf::from("/var/tmp"),
-        PathBuf::from("/dev/shm"),
     ];
     if source_writable {
         writable.push(opts.srcdest.clone());
     }
     let spec = Spec {
+        readable: vec![opts.srcdest.clone(), opts.makepkg.clone()],
         writable,
         network,
         program: opts.makepkg.clone(),
@@ -252,7 +252,10 @@ fn spawn_makepkg(
         .env("PKGDEST", &opts.pkgdest)
         .env("SRCDEST", &opts.srcdest)
         .env("BUILDDIR", builddir)
-        .env("LOGDEST", &opts.logdest);
+        .env("LOGDEST", &opts.logdest)
+        .env("TMPDIR", &scratch)
+        .env("TMP", &scratch)
+        .env("TEMP", &scratch);
     set_private_home(&mut command, builddir)?;
     if capture_output {
         command.stdout(Stdio::piped()).stderr(Stdio::piped());

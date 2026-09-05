@@ -17,8 +17,10 @@ use serde::{Deserialize, Serialize};
 /// What a jailed command may do.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Spec {
-    /// Directories the command may write under. Everything else is
-    /// read-only.
+    /// Additional read-only inputs, beyond the system runtime paths.
+    #[serde(default)]
+    pub readable: Vec<PathBuf>,
+    /// Directories the command may read and write. Other paths are denied.
     pub writable: Vec<PathBuf>,
     /// Whether the command may use the network.
     pub network: bool,
@@ -75,7 +77,7 @@ impl Spec {
 
     /// Restrict the current process as the spec says. Called by the helper.
     pub fn apply(&self) -> Result<()> {
-        restrict_filesystem(&self.writable, self.network)?;
+        restrict_filesystem(&self.readable, &self.writable, self.network)?;
         if !self.network {
             deny_inet_sockets()?;
         }
@@ -83,7 +85,7 @@ impl Spec {
     }
 }
 
-fn restrict_filesystem(writable: &[PathBuf], network: bool) -> Result<()> {
+fn restrict_filesystem(readable: &[PathBuf], writable: &[PathBuf], network: bool) -> Result<()> {
     use landlock::{
         ABI, Access, AccessFs, AccessNet, Compatible, RulesetAttr, RulesetCreatedAttr,
         RulesetStatus, path_beneath_rules,
@@ -103,6 +105,54 @@ fn restrict_filesystem(writable: &[PathBuf], network: bool) -> Result<()> {
         .map_err(|e| eyre::eyre!("landlock: this kernel cannot enforce the build jail: {e}"))?;
     // Grant only the ordinary character devices, never the whole /dev tree.
     let devices = ["/dev/null", "/dev/zero", "/dev/random", "/dev/urandom"].map(PathBuf::from);
+    // Never grant /, /home, /etc, /proc, /run, or a shared temporary tree.
+    // These paths supply compilers, makepkg, DNS, TLS and package metadata,
+    // without exposing credentials or another process's environment.
+    let runtime = [
+        "/usr",
+        "/bin",
+        "/sbin",
+        "/lib",
+        "/lib64",
+        "/etc/ld.so.cache",
+        "/etc/ld.so.conf",
+        "/etc/ld.so.conf.d",
+        "/etc/passwd",
+        "/etc/group",
+        "/etc/nsswitch.conf",
+        "/etc/hosts",
+        "/etc/resolv.conf",
+        "/etc/gai.conf",
+        "/etc/ssl/certs",
+        "/etc/ssl/openssl.cnf",
+        "/etc/ssl/cert.pem",
+        "/etc/ca-certificates",
+        "/etc/localtime",
+        "/etc/os-release",
+        "/etc/arch-release",
+        "/etc/makepkg.conf",
+        "/etc/makepkg.conf.d",
+        "/etc/pacman.conf",
+        "/etc/pacman.d/mirrorlist",
+        "/var/lib/pacman/local",
+        "/proc/cpuinfo",
+        "/proc/meminfo",
+    ]
+    .map(PathBuf::from);
+    let config = Path::new(alpm_db::conf::DEFAULT_PATH);
+    let inputs = if config.exists() {
+        pacman_inputs(config)?
+    } else {
+        PacmanInputs::default()
+    };
+    let reads: Vec<&Path> = runtime
+        .iter()
+        .chain(readable)
+        .chain(&inputs.files)
+        .chain(&devices)
+        .map(PathBuf::as_path)
+        .filter(|p| p.exists())
+        .collect();
     let existing: Vec<&Path> = writable
         .iter()
         .map(PathBuf::as_path)
@@ -114,7 +164,11 @@ fn restrict_filesystem(writable: &[PathBuf], network: bool) -> Result<()> {
         .filter(|p| p.exists())
         .collect();
     let status = created
-        .add_rules(path_beneath_rules(&["/"], AccessFs::from_read(abi)))
+        .add_rules(path_beneath_rules(&reads, AccessFs::from_read(abi)))
+        .map_err(|e| eyre::eyre!("landlock: {e}"))?
+        // glob(3) must list include directories, but this grants no file
+        // contents beneath them (notably pacman's private signing keys).
+        .add_rules(path_beneath_rules(&inputs.directories, AccessFs::ReadDir))
         .map_err(|e| eyre::eyre!("landlock: {e}"))?
         .add_rules(path_beneath_rules(&existing, AccessFs::from_all(abi)))
         .map_err(|e| eyre::eyre!("landlock: {e}"))?
@@ -132,6 +186,49 @@ fn restrict_filesystem(writable: &[PathBuf], network: bool) -> Result<()> {
         );
     }
     Ok(())
+}
+
+#[derive(Default)]
+struct PacmanInputs {
+    files: Vec<PathBuf>,
+    directories: Vec<PathBuf>,
+}
+
+/// Follow pacman's actual Include graph instead of exposing /etc/pacman.d.
+fn pacman_inputs(path: &Path) -> Result<PacmanInputs> {
+    use alpm_db::conf::{Config, FsLoader, Loader};
+    use std::cell::RefCell;
+    #[derive(Default)]
+    struct TrackingLoader {
+        fs: FsLoader,
+        inputs: RefCell<PacmanInputs>,
+    }
+    impl Loader for TrackingLoader {
+        fn read(&self, path: &Path) -> std::io::Result<String> {
+            let text = self.fs.read(path)?;
+            self.inputs.borrow_mut().files.push(path.to_path_buf());
+            Ok(text)
+        }
+        fn expand(&self, pattern: &str) -> Vec<PathBuf> {
+            let paths = self.fs.expand(pattern);
+            let mut inputs = self.inputs.borrow_mut();
+            for path in &paths {
+                if let Some(parent) = path.parent() {
+                    inputs.directories.push(parent.to_path_buf());
+                }
+            }
+            paths
+        }
+    }
+    let loader = TrackingLoader::default();
+    Config::load_with(path, &loader)
+        .wrap_err("reading pacman's build-time configuration inputs")?;
+    let mut inputs = loader.inputs.into_inner();
+    inputs.files.sort();
+    inputs.files.dedup();
+    inputs.directories.sort();
+    inputs.directories.dedup();
+    Ok(inputs)
 }
 
 fn deny_inet_sockets() -> Result<()> {
@@ -173,6 +270,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn pacman_include_graph_excludes_unrelated_files_and_private_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("pacman.conf");
+        let includes = dir.path().join("pacman.d");
+        std::fs::create_dir_all(includes.join("gnupg")).unwrap();
+        let mirror = includes.join("mirrorlist");
+        std::fs::write(&mirror, "Server = https://example.invalid/$repo/$arch\n").unwrap();
+        let repo = includes.join("custom.conf");
+        std::fs::write(&repo, format!("[custom]\nInclude = {}\n", mirror.display())).unwrap();
+        std::fs::write(includes.join("gnupg/private.key"), "fake secret").unwrap();
+        std::fs::write(
+            &config,
+            format!(
+                "[options]\nArchitecture = x86_64\nInclude = {}/*.conf\n",
+                includes.display()
+            ),
+        )
+        .unwrap();
+        let inputs = pacman_inputs(&config).unwrap();
+        assert_eq!(inputs.files.len(), 3);
+        for expected in [&config, &repo, &mirror] {
+            assert!(inputs.files.contains(expected));
+        }
+        assert_eq!(inputs.directories, vec![includes]);
+    }
+
+    #[test]
     fn sensitive_names() {
         for name in [
             "GITHUB_TOKEN",
@@ -198,6 +322,7 @@ mod tests {
     #[test]
     fn spec_round_trips() {
         let spec = Spec {
+            readable: vec![],
             writable: vec![PathBuf::from("/tmp/x")],
             network: false,
             program: PathBuf::from("/usr/bin/makepkg"),
