@@ -9,6 +9,7 @@ use crate::host::{Host, HostPaths};
 
 mod audit;
 mod aur_cmd;
+mod cache;
 mod channel;
 mod converge;
 mod declare;
@@ -81,6 +82,7 @@ enum Commands {
     Apply(declare::Apply),
     Audit(audit::Audit),
     Aur(aur_cmd::Aur),
+    Cache(cache::Cache),
     Channel(channel::Channel),
     Doctor(doctor::Doctor),
     Drop(declare::Drop),

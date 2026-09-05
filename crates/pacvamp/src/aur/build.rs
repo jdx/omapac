@@ -19,6 +19,7 @@ use crate::manifest::Settings;
 /// How to build.
 #[derive(Debug, Clone)]
 pub struct BuildOpts {
+    pub cache_lease: std::sync::Arc<nix::fcntl::Flock<std::fs::File>>,
     /// Apply the Landlock and seccomp jail to the build phase.
     pub jail: bool,
     pub chroot: Option<PathBuf>,
@@ -43,6 +44,7 @@ impl BuildOpts {
         cache_dir: &Path,
         host: &Host,
     ) -> Result<BuildOpts> {
+        let cache_lease = std::sync::Arc::new(super::cache::lease(cache_dir, false)?);
         settings.aur_limits.validate()?;
         let chroot = super::chroot::root(settings);
         let image_host = chroot.as_deref().map(super::chroot::host).transpose()?;
@@ -61,6 +63,7 @@ impl BuildOpts {
             .tempdir_in(runs)?
             .keep();
         Ok(BuildOpts {
+            cache_lease,
             jail: settings.aur_jail,
             chroot,
             limits: settings.aur_limits.clone(),

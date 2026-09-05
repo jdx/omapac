@@ -62,3 +62,5 @@ mod locking;
 pub mod receipt;
 
 pub mod chroot;
+
+pub mod cache;

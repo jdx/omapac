@@ -999,3 +999,9 @@ existing jailed helper. Builds resolve required dependencies against the image a
 refuse missing dependencies without modifying the host; provisioning and updating
 the shared image is an explicit administrator operation. There is no silent fallback.
 The mandatory Arch CI job builds a real package through this backend.
+
+### Operational build lifecycle
+
+Build retention provides `cache status` and `cache prune`, with preview/JSON,
+age and size policies, active-build leases, recent-run grace, and protection for
+installed and pending ledger evidence. Cache roots belong to one system ledger.

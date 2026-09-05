@@ -1,0 +1,35 @@
+use pacvamp::aur::cache::{inventory, lease};
+use std::{
+    collections::BTreeSet,
+    fs,
+    time::{Duration, SystemTime},
+};
+#[test]
+fn retention_protects_active_recent_and_referenced_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join(".pacvamp-build/runs");
+    for name in ["old", "installed", "recent"] {
+        let run = root.join(name);
+        fs::create_dir_all(&run).unwrap();
+        fs::write(run.join("receipt.json"), b"receipt").unwrap();
+        if name != "recent" {
+            fs::File::open(&run)
+                .unwrap()
+                .set_modified(SystemTime::now() - Duration::from_secs(86400 * 40))
+                .unwrap();
+        }
+    }
+    let active = lease(dir.path(), false).unwrap();
+    assert!(lease(dir.path(), true).is_err());
+    drop(active);
+    let _prune = lease(dir.path(), true).unwrap();
+    let protected = BTreeSet::from([root.join("installed/receipt.json").canonicalize().unwrap()]);
+    let runs = inventory(dir.path(), &protected, 30, Some(0)).unwrap();
+    assert_eq!(
+        runs.iter()
+            .filter(|r| r.prune)
+            .map(|r| r.path.file_name().unwrap().to_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["old"]
+    );
+}
