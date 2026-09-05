@@ -39,6 +39,9 @@ jobs:
           sudo mkdir /sys/fs/cgroup/pacvamp-ci
           echo '+cpu +memory +pids' | sudo tee /sys/fs/cgroup/pacvamp-ci/cgroup.subtree_control
           sudo chown "$(id -u):$(id -g)" /sys/fs/cgroup/pacvamp-ci
+          # Migration requires write access at the common ancestor of the
+          # runner's service cgroup and this test subtree (ephemeral runner).
+          sudo chown "$(id -u):$(id -g)" /sys/fs/cgroup/cgroup.procs /sys/fs/cgroup/pacvamp-ci/cgroup.procs
       - parallel:
           - name: Test and check generated CLI docs
             run: |
