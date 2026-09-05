@@ -78,7 +78,7 @@ after=$(run "pacman -Q | wc -l")
 # The manifest round trip: add with a dry run declares without
 # converging, plan reports the gap, apply closes it.
 run "pacvamp add -n tree"
-run "pacvamp plan --detailed-exitcode; test \$? = 2"
+run 'pacvamp plan --detailed-exitcode; test $? = 2'
 expect 'tree' "pacvamp apply -y"
 run "pacman -Q tree" >/dev/null
 expect 'tree' "pacvamp status"
@@ -90,3 +90,33 @@ if run "pacman -Q tree" >/dev/null 2>&1; then
 	exit 1
 fi
 run "pacvamp audit --offline" >/dev/null 2>&1 || true
+
+# Exercise a real makepkg/fakeroot build, not only the shell fixtures used
+# by the Rust suite. Use a non-root account and synthetic private data.
+docker exec -i "$name" bash <<'JAIL'
+set -euo pipefail
+useradd -m pacvamp-builder
+mkdir -p /home/pacvamp-builder/build/{home,tmp,pkgs,src,logs,worktree}
+printf '%s\n' 'fake credential' >/home/pacvamp-builder/credentials
+cat >/home/pacvamp-builder/build/worktree/PKGBUILD <<'RECIPE'
+pkgname=pacvamp-jail-probe
+pkgver=1
+pkgrel=1
+arch=('any')
+if cat /home/pacvamp-builder/credentials; then exit 91; fi
+if echo poison >/tmp/pacvamp-jail-shared; then exit 92; fi
+package() {
+  install -Dm644 /etc/os-release "$pkgdir/usr/share/pacvamp-jail-probe/os-release"
+}
+RECIPE
+chown -R pacvamp-builder:pacvamp-builder /home/pacvamp-builder
+runuser -u pacvamp-builder -- env HOME=/home/pacvamp-builder/build/home \
+  TMPDIR=/home/pacvamp-builder/build/tmp PKGDEST=/home/pacvamp-builder/build/pkgs \
+  SRCDEST=/home/pacvamp-builder/build/src LOGDEST=/home/pacvamp-builder/build/logs \
+  BUILDDIR=/home/pacvamp-builder/build /usr/local/bin/pacvamp __jail <<'SPEC'
+{"writable":["/home/pacvamp-builder/build"],"readable":[],"network":false,"program":"/usr/bin/makepkg","args":["--noconfirm","--force","--holdver"],"cwd":"/home/pacvamp-builder/build/worktree"}
+SPEC
+test -f /home/pacvamp-builder/build/pkgs/pacvamp-jail-probe-1-1-any.pkg.tar.zst
+bsdtar -xOf /home/pacvamp-builder/build/pkgs/pacvamp-jail-probe-1-1-any.pkg.tar.zst .BUILDINFO | grep '^installed = pacman-' >/dev/null
+test ! -e /tmp/pacvamp-jail-shared
+JAIL

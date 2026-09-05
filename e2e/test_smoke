@@ -2,7 +2,9 @@
 # Every binary starts, reports its version, and renders help.
 set -euo pipefail
 for bin in pacvamp pacvamp-repo packslip; do
-	"$bin" version | grep -q "^$bin "
-	"$bin" --help | grep -q "Usage"
-	"$bin" __usage | grep -q "^name $bin"
+	# Consume all output: grep -q can close early and panic a Rust writer
+	# with BrokenPipe as command help grows.
+	"$bin" version | grep "^$bin " >/dev/null
+	"$bin" --help | grep "Usage" >/dev/null
+	"$bin" __usage | grep "^name $bin" >/dev/null
 done

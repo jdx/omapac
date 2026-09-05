@@ -138,6 +138,80 @@ fn build_requires_approval_unattended() {
 }
 
 #[test]
+fn approval_cannot_be_reused_for_a_different_commit() {
+    let s = setup();
+    no_jail(&s);
+    assert_eq!(run(&s, &["aur", "approve", "-y", "yay"], "").0, 0);
+    s.aur.commit(
+        "yay",
+        &[("PKGBUILD", &format!("{YAY_PKGBUILD}\n# changed\n"))],
+        "changed recipe",
+        "2026-01-02T00:00:00Z",
+    );
+    let target = s.aur.head("yay");
+    let (code, _, err) = run(&s, &["aur", "build", "--commit", &target, "yay"], "");
+    assert_ne!(code, 0);
+    assert!(err.contains("not approved"), "{err}");
+    assert!(s.rig.log().iter().all(|l| !l.starts_with("makepkg")));
+}
+
+#[test]
+fn a_recipe_cannot_return_an_unrelated_package_file() {
+    let s = setup();
+    no_jail(&s);
+    let unrelated = s.rig.dir.path().join("unrelated.pkg.tar.zst");
+    std::fs::write(&unrelated, "not this build").unwrap();
+    let script = format!(
+        "#!/bin/bash\nif [[ $* == *--packagelist* ]]; then echo '{}'; fi\n",
+        unrelated.display()
+    );
+    std::fs::write(s.rig.bin.join("makepkg"), script).unwrap();
+    assert_eq!(run(&s, &["aur", "approve", "-y", "yay"], "").0, 0);
+    let (code, _, err) = run(&s, &["install", "--aur", "-y", "yay"], "");
+    assert_ne!(code, 0);
+    assert!(err.contains("unexpected package output"), "{err}");
+    assert!(s.rig.log().iter().all(|l| !l.contains("-U")));
+}
+
+#[test]
+fn every_build_phase_confines_recipe_code() {
+    let s = setup();
+    let secret = s.rig.home.join("credentials");
+    std::fs::write(&secret, "fake credential").unwrap();
+    // Run recipe top-level code on every makepkg invocation, including the
+    // network-enabled source phase and the output-listing phase.
+    let script = "#!/bin/bash\nset -euo pipefail\nsource PKGBUILD\ncase \" $* \" in\n *' --verifysource '*) echo verified > \"$SRCDEST/input\";;\n *' --packagelist '*) echo \"$PKGDEST/yay.pkg.tar.zst\";;\n *) test \"$(cat \"$SRCDEST/input\")\" = verified; if echo poison > \"$SRCDEST/input\"; then exit 91; fi; echo package > \"$PKGDEST/yay.pkg.tar.zst\";;\nesac\n";
+    std::fs::write(s.rig.bin.join("makepkg"), script).unwrap();
+    let recipe = format!(
+        "{YAY_PKGBUILD}\nif cat '{}'; then exit 92; fi\nif cat /proc/$PPID/environ; then exit 93; fi\nif echo poisoned > '{}'; then exit 94; fi\ntest -z \"${{GITHUB_TOKEN:-}}\"\ntest \"$TMPDIR\" = \"$BUILDDIR/tmp\"\necho scratch > \"$TMPDIR/probe\"\necho phase >> \"$LOGDEST/phases\"\n",
+        secret.display(),
+        s.rig.dir.path().join("other-build").display()
+    );
+    s.aur.commit(
+        "yay",
+        &[("PKGBUILD", &recipe)],
+        "adversarial fixture",
+        "2026-01-02T00:00:00Z",
+    );
+    assert_eq!(run(&s, &["aur", "approve", "--force", "yay"], "").0, 0);
+    let (code, out, err) = run(&s, &["aur", "build", "yay"], "");
+    if code != 0 && err.contains("this kernel cannot enforce") {
+        assert!(std::env::var_os("PACVAMP_REQUIRE_JAIL").is_none(), "{err}");
+        eprintln!("skipping: {err}");
+        return;
+    }
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(!out.contains("fake credential"));
+    assert!(!s.rig.dir.path().join("other-build").exists());
+    let phases = s
+        .rig
+        .dir
+        .path()
+        .join("cache/pacvamp/aur/.pacvamp-build/logs/yay/phases");
+    assert_eq!(std::fs::read_to_string(phases).unwrap().lines().count(), 3);
+}
+
+#[test]
 fn install_without_yes_requires_a_terminal_confirmation() {
     let s = setup();
     no_jail(&s);
