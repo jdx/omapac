@@ -109,6 +109,9 @@ Scans the directory for the database and every package file, records each file's
     flag --build-key help="Accepted build key public files, repeatable" var=#true {
         arg <BUILD_KEY>
     }
+    flag --repack-key help="Repackager key public files (see `pacvamp-repo repack`), repeatable" var=#true {
+        arg <REPACK_KEY>
+    }
     flag --sequence help="Use this sequence instead of previous + 1" {
         arg <SEQUENCE>
     }
@@ -116,6 +119,33 @@ Scans the directory for the database and every package file, records each file's
     flag "-h --help" help="Print help" action=help builtin=#true
     complete dir type=dir
     complete key type=path
+}
+cmd repack help="Sign a packslip about a vendor's artifacts on the vendor's behalf" {
+    long_help #"""
+Sign a packslip about a vendor's artifacts on the vendor's behalf
+
+For a package whose vendor publishes no packslip. Reads the PKGBUILD's sources and checksums (from .SRCINFO, or `makepkg --printsrcinfo`), downloads every remote source, refuses any digest mismatch, and writes <pkgbase>.vendor.json holding a packslip signed with the repository's repackager key, marked attested_by repackager and listing the evidence declared in vendor.toml's [attest] table plus the PKGBUILD checksums themselves. Also writes vendor.lock. The key is a dedicated one: never the build key, whose meaning is "this host built this package file".
+"""#
+    flag "-p --pkgdir" help="The package directory holding PKGBUILD and vendor.toml" default=. {
+        arg <PKGDIR>
+    }
+    flag "-k --key" help="The repackager secret key (from `packslip keygen`)" required=#true {
+        arg <KEY>
+    }
+    flag --no-log help="Do not record the signature in Rekor"
+    flag --srcinfo help="A .SRCINFO to read instead of <pkgdir>/.SRCINFO or makepkg's output" {
+        arg <SRCINFO>
+    }
+    flag --cache help="Where downloaded sources go; defaults to <pkgdir>/.repack" {
+        arg <CACHE>
+    }
+    flag --allow-downgrade help="Accept a lower evidence level or a different signer than vendor.lock records"
+    flag "-J --json" help="Print the report as JSON"
+    flag "-h --help" help="Print help" action=help builtin=#true
+    complete pkgdir type=dir
+    complete key type=path
+    complete srcinfo type=path
+    complete cache type=dir
 }
 cmd sign help="Sign packages with the repository key after checking provenance" {
     long_help #"""

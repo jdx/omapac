@@ -22,6 +22,9 @@ pub struct Index {
     pub packages: BTreeMap<String, IndexPackage>,
     #[serde(default)]
     pub build_keys: Vec<String>,
+    /// Public keys the repository signs repackager packslips with.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub repack_keys: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,8 +49,16 @@ pub struct IndexPackage {
 pub struct Evidence {
     #[serde(default)]
     pub build_provenance: bool,
+    /// A packslip signed by the vendor itself.
     #[serde(default)]
     pub vendor_manifest: bool,
+    /// A packslip about the vendor's artifacts signed by the repository as
+    /// repackager, because the vendor publishes none.
+    #[serde(default)]
+    pub repackager_manifest: bool,
+    /// `vendor` or `repackager`, when a packslip sidecar is present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vendor_attested_by: Option<String>,
     #[serde(default)]
     pub verdicts: u32,
     #[serde(default)]
@@ -76,6 +87,9 @@ pub struct IndexCmd {
     /// Accepted build key public files, repeatable
     #[usage(long)]
     build_key: Vec<PathBuf>,
+    /// Repackager key public files (see `pacvamp-repo repack`), repeatable
+    #[usage(long)]
+    repack_key: Vec<PathBuf>,
     /// Use this sequence instead of previous + 1
     #[usage(long)]
     sequence: Option<u64>,
@@ -121,13 +135,24 @@ impl RunWith<()> for IndexCmd {
                 text,
             ));
         }
-        let index = build(
+        let mut index = build(
             &self.repo,
             &self.dir,
             previous.as_ref(),
             &build_keys,
             self.sequence,
         )?;
+        if !self.repack_key.is_empty() {
+            index.repack_keys = self
+                .repack_key
+                .iter()
+                .map(|path| {
+                    let text = std::fs::read_to_string(path)?;
+                    PublicKey::parse(&text)?;
+                    Ok(text)
+                })
+                .collect::<Result<_>>()?;
+        }
         let bytes = serde_json::to_vec_pretty(&index)?;
         if self.stdout {
             println!("{}", String::from_utf8_lossy(&bytes));
@@ -293,9 +318,28 @@ pub fn build(
                 Err(err) => eprintln!("warning: {filename}: provenance not accepted: {err:#}"),
             }
         }
-        evidence.vendor_manifest = sidecars
-            .iter()
-            .any(|s| s.ends_with(".vendor.json") || s.ends_with(".vendor.sigstore.json"));
+        // The vendor sidecar says who signed the packslip inside it. An
+        // unreadable sidecar claims nothing.
+        let vendor_sidecar = dir.join(format!("{filename}.vendor.json"));
+        if vendor_sidecar.is_file() {
+            match std::fs::read(&vendor_sidecar)
+                .map_err(eyre::Report::from)
+                .and_then(|bytes| {
+                    serde_json::from_slice::<crate::vendor::VendorSidecar>(&bytes)
+                        .map_err(eyre::Report::from)
+                }) {
+                Ok(sidecar) => {
+                    evidence.vendor_attested_by = Some(sidecar.attested_by.to_string());
+                    match sidecar.attested_by {
+                        packslip::model::Attestor::Vendor => evidence.vendor_manifest = true,
+                        packslip::model::Attestor::Repackager => {
+                            evidence.repackager_manifest = true
+                        }
+                    }
+                }
+                Err(err) => eprintln!("warning: {filename}: vendor sidecar not read: {err:#}"),
+            }
+        }
         let published_at = previous
             .and_then(|p| p.packages.get(&filename))
             .filter(|p| p.sha256 == sha256)
@@ -332,6 +376,7 @@ pub fn build(
         },
         packages,
         build_keys: build_keys.iter().map(|(_, text)| text.clone()).collect(),
+        repack_keys: previous.map(|p| p.repack_keys.clone()).unwrap_or_default(),
     })
 }
 

@@ -1,8 +1,8 @@
 //! `pacvamp-repo vendor`: the vendor pipeline. A vendor-built package is
 //! generated from the vendor's signed packslip, not from a checksum file
-//! fetched over TLS. See `docs/spec/vendor-pipeline.md`. The resolver is
-//! shared with the tool channel publisher.
+//! fetched over TLS. See `docs/spec/vendor-pipeline.md`.
 
+use packslip::verify::Verified;
 use std::collections::BTreeMap;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -12,34 +12,83 @@ use std::time::Duration;
 
 use eyre::{Context as _, Result, bail};
 use packslip::minisign::PublicKey;
-use packslip::model::{Level, Statement};
-use packslip::verify::Verified;
+use packslip::model::{
+    Attestor, Evidence, PREDICATE_TYPE, ReleaseRef, Scheme, Statement, repository,
+};
+use packslip::sigstore::Policy;
+use packslip::{Options, Trust};
 use serde::{Deserialize, Serialize};
 use usage_rs::RunWith;
 
-/// `vendor.toml` beside a PKGBUILD, or `tool.toml` for the tool channel.
+/// Where GitHub's API lives; tests point this at a local server.
+pub(crate) const GITHUB_API_ENV: &str = "PACVAMP_REPO_GITHUB_API";
+
+/// What a release asset must look like to be a packslip: the repository's
+/// own `packslip.sigstore.json`, or `packslip.<tool>.sigstore.json` for a
+/// tool in a monorepo. The file name is never trusted; the statement's
+/// `project` decides.
+fn is_bundle_name(name: &str) -> bool {
+    name.starts_with("packslip") && name.ends_with(".sigstore.json")
+}
+
+/// `vendor.toml` beside the PKGBUILD.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VendorToml {
     pub upstream: Upstream,
-    /// pacman architecture (or mise platform) → how to pick the artifact.
+    /// pacman architecture → how to pick the artifact.
     #[serde(default)]
     pub artifacts: BTreeMap<String, Selector>,
-    /// Tool channel settings; absent for a package.
+    /// For `pacvamp-repo repack`: what the repository checked about a
+    /// vendor that publishes no packslip.
+    #[serde(default)]
+    pub attest: Option<Attest>,
     #[serde(default)]
     pub tool: Option<ToolToml>,
+}
+
+/// The `[attest]` table: evidence the repository's bump hooks verified,
+/// recorded in the repackager-signed packslip.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Attest {
+    #[serde(default)]
+    pub evidence: Vec<Evidence>,
+    /// Accept `SKIP` checksums in the PKGBUILD. Off by default.
+    #[serde(default)]
+    pub allow_skip: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Upstream {
-    /// The project's package URL, which the packslip must name.
+    /// The project's name (`github.com/owner/repo`, `tool.example.com`),
+    /// which the packslip must name.
     pub project: String,
-    /// The signed release list (`.well-known/packslip/<project>.json`).
-    pub releases: String,
-    /// The pinned minisign public key: its base64 line, or a file path
-    /// relative to the package directory.
-    pub pubkey: String,
+    /// The signed release list (`.well-known/packslip/<path>.json`). A
+    /// github.com project needs none: its releases come from GitHub's API.
+    #[serde(default)]
+    pub releases: Option<String>,
+    /// The pinned public key: its base64 line, or a file path relative to
+    /// the package directory. For the sigstore-key scheme.
+    #[serde(default)]
+    pub pubkey: Option<String>,
+    /// The exact certificate identity a keyless signer must have.
+    #[serde(default)]
+    pub identity: Option<String>,
+    /// A prefix the certificate identity must start with.
+    #[serde(default)]
+    pub identity_prefix: Option<String>,
+    /// The OIDC issuer a keyless signer must have.
+    #[serde(default)]
+    pub issuer: Option<String>,
+    /// Accept bundles without a transparency log entry. A reviewed,
+    /// per-vendor decision; off by default.
+    #[serde(default)]
+    pub allow_unlogged: bool,
+    /// Consider prereleases. Off by default.
+    #[serde(default)]
+    pub prerelease: bool,
     /// Skip releases younger than this.
     #[serde(default)]
     pub min_release_age: Option<String>,
@@ -48,36 +97,73 @@ pub struct Upstream {
     pub provenance_floor: Option<Level>,
 }
 
+pub use pacvamp_policy::Level;
+
+/// What the package pinned: a key, or an identity policy. A github.com or
+/// gitlab.com project pins nothing explicitly; the name implies the policy.
+enum Pin {
+    Key(PublicKey),
+    Identity(Policy),
+}
+
+impl Pin {
+    fn resolve(pkgdir: &Path, upstream: &Upstream) -> Result<Pin> {
+        let explicit = Policy {
+            issuer: upstream.issuer.clone(),
+            identity: upstream.identity.clone(),
+            identity_prefix: upstream.identity_prefix.clone(),
+        };
+        match &upstream.pubkey {
+            Some(spec) => {
+                if !explicit.is_empty() {
+                    bail!("vendor.toml sets both pubkey and a sigstore identity; pick one");
+                }
+                Ok(Pin::Key(load_pubkey(pkgdir, spec)?))
+            }
+            None if !explicit.is_empty() => Ok(Pin::Identity(explicit)),
+            None => match Policy::for_project(&upstream.project) {
+                Some(policy) => Ok(Pin::Identity(policy)),
+                None => bail!(
+                    "vendor.toml needs a pubkey or an identity, identity_prefix, or issuer for {}; only github.com and gitlab.com projects imply one",
+                    upstream.project
+                ),
+            },
+        }
+    }
+
+    fn trust(&self) -> Trust<'_> {
+        match self {
+            Pin::Key(key) => Trust::Key(key),
+            Pin::Identity(policy) => Trust::Identity(policy),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Selector {
     pub os: Option<String>,
     pub arch: Option<String>,
     pub libc: Option<String>,
+    /// The artifact's variant, when the vendor ships several builds for
+    /// one platform (`fips`, `baseline`).
+    pub variant: Option<String>,
     /// Match the artifact name instead, with `{version}` substituted.
     pub name: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ToolToml {
-    /// The tool name mise sees.
-    pub name: String,
-}
-
-/// The release list a vendor advertises.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+/// The releases to choose from, however they were listed.
+#[derive(Debug, Clone, Default)]
 pub struct Releases {
-    pub project: String,
     pub releases: Vec<ReleaseRef>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ReleaseRef {
-    pub version: String,
-    pub published_at: String,
-    /// URL of the packslip document; its signature is at `<url>.minisig`.
-    pub packslip: String,
+    /// The digest each listed packslip must have, by URL, when the list
+    /// was signed; GitHub's listing carries none.
+    pub digests: BTreeMap<String, String>,
+    /// The signed list's sequence, for no-rollback.
+    pub sequence: Option<u64>,
+    /// Bundles already fetched while listing, by URL.
+    pub bundles: BTreeMap<String, String>,
+    pub latest: Option<String>,
 }
 
 /// `vendor.lock`: what was last generated, for no-downgrade.
@@ -86,20 +172,38 @@ pub struct VendorLock {
     pub version: String,
     pub level: Level,
     pub published_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scheme: Option<Scheme>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issuer: Option<String>,
+    /// The certificate identity, or the key id.
     pub key_id: String,
+    /// Whether the vendor or the repository (as repackager) made the
+    /// claim; absent in locks written before repackager attestation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attested_by: Option<Attestor>,
+    /// The last accepted release-list sequence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub list_sequence: Option<u64>,
     pub generated_at: String,
 }
 
-/// The sidecar a built package or mirrored artifact ships as
-/// `<file>.vendor.json`. `document` is the packslip's exact bytes as
-/// text, so the signature verifies on the consumer's side.
+/// The sidecar the built package ships as `<pkg>.vendor.json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VendorSidecar {
-    /// Exact UTF-8 bytes that the upstream signed.
-    pub document: String,
-    pub signature: String,
+    /// The packslip bundle, byte for byte: the vendor's, or the one the
+    /// repository signed as repackager.
+    pub bundle: String,
+    pub scheme: Scheme,
     pub level: Level,
     pub key_id: String,
+    #[serde(default, skip_serializing_if = "Attestor::is_vendor")]
+    pub attested_by: Attestor,
+    /// What the repackager checked, when it is one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence: Vec<Evidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logged_at: Option<String>,
     pub verified_at: String,
 }
 
@@ -108,10 +212,89 @@ pub struct Report {
     pub version: String,
     pub published_at: String,
     pub level: Level,
+    pub scheme: Scheme,
     pub key_id: String,
+    pub attested_by: Attestor,
+    /// The release list marked this release a security fix.
+    pub security: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logged_at: Option<String>,
     pub artifacts: BTreeMap<String, Chosen>,
     pub skipped: Vec<String>,
     pub written: bool,
+}
+
+/// The repository's level for a verified document: a vendor packslip is
+/// L2, L3 when every artifact links provenance; a repackager packslip is
+/// L1 when the repackager checked a signature the vendor made, else L0.
+pub(crate) fn level_for(
+    attested_by: Attestor,
+    evidence: &[Evidence],
+    provenance_linked: bool,
+) -> Level {
+    match attested_by {
+        Attestor::Vendor if provenance_linked => Level::L3,
+        Attestor::Vendor => Level::L2,
+        Attestor::Repackager if evidence.iter().any(|e| is_signature_evidence(&e.kind)) => {
+            Level::L1
+        }
+        Attestor::Repackager => Level::L0,
+    }
+}
+
+/// Evidence kinds that mean the vendor signed something the repackager
+/// verified, as opposed to a checksum fetched over TLS.
+pub(crate) fn is_signature_evidence(kind: &str) -> bool {
+    matches!(
+        kind,
+        "apt-release-gpg" | "vendor-signature" | "github-attestation"
+    )
+}
+
+/// The no-downgrade rules shared by `vendor` and `repack`: the level may
+/// not fall, and the signer may not change, unless a human allows it.
+/// Moving from a repackager document to the vendor's own is an upgrade
+/// and changes the signer by nature.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn check_no_downgrade(
+    previous: &VendorLock,
+    version: &str,
+    level: Level,
+    attested_by: Attestor,
+    key_id: &str,
+    scheme: Option<Scheme>,
+    issuer: Option<&str>,
+    allow_downgrade: bool,
+) -> Result<()> {
+    if allow_downgrade {
+        return Ok(());
+    }
+    let previous_attestor = previous.attested_by.unwrap_or_default();
+    if previous_attestor == Attestor::Vendor && attested_by == Attestor::Repackager {
+        bail!(
+            "release {version} is repackager-attested, but vendor.lock records the vendor's own packslip for {}; pass --allow-downgrade to accept",
+            previous.version
+        );
+    }
+    if level < previous.level {
+        bail!(
+            "release {version} has evidence level {level}, below the {} recorded for {}; pass --allow-downgrade to accept",
+            previous.level,
+            previous.version
+        );
+    }
+    let signer_changed = signer_stem(&previous.key_id, previous.issuer.as_deref())
+        != signer_stem(key_id, issuer)
+        || previous.scheme.is_some_and(|old| Some(old) != scheme)
+        || previous.issuer.as_deref() != issuer;
+    let upgraded = previous_attestor == Attestor::Repackager && attested_by == Attestor::Vendor;
+    if signer_changed && !upgraded {
+        bail!(
+            "packslip signed by {key_id}, vendor.lock recorded {}",
+            previous.key_id
+        );
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -122,11 +305,20 @@ pub struct Chosen {
     pub url: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolToml {
+    /// The tool name mise sees.
+    pub name: String,
+}
+
 /// A vendor release resolved and verified against the pinned identity.
 pub struct Resolved {
     pub chosen: ReleaseRef,
-    pub document: Vec<u8>,
-    pub signature: String,
+    pub bundle: String,
+    pub statement: Statement,
+    pub level: Level,
+    pub list_sequence: Option<u64>,
     pub verified: Verified,
     pub skipped: Vec<String>,
     /// One artifact per configured key.
@@ -187,8 +379,12 @@ impl RunWith<()> for Vendor {
         let report = Report {
             version: resolved.chosen.version.clone(),
             published_at: resolved.chosen.published_at.clone(),
-            level: resolved.verified.level,
+            level: resolved.level,
             key_id: resolved.verified.key_id.clone(),
+            scheme: resolved.verified.scheme,
+            attested_by: resolved.verified.attested_by,
+            security: resolved.chosen.security,
+            logged_at: resolved.verified.logged_at.clone(),
             artifacts: resolved.artifacts.clone(),
             skipped: resolved.skipped.clone(),
             written: self.write,
@@ -203,9 +399,13 @@ impl RunWith<()> for Vendor {
             let sidecar = sidecar(&resolved, now)?;
             let lock = VendorLock {
                 version: resolved.chosen.version.clone(),
-                level: resolved.verified.level,
+                level: resolved.level,
                 published_at: resolved.chosen.published_at.clone(),
                 key_id: resolved.verified.key_id.clone(),
+                scheme: Some(resolved.verified.scheme),
+                issuer: resolved.verified.issuer.clone(),
+                attested_by: Some(resolved.verified.attested_by),
+                list_sequence: resolved.list_sequence,
                 generated_at: now.to_string(),
             };
             // Commit the protective lock first and PKGBUILD last. A crash or
@@ -219,7 +419,7 @@ impl RunWith<()> for Vendor {
             println!("{}", serde_json::to_string_pretty(&report)?);
         } else {
             println!(
-                "{} {} (published {}, evidence {}, key {})",
+                "{} {} (published {}, evidence {}, {} {})",
                 if self.write {
                     "generated"
                 } else {
@@ -228,6 +428,10 @@ impl RunWith<()> for Vendor {
                 report.version,
                 report.published_at,
                 report.level,
+                match report.scheme {
+                    Scheme::SigstoreKey => "key",
+                    Scheme::SigstoreOidc => "identity",
+                },
                 report.key_id
             );
             for (arch, chosen) in &report.artifacts {
@@ -251,10 +455,12 @@ pub fn load_config(path: &Path) -> Result<VendorToml> {
 /// The sidecar for a resolved release.
 pub fn sidecar(resolved: &Resolved, now: jiff::Timestamp) -> Result<VendorSidecar> {
     Ok(VendorSidecar {
-        document: String::from_utf8(resolved.document.clone())
-            .wrap_err("signed packslip document is not UTF-8")?,
-        signature: resolved.signature.clone(),
-        level: resolved.verified.level,
+        bundle: resolved.bundle.clone(),
+        scheme: resolved.verified.scheme,
+        attested_by: resolved.verified.attested_by,
+        evidence: resolved.statement.predicate.evidence.clone(),
+        logged_at: resolved.verified.logged_at.clone(),
+        level: resolved.level,
         key_id: resolved.verified.key_id.clone(),
         verified_at: now.to_string(),
     })
@@ -271,34 +477,62 @@ pub fn resolve(
     previous: Option<&VendorLock>,
     allow_downgrade: bool,
 ) -> Result<Resolved> {
-    let pubkey = load_pubkey(dir, &config.upstream.pubkey)?;
+    let pin = Pin::resolve(dir, &config.upstream)?;
     let min_age = match &config.upstream.min_release_age {
         Some(age) => parse_age(age)?,
         None => Duration::ZERO,
     };
     let floor = config.upstream.provenance_floor.unwrap_or(Level::L2);
+    let trusted_root = packslip::sigstore::trusted_root(None)?;
+    let options = Options {
+        require_log: !config.upstream.allow_unlogged,
+        trusted_root: &trusted_root,
+    };
 
-    let list_bytes = fetch(&config.upstream.releases)?;
-    let list_sig = fetch_text(&format!("{}.minisig", config.upstream.releases))?;
-    let sig = packslip::minisign::Sig::parse(&list_sig)?;
-    pubkey
-        .verify(&list_bytes, &sig)
-        .wrap_err("release list signature")?;
-    let releases: Releases =
-        serde_json::from_slice(&list_bytes).wrap_err("parsing the release list")?;
-    if releases.project != config.upstream.project {
-        bail!(
-            "release list is for {}, vendor.toml says {}",
-            releases.project,
-            config.upstream.project
-        );
+    // The releases: the vendor's signed list, or, for a github.com
+    // project without one, what GitHub's API lists.
+    let releases = match &config.upstream.releases {
+        Some(url) => {
+            let list = fetch_release_list(url, &pin, options, &config.upstream.project, now)?;
+            if let Some(last) = previous.as_ref().and_then(|p| p.list_sequence)
+                && list.sequence.is_some_and(|s| s < last)
+                && !allow_downgrade
+            {
+                bail!(
+                    "release list sequence {} is below the {last} recorded in vendor.lock; pass --allow-downgrade to accept",
+                    list.sequence.unwrap_or_default()
+                );
+            }
+            list
+        }
+        None => github_releases(&config.upstream.project, config.upstream.prerelease)?,
+    };
+    let (chosen, skipped) = choose(
+        &releases,
+        requested,
+        now,
+        min_age,
+        config.upstream.prerelease,
+    )?;
+
+    // The packslip: one bundle, pinned by digest when the list was signed.
+    let bundle = match releases.bundles.get(&chosen.packslip) {
+        Some(text) => text.clone(),
+        None => fetch_text(&chosen.packslip)?,
+    };
+    if let Some(expected) = releases.digests.get(&chosen.packslip) {
+        let actual = sha256_hex(bundle.as_bytes());
+        if actual != *expected {
+            bail!(
+                "{} has sha256 {actual}, the release list says {expected}",
+                chosen.packslip
+            );
+        }
     }
-    let (chosen, skipped) = choose(&releases, requested, now, min_age)?;
-
-    let document = fetch(&chosen.packslip)?;
-    let signature = fetch_text(&format!("{}.minisig", chosen.packslip))?;
-    let verified = packslip::verify::verify(&document, &signature, &pubkey, &[])?;
-    let statement: Statement = serde_json::from_slice(&document)?;
+    let verified = packslip::verify(&bundle, &pin.trust(), options, &[])
+        .wrap_err_with(|| format!("verifying the packslip against {}", pin.trust().describe()))?;
+    let statement: Statement =
+        serde_json::from_slice(&packslip::sigstore::peek_statement(&bundle)?)?;
     if verified.project != config.upstream.project {
         bail!(
             "packslip is for {}, vendor.toml says {}",
@@ -313,42 +547,47 @@ pub fn resolve(
             chosen.version
         );
     }
-    if verified.level < floor {
+    // An unsigned listing only located the document; the signed
+    // document is the authority on what it is.
+    let version = verified.version.clone();
+    let published_at = verified.published_at.clone();
+    if verified.prerelease && !config.upstream.prerelease {
         bail!(
-            "release {} has evidence level {}, below the floor {floor}",
-            chosen.version,
-            verified.level
+            "release {version} is a prerelease; set `prerelease = true` in vendor.toml to accept prereleases"
         );
     }
-    if let Some(previous) = previous {
-        if verified.level < previous.level && !allow_downgrade {
-            bail!(
-                "release {} has evidence level {}, below the {} recorded for {}; pass --allow-downgrade to accept",
-                chosen.version,
-                verified.level,
-                previous.level,
-                previous.version
-            );
-        }
-        if previous.key_id != verified.key_id && !allow_downgrade {
-            bail!(
-                "packslip signed by {}, vendor.lock recorded {}",
-                verified.key_id,
-                previous.key_id
-            );
-        }
+    let level = level_for(
+        verified.attested_by,
+        &statement.predicate.evidence,
+        verified.provenance_linked,
+    );
+    if level < floor {
+        bail!("release {version} has evidence level {level}, below the floor {floor}");
+    }
+    if let Some(previous) = &previous {
+        check_no_downgrade(
+            previous,
+            &version,
+            level,
+            verified.attested_by,
+            &verified.key_id,
+            Some(verified.scheme),
+            verified.issuer.as_deref(),
+            allow_downgrade,
+        )?;
     }
 
+    // Artifacts per architecture.
     let mut artifacts = BTreeMap::new();
-    for (key, selector) in &config.artifacts {
-        let artifact = select(&statement, selector, &chosen.version)
-            .wrap_err_with(|| format!("selecting artifact for {key}"))?;
+    for (arch, selector) in &config.artifacts {
+        let artifact = select(&statement, selector, &version)
+            .wrap_err_with(|| format!("selecting artifact for {arch}"))?;
         let sha256 = statement
             .digest_of(&artifact.name)
-            .unwrap_or_default()
+            .ok_or_else(|| eyre::eyre!("artifact {} is missing its sha256 digest", artifact.name))?
             .to_string();
         artifacts.insert(
-            key.clone(),
+            arch.clone(),
             Chosen {
                 name: artifact.name.clone(),
                 sha256,
@@ -357,14 +596,162 @@ pub fn resolve(
             },
         );
     }
+
+    // GitHub timestamps are unsigned; enforce age on the verified timestamp too.
+    let published = jiff::Timestamp::from_str(&published_at)?;
+    if now.duration_since(published).as_secs() < min_age.as_secs() as i64 {
+        bail!("release {version} is younger than min_release_age");
+    }
+    let mut chosen = chosen;
+    chosen.published_at = published_at;
     Ok(Resolved {
         chosen,
-        document,
-        signature,
+        bundle,
         verified,
+        statement,
+        level,
+        list_sequence: releases.sequence.or(previous.and_then(|p| p.list_sequence)),
         skipped,
         artifacts,
     })
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::Digest as _;
+    format!("{:x}", sha2::Sha256::digest(bytes))
+}
+
+/// Fetch a vendor's release list and verify it: the bundle against the
+/// pin, then its expiry.
+fn fetch_release_list(
+    url: &str,
+    pin: &Pin,
+    options: Options<'_>,
+    project: &str,
+    now: jiff::Timestamp,
+) -> Result<Releases> {
+    let bundle = fetch_text(url)?;
+    let verified =
+        packslip::verify_release_list(&bundle, &pin.trust(), options).wrap_err_with(|| {
+            format!(
+                "verifying the release list against {}",
+                pin.trust().describe()
+            )
+        })?;
+    let list = verified.list;
+    if list.predicate.project != project {
+        bail!(
+            "release list is for {}, vendor.toml says {}",
+            list.predicate.project,
+            project
+        );
+    }
+    if !list.is_current(now) {
+        bail!(
+            "release list expired at {}; the vendor has not republished it",
+            list.predicate.expires_at
+        );
+    }
+    let digests = list
+        .subject
+        .iter()
+        .map(|s| (s.name.clone(), s.digest.sha256.clone()))
+        .collect();
+    Ok(Releases {
+        releases: list.predicate.releases.clone(),
+        digests,
+        sequence: Some(list.predicate.sequence),
+        bundles: BTreeMap::new(),
+        latest: list.predicate.latest.clone(),
+    })
+}
+
+/// The releases GitHub lists for a `github.com/owner/repo[/tool]` project
+/// that carry a packslip for it. Unsigned: it locates documents, and the
+/// verified document is the authority on version and publish time. A
+/// release may carry several `packslip*.sigstore.json` assets (one per
+/// tool of a monorepo); each is read and kept only when its statement
+/// names this project. Drafts, and prereleases unless wanted, are skipped
+/// before anything is fetched.
+fn github_releases(project: &str, prereleases: bool) -> Result<Releases> {
+    let Some(("github.com", owner, repo)) = repository(project) else {
+        bail!(
+            "{project} needs a release list: set `releases` in vendor.toml to its signed list; only a github.com/owner/repo project is listed by its releases endpoint"
+        );
+    };
+    let api = std::env::var(GITHUB_API_ENV).unwrap_or_else(|_| "https://api.github.com".into());
+    let url = format!(
+        "{}/repos/{owner}/{repo}/releases?per_page=50",
+        api.trim_end_matches('/')
+    );
+    let entries: Vec<serde_json::Value> =
+        serde_json::from_slice(&fetch(&url)?).wrap_err("parsing GitHub's release list")?;
+    let mut releases = Releases::default();
+    for entry in entries {
+        let flag = |name: &str| entry[name].as_bool().unwrap_or(false);
+        if flag("draft") || (flag("prerelease") && !prereleases) {
+            continue;
+        }
+        let candidates = entry["assets"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|a| a["name"].as_str().is_some_and(is_bundle_name))
+            .filter_map(|a| a["browser_download_url"].as_str());
+        let mut found = None;
+        for candidate in candidates {
+            let text = fetch_text(candidate)?;
+            let Ok(payload) = packslip::sigstore::peek_statement(&text) else {
+                continue;
+            };
+            let Ok(statement) = serde_json::from_slice::<Statement>(&payload) else {
+                continue;
+            };
+            if statement.predicate_type == PREDICATE_TYPE && statement.predicate.project == project
+            {
+                found = Some((candidate.to_string(), text, statement));
+                break;
+            }
+        }
+        let Some((asset, text, _statement)) = found else {
+            continue;
+        };
+        let tag = entry["tag_name"].as_str().unwrap_or_default();
+        releases.releases.push(ReleaseRef {
+            version: match packslip::tag_version(tag, project) {
+                Some(v) => v,
+                None => continue,
+            },
+            tag: Some(tag.to_string()),
+            published_at: entry["published_at"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
+            packslip: asset.clone(),
+            ..ReleaseRef::default()
+        });
+        releases.bundles.insert(asset, text);
+    }
+    if releases.releases.is_empty() {
+        bail!("{project} has no release with a packslip for it");
+    }
+    Ok(releases)
+}
+
+/// The stable part of a signer id: a key id as is, a certificate identity
+/// without its `@ref`, so every tag of one workflow is the same signer.
+fn signer_stem<'a>(key_id: &'a str, issuer: Option<&str>) -> &'a str {
+    if issuer == Some("https://token.actions.githubusercontent.com")
+        && key_id.starts_with("https://github.com/")
+        && key_id.contains("/.github/workflows/")
+    {
+        key_id
+            .rsplit_once('@')
+            .map(|(workflow, _)| workflow)
+            .unwrap_or(key_id)
+    } else {
+        key_id
+    }
 }
 
 pub fn now() -> Result<jiff::Timestamp> {
@@ -445,75 +832,99 @@ fn fetch_text(url: &str) -> Result<String> {
     String::from_utf8(fetch(url)?).wrap_err_with(|| format!("{url} is not UTF-8"))
 }
 
-/// Pick the release: the requested version, or the newest by publish time
-/// that is at least `min_age` old. Returns what was skipped and why.
+/// Pick the highest eligible semver, honoring the signed recommendation for defaults.
 pub fn choose(
     releases: &Releases,
     requested: Option<&str>,
     now: jiff::Timestamp,
     min_age: Duration,
+    prereleases: bool,
 ) -> Result<(ReleaseRef, Vec<String>)> {
-    if let Some(version) = requested {
-        return releases
-            .releases
-            .iter()
-            .find(|r| r.version == version)
-            .cloned()
-            .map(|r| (r, Vec::new()))
-            .ok_or_else(|| eyre::eyre!("release {version} is not in the release list"));
+    let mut ranked = releases
+        .releases
+        .iter()
+        .map(|r| Ok((packslip::model::parse_version(&r.version)?, r)))
+        .collect::<Result<Vec<_>>>()?;
+    ranked.sort_by(|a, b| b.0.cmp_precedence(&a.0));
+    if requested.is_none()
+        && let Some(latest) = &releases.latest
+        && let Some(i) = ranked.iter().position(|(_, r)| &r.version == latest)
+    {
+        let recommended = ranked.remove(i);
+        ranked.insert(0, recommended);
     }
-    let mut dated: Vec<(jiff::Timestamp, &ReleaseRef)> = Vec::new();
-    for r in &releases.releases {
-        let at = jiff::Timestamp::from_str(&r.published_at)
-            .wrap_err_with(|| format!("release {}: published_at", r.version))?;
-        dated.push((at, r));
-    }
-    dated.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
     let mut skipped = Vec::new();
-    for (at, r) in dated {
-        let age = now.since(at).map(|s| s.get_seconds()).unwrap_or(0);
-        if age < 0 || Duration::from_secs(age.unsigned_abs()) < min_age {
-            skipped.push(format!(
-                "{} (published {}, younger than the minimum release age)",
-                r.version, r.published_at
-            ));
+    for (version, release) in ranked {
+        if let Some(want) = requested {
+            let want = want.strip_prefix('v').unwrap_or(want);
+            if release.version != want
+                && release.tag.as_deref() != requested
+                && !release
+                    .version
+                    .strip_prefix(want)
+                    .is_some_and(|rest| rest.starts_with('.'))
+            {
+                continue;
+            }
+        }
+        let at = jiff::Timestamp::from_str(&release.published_at)?;
+        let age = now.duration_since(at);
+        let reason = if release.is_yanked() {
+            Some("yanked")
+        } else if !prereleases && !version.pre.is_empty() {
+            Some("prerelease")
+        } else if age.is_negative() || age.as_secs() < min_age.as_secs() as i64 {
+            Some("younger than the minimum release age")
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            skipped.push(format!("{} ({reason})", release.version));
             continue;
         }
-        return Ok((r.clone(), skipped));
+        return Ok((release.clone(), skipped));
     }
-    bail!("no release is old enough; skipped: {}", skipped.join(", "))
+    bail!(
+        "no eligible release for {}: {}",
+        requested.unwrap_or("latest"),
+        skipped.join(", ")
+    )
 }
 
 fn select<'a>(
     statement: &'a Statement,
     selector: &Selector,
     version: &str,
-) -> Result<&'a packslip::model::Artifact> {
-    let matches: Vec<_> = statement
-        .predicate
-        .artifacts
-        .iter()
-        .filter(|a| {
-            if let Some(name) = &selector.name {
-                return a.name == name.replace("{version}", version);
-            }
-            let want = |sel: &Option<String>, have: &Option<String>| match sel {
-                Some(s) => have.as_deref() == Some(s.as_str()),
-                None => true,
-            };
-            want(&selector.os, &a.os)
-                && want(&selector.arch, &a.arch)
-                && want(&selector.libc, &a.libc)
-        })
-        .collect();
-    match matches.as_slice() {
-        [artifact] => Ok(*artifact),
-        [] => bail!("no artifact in release {version} matches the selector"),
-        _ => bail!(
-            "{} artifacts in release {version} match the selector; add an exact name or format-specific selector",
-            matches.len()
-        ),
+) -> Result<&'a packslip::Artifact> {
+    if let Some(name) = &selector.name {
+        let name = name.replace("{version}", version);
+        return statement
+            .predicate
+            .artifacts
+            .iter()
+            .find(|a| a.name == name)
+            .ok_or_else(|| eyre::eyre!("no artifact in release {version} matches {name}"));
     }
+    let host = packslip::Host {
+        os: selector.os.as_deref().unwrap_or("linux"),
+        arch: selector
+            .arch
+            .as_deref()
+            .ok_or_else(|| eyre::eyre!("artifact selector needs arch or name"))?,
+        libc: selector
+            .libc
+            .as_deref()
+            .or_else(|| (selector.os.as_deref().unwrap_or("linux") == "linux").then_some("gnu")),
+    };
+    Ok(packslip::select_artifact(
+        &statement.predicate.artifacts,
+        &host,
+        selector.variant.as_deref(),
+        &[
+            "tar.zst", "tar.xz", "tar.gz", "tar.bz2", "tar", "zip", "raw", "gz", "xz", "zst",
+            "bz2", "deb", "rpm", "appimage",
+        ],
+    )?)
 }
 
 pub fn read_lock(path: &Path) -> Result<Option<VendorLock>> {
@@ -524,7 +935,7 @@ pub fn read_lock(path: &Path) -> Result<Option<VendorLock>> {
     }
 }
 
-fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
     let parent = path
         .parent()
@@ -557,7 +968,7 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn pkgbase_of(pkgbuild: &str) -> Option<String> {
+pub(crate) fn pkgbase_of(pkgbuild: &str) -> Option<String> {
     let value = |key: &str| {
         assignment_first_value(pkgbuild, key).filter(|name| {
             name.bytes()
@@ -729,6 +1140,10 @@ mod tests {
             published_at: "2026-09-01T00:00:00Z".into(),
             level: Level::L2,
             key_id: "k".into(),
+            scheme: Scheme::SigstoreKey,
+            attested_by: Attestor::Vendor,
+            security: false,
+            logged_at: None,
             artifacts: artifacts
                 .iter()
                 .map(|(arch, sha)| {
@@ -822,35 +1237,40 @@ mod tests {
     #[test]
     fn chooses_the_newest_old_enough_release() {
         let releases = Releases {
-            project: "pkg:github/x/y".into(),
             releases: vec![
                 ReleaseRef {
-                    version: "1".into(),
+                    version: "1.0.0".into(),
                     published_at: "2026-08-01T00:00:00Z".into(),
                     packslip: "a".into(),
+                    ..ReleaseRef::default()
                 },
                 ReleaseRef {
-                    version: "3".into(),
+                    version: "3.0.0".into(),
                     published_at: "2026-09-02T23:00:00Z".into(),
                     packslip: "c".into(),
+                    ..ReleaseRef::default()
                 },
                 ReleaseRef {
-                    version: "2".into(),
+                    version: "2.0.0".into(),
                     published_at: "2026-08-20T00:00:00Z".into(),
                     packslip: "b".into(),
+                    ..ReleaseRef::default()
                 },
             ],
+            ..Releases::default()
         };
         let now = jiff::Timestamp::from_str("2026-09-03T00:00:00Z").unwrap();
-        let (chosen, skipped) = choose(&releases, None, now, parse_age("24h").unwrap()).unwrap();
-        assert_eq!(chosen.version, "2");
+        let (chosen, skipped) =
+            choose(&releases, None, now, parse_age("24h").unwrap(), false).unwrap();
+        assert_eq!(chosen.version, "2.0.0");
         assert_eq!(skipped.len(), 1);
-        let (chosen, _) = choose(&releases, None, now, Duration::ZERO).unwrap();
-        assert_eq!(chosen.version, "3");
-        let (chosen, _) = choose(&releases, Some("1"), now, parse_age("7d").unwrap()).unwrap();
-        assert_eq!(chosen.version, "1");
-        assert!(choose(&releases, Some("9"), now, Duration::ZERO).is_err());
-        assert!(choose(&releases, None, now, parse_age("1w").unwrap() * 10).is_err());
+        let (chosen, _) = choose(&releases, None, now, Duration::ZERO, false).unwrap();
+        assert_eq!(chosen.version, "3.0.0");
+        let (chosen, _) =
+            choose(&releases, Some("1"), now, parse_age("7d").unwrap(), false).unwrap();
+        assert_eq!(chosen.version, "1.0.0");
+        assert!(choose(&releases, Some("9"), now, Duration::ZERO, false).is_err());
+        assert!(choose(&releases, None, now, parse_age("1w").unwrap() * 10, false).is_err());
     }
 
     #[test]
@@ -861,28 +1281,86 @@ mod tests {
     }
 
     #[test]
-    fn sidecars_reject_non_utf8_signed_documents() {
-        let resolved = Resolved {
-            chosen: ReleaseRef {
-                version: "1".into(),
-                published_at: "2026-09-01T00:00:00Z".into(),
-                packslip: "https://example.test/packslip.json".into(),
-            },
-            document: vec![0xff],
-            signature: "signature".into(),
-            verified: Verified {
-                project: "pkg:generic/tool".into(),
-                version: "1".into(),
-                published_at: "2026-09-01T00:00:00Z".into(),
-                key_id: "key".into(),
-                level: Level::L2,
-                checked_artifacts: Vec::new(),
-                artifact_count: 0,
-            },
-            skipped: Vec::new(),
-            artifacts: BTreeMap::new(),
-        };
+    fn prefix_selection_filters_yanked_prerelease_and_young_versions() {
         let now = jiff::Timestamp::from_str("2026-09-03T00:00:00Z").unwrap();
-        assert!(sidecar(&resolved, now).is_err());
+        let mut releases = Releases::default();
+        for version in ["20.4.0", "20.3.0-rc.1", "20.2.0", "20.1.0", "19.9.0"] {
+            releases.releases.push(ReleaseRef {
+                version: version.into(),
+                published_at: "2026-08-01T00:00:00Z".into(),
+                ..ReleaseRef::default()
+            });
+        }
+        releases.releases[0].status = Some(packslip::model::ReleaseStatus::Yanked);
+        releases.releases[2].published_at = now.to_string();
+        let (chosen, skipped) =
+            choose(&releases, Some("20"), now, parse_age("24h").unwrap(), false).unwrap();
+        assert_eq!(chosen.version, "20.1.0");
+        assert_eq!(skipped.len(), 3);
+        assert!(choose(&releases, Some("20.4.0"), now, Duration::ZERO, true).is_err());
+        releases.latest = Some("19.9.0".into());
+        assert_eq!(
+            choose(&releases, None, now, Duration::ZERO, false)
+                .unwrap()
+                .0
+                .version,
+            "19.9.0"
+        );
+        // A signed recommendation never bypasses eligibility.
+        releases.latest = Some("20.4.0".into());
+        assert_eq!(
+            choose(&releases, None, now, parse_age("24h").unwrap(), false)
+                .unwrap()
+                .0
+                .version,
+            "20.1.0"
+        );
+    }
+
+    #[test]
+    fn no_downgrade_preserves_email_domain_and_oidc_issuer() {
+        let previous = VendorLock {
+            version: "1.0.0".into(),
+            level: Level::L2,
+            published_at: String::new(),
+            scheme: Some(Scheme::SigstoreOidc),
+            issuer: Some("https://issuer.example".into()),
+            key_id: "user@example.com".into(),
+            attested_by: Some(Attestor::Vendor),
+            list_sequence: None,
+            generated_at: String::new(),
+        };
+        let check = |key, issuer| {
+            check_no_downgrade(
+                &previous,
+                "1.1.0",
+                Level::L2,
+                Attestor::Vendor,
+                key,
+                Some(Scheme::SigstoreOidc),
+                Some(issuer),
+                false,
+            )
+        };
+        assert!(check("user@example.com", "https://issuer.example").is_ok());
+        assert!(check("user@other.example", "https://issuer.example").is_err());
+        assert!(check("user@example.com", "https://other-issuer.example").is_err());
+        let issuer = Some("https://token.actions.githubusercontent.com");
+        assert_eq!(
+            signer_stem(
+                "https://github.com/a/b/.github/workflows/release.yml@refs/tags/v1",
+                issuer
+            ),
+            signer_stem(
+                "https://github.com/a/b/.github/workflows/release.yml@refs/tags/v2",
+                issuer
+            ),
+        );
+    }
+
+    #[test]
+    fn non_github_projects_require_a_signed_list() {
+        let err = github_releases("gitlab.com/example/tool", false).unwrap_err();
+        assert!(err.to_string().contains("only a github.com"), "{err}");
     }
 }

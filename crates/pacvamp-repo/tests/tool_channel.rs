@@ -16,47 +16,31 @@ fn vendor(dir: &Path, key: &SecretKey, versions: &[(&str, &str)]) -> String {
     let base = format!("http://{}", listener.local_addr().unwrap());
     drop(listener);
     let mut routes = Vec::new();
-    let mut list = Vec::new();
+    let signer = || packslip::Signer::Key {
+        key: key.clone(),
+        log: false,
+    };
+    let mut bundles = Vec::new();
+    let mut urls = Vec::new();
     for (version, published_at) in versions {
         let x64 = dir.join(format!("tool-{version}-linux-x64.tar.gz"));
         let arm = dir.join(format!("tool-{version}-linux-arm64.tar.gz"));
         std::fs::write(&x64, format!("x64 {version}")).unwrap();
         std::fs::write(&arm, format!("arm {version}")).unwrap();
         let created = packslip::create::create(&Request {
-            project: "pkg:github/example/tool",
-            version,
             published_at: Some(published_at),
-            source: None,
-            artifacts: vec![
-                ArtifactInput {
-                    path: &x64,
-                    os: None,
-                    arch: None,
-                    libc: None,
-                    provenance: vec![],
-                },
-                ArtifactInput {
-                    path: &arm,
-                    os: None,
-                    arch: None,
-                    libc: None,
-                    provenance: vec![],
-                },
-            ],
+            artifacts: vec![ArtifactInput::new(&x64), ArtifactInput::new(&arm)],
             url_base: Some(&format!("{base}/dl/")),
-            sbom: None,
-            supersedes: None,
-            key,
+            read_executables: false,
+            ..Request::new("github.com/example/tool", version, signer().identity())
         })
         .unwrap();
-        routes.push((
-            format!("/releases/{version}/packslip.json"),
-            String::from_utf8(created.document).unwrap(),
-        ));
-        routes.push((
-            format!("/releases/{version}/packslip.json.minisig"),
-            created.signature,
-        ));
+        let bundle = packslip::sigstore::sign(signer(), &created.document).unwrap();
+        let path = dir.join(format!("{version}.sigstore.json"));
+        std::fs::write(&path, &bundle).unwrap();
+        bundles.push(path);
+        urls.push(format!("{base}/releases/{version}/packslip.json"));
+        routes.push((format!("/releases/{version}/packslip.json"), bundle));
         routes.push((
             format!("/dl/tool-{version}-linux-x64.tar.gz"),
             format!("x64 {version}"),
@@ -65,14 +49,28 @@ fn vendor(dir: &Path, key: &SecretKey, versions: &[(&str, &str)]) -> String {
             format!("/dl/tool-{version}-linux-arm64.tar.gz"),
             format!("arm {version}"),
         ));
-        list.push(serde_json::json!({"version": version, "published_at": published_at, "packslip": format!("{base}/releases/{version}/packslip.json")}));
     }
-    let list_text =
-        serde_json::json!({"project": "pkg:github/example/tool", "releases": list}).to_string();
-    routes.push((
-        "/.well-known/packslip/tool.json.minisig".into(),
-        key.sign(list_text.as_bytes(), "releases").to_file(),
-    ));
+    let list = packslip::create::create_release_list(&packslip::create::ListRequest {
+        project: "github.com/example/tool",
+        generated_at: Some("2026-09-02T22:00:00Z"),
+        valid_for: std::time::Duration::from_secs(365 * 86400),
+        sequence: 1,
+        latest: None,
+        releases: bundles
+            .iter()
+            .zip(&urls)
+            .map(|(path, url)| packslip::create::ListedRelease {
+                url,
+                bundle_path: path,
+                yanked: None,
+                security: false,
+                evidence: vec![],
+            })
+            .collect(),
+        identity: signer().identity(),
+    })
+    .unwrap();
+    let list_text = packslip::sigstore::sign(signer(), &list.document).unwrap();
     routes.push(("/.well-known/packslip/tool.json".into(), list_text));
     common::http::serve_at(&base, routes)
 }
@@ -84,7 +82,7 @@ fn write_config(rig: &Rig, base: &str, vendor_key: &SecretKey, extra: &str) {
     std::fs::write(
         dir.join("tool.toml"),
         format!(
-            "[tool]\nname = \"tool\"\n[upstream]\nproject = \"pkg:github/example/tool\"\nreleases = \"{base}/.well-known/packslip/tool.json\"\npubkey = \"vendor.pub\"\n{extra}\n[artifacts]\nlinux-x64 = {{ os = \"linux\", arch = \"x86_64\" }}\nlinux-arm64 = {{ os = \"linux\", arch = \"aarch64\" }}\n"
+            "[tool]\nname = \"tool\"\n[upstream]\nproject = \"github.com/example/tool\"\nreleases = \"{base}/.well-known/packslip/tool.json\"\npubkey = \"vendor.pub\"\nallow_unlogged = true\n{extra}\n[artifacts]\nlinux-x64 = {{ os = \"linux\", arch = \"x86_64\" }}\nlinux-arm64 = {{ os = \"linux\", arch = \"aarch64\" }}\n"
         ),
     )
     .unwrap();
@@ -144,7 +142,7 @@ fn publish_promote_hold_and_immutability() {
     assert!(out.contains("(sequence 1)"), "{out}");
     let idx = index(&rig);
     let entry = &idx.tools["tool"];
-    assert_eq!(entry.project, "pkg:github/example/tool");
+    assert_eq!(entry.project, "github.com/example/tool");
     assert!(
         entry.vendor_pubkey.contains(
             &vendor_key
@@ -194,9 +192,12 @@ fn publish_promote_hold_and_immutability() {
     )
     .unwrap();
     packslip::verify::verify(
-        sidecar["document"].as_str().unwrap().as_bytes(),
-        sidecar["signature"].as_str().unwrap(),
-        &vendor_key.public_key(),
+        sidecar["bundle"].as_str().unwrap(),
+        &packslip::Trust::Key(&vendor_key.public_key()),
+        packslip::Options {
+            require_log: false,
+            trusted_root: &packslip::sigstore::trusted_root(None).unwrap(),
+        },
         &[&file],
     )
     .unwrap();

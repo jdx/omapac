@@ -48,7 +48,7 @@ pub struct Verification {
     pub index_sequence: u64,
     pub index_key: String,
     pub sha256: String,
-    pub level: packslip::model::Level,
+    pub level: pacvamp_policy::Level,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build_key: Option<String>,
 }

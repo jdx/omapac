@@ -20,6 +20,7 @@
 - [`pacvamp-repo advisories remove <--id <ID>>`](/cli/pacvamp-repo/advisories/remove.md)
 - [`pacvamp-repo attest <FLAGS> <PACKAGES>…`](/cli/pacvamp-repo/attest.md)
 - [`pacvamp-repo index <FLAGS>`](/cli/pacvamp-repo/index.md)
+- [`pacvamp-repo repack <FLAGS>`](/cli/pacvamp-repo/repack.md)
 - [`pacvamp-repo sign <FLAGS>`](/cli/pacvamp-repo/sign.md)
 - [`pacvamp-repo snapshot [FLAGS] <SUBCOMMAND>`](/cli/pacvamp-repo/snapshot.md)
 - [`pacvamp-repo snapshot check <--id <ID>> [--allow-missing]`](/cli/pacvamp-repo/snapshot/check.md)

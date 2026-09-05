@@ -13,6 +13,8 @@
 
 pub mod evidence;
 pub mod finding;
+mod level;
+pub use level::Level;
 pub mod similar;
 pub mod sniff;
 

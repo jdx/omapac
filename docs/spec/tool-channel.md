@@ -20,6 +20,12 @@ The tool channel shares the snapshot store:
 Published files are immutable: a vendor deleting or re-uploading an
 asset cannot affect a channel user.
 
+Vendor sidecars contain a packslip v1 `bundle`. The signed version entry
+records `allow_unlogged` (false by default) and `list_sequence`. The client
+checks the bundle's project, version, signature, log policy, digest, and size.
+Legacy document/signature sidecars must be republished in a fresh store.
+Tool channels require an explicit vendor public key.
+
 ## `tools/index.json`
 
 ```json
@@ -29,7 +35,7 @@ asset cannot affect a channel user.
   "generated_at": "2026-09-03T06:00:00Z",
   "tools": {
     "claude": {
-      "project": "pkg:npm/@anthropic-ai/claude-code",
+      "project": "claude.ai/claude-code",
       "vendor_pubkey": "untrusted comment: ...\nRW...",
       "versions": {
         "2.4.1": {
@@ -72,7 +78,7 @@ by mise platform:
 name = "claude"
 
 [upstream]
-project = "pkg:npm/@anthropic-ai/claude-code"
+project = "claude.ai/claude-code"
 releases = "https://claude.ai/.well-known/packslip/claude-code.json"
 pubkey = "claude.pub"
 min_release_age = "24h"

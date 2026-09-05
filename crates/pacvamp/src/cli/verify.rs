@@ -424,10 +424,16 @@ impl RunWith<&App> for Verify {
                 }
             );
             let e = &report.evidence;
+            let manifest = if e.vendor_manifest {
+                "yes (vendor)".to_string()
+            } else if e.repackager_manifest {
+                "yes (repackager-attested)".to_string()
+            } else {
+                "no".to_string()
+            };
             println!(
-                "evidence: build provenance {}, vendor manifest {}, {} verdict(s), reproducible {}",
+                "evidence: build provenance {}, vendor manifest {manifest}, {} verdict(s), reproducible {}",
                 yes_no(e.build_provenance),
-                yes_no(e.vendor_manifest),
                 e.verdicts,
                 e.reproducible.map(yes_no).unwrap_or("unknown")
             );

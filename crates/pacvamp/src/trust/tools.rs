@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::str::FromStr as _;
 
-use packslip::model::Level;
+use pacvamp_policy::Level;
 use serde::{Deserialize, Serialize};
 
 pub const INDEX_PATH: &str = "tools/index.json";
@@ -31,6 +31,10 @@ pub struct ToolEntry {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolVersion {
+    #[serde(default)]
+    pub allow_unlogged: bool,
+    #[serde(default)]
+    pub list_sequence: Option<u64>,
     pub published_at: String,
     pub vetted_at: String,
     pub level: Level,
@@ -111,6 +115,8 @@ mod tests {
 
     fn version(published: &str, channels: &[&str], held: bool) -> ToolVersion {
         ToolVersion {
+            allow_unlogged: false,
+            list_sequence: None,
             published_at: published.into(),
             vetted_at: published.into(),
             level: Level::L2,

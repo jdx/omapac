@@ -3,8 +3,10 @@
 mod advisories;
 mod attest;
 mod feed;
+mod http;
 mod index;
 mod rekor;
+mod repack;
 mod sign;
 mod snapshot;
 mod sync_aur;
@@ -46,6 +48,7 @@ enum Commands {
     Advisories(advisories::Advisories),
     Attest(attest::Attest),
     Index(index::IndexCmd),
+    Repack(repack::Repack),
     Sign(sign::Sign),
     Snapshot(snapshot::Snapshot),
     SyncAur(sync_aur::SyncAur),
@@ -65,6 +68,7 @@ fn main() -> Result<()> {
         Some(Commands::Advisories(cmd)) => cmd.run_with(()),
         Some(Commands::Attest(cmd)) => cmd.run_with(()),
         Some(Commands::Index(cmd)) => cmd.run_with(()),
+        Some(Commands::Repack(cmd)) => cmd.run_with(()),
         Some(Commands::Sign(cmd)) => cmd.run_with(()),
         Some(Commands::Snapshot(cmd)) => cmd.run_with(()),
         Some(Commands::SyncAur(cmd)) => cmd.run_with(()),

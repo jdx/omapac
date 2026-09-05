@@ -14,8 +14,8 @@ pacvamp is a trust-focused package manager for pacman-based Linux distributions.
 installs from distribution repositories and the AUR through one command, with trust
 tiers, commit-bound AUR builds, and policy that is stricter when nobody is watching.
 [Omarchy](https://omarchy.org) is the reference integration. The repository also ships `pacvamp-repo`, the
-server-side tooling a repository runs, `packslip`, a vendor-neutral standard for
-signed release manifests, and a mise backend plugin for a vetted tool channel. The
+server-side tooling a repository runs, and a mise backend plugin for a vetted tool
+channel. It consumes the external `packslip` crate for signed release manifests. The
 full design, decisions, and implementation plan are in [PLAN.md](PLAN.md); the
 documentation index is [docs/index.md](docs/index.md).
 
@@ -49,9 +49,10 @@ vetted tools for mise. The [OPR adoption guide](docs/adoption/opr.md) lists the 
 
 ## packslip
 
-`packslip create` signs one document per release saying what shipped and how to
-verify it; `packslip verify` checks it against a pinned key. The
-[specification](docs/spec/packslip.md) is vendor-neutral.
+[packslip](https://packslip.dev) publishes signed release bundles and verifies
+them against pinned keys or keyless identities. Pacvamp uses packslip 1.x from
+crates.io; install its CLI separately. See the
+[integration notes](docs/spec/packslip.md).
 
 ## Developing
 

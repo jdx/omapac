@@ -55,11 +55,12 @@ The remaining commands in this guide describe what the installer does and are
 also the manual recovery path.
 
 Install `base-devel`, `caddy`, `git`, `gnupg`, and Rust, then install the two
-publisher binaries from this repository into the system path:
+publisher binaries into the system path (packslip is maintained separately):
 
 ```bash
-cargo build --locked --release -p packslip -p pacvamp-repo
-sudo install -Dm755 target/release/packslip /usr/local/bin/packslip
+cargo build --locked --release -p pacvamp-repo
+cargo install packslip --version '=1.0.0' --locked --root target/packslip-cli
+sudo install -Dm755 target/packslip-cli/bin/packslip /usr/local/bin/packslip
 sudo install -Dm755 target/release/pacvamp-repo /usr/local/bin/pacvamp-repo
 ```
 

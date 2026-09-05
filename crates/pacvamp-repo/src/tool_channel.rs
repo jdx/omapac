@@ -253,6 +253,11 @@ fn publish_release(
     key: &SecretKey,
 ) -> Result<Option<String>> {
     let config = crate::vendor::load_config(&publish.config)?;
+    let pubkey = config
+        .upstream
+        .pubkey
+        .as_deref()
+        .ok_or_else(|| eyre::eyre!("tool channels require an explicit vendor pubkey"))?;
     let dir = publish
         .config
         .parent()
@@ -274,6 +279,14 @@ fn publish_release(
                 level: v.level,
                 published_at: v.published_at.clone(),
                 key_id: v.key_id.clone(),
+                scheme: Some(packslip::model::Scheme::SigstoreKey),
+                issuer: None,
+                attested_by: Some(packslip::Attestor::Vendor),
+                list_sequence: entry
+                    .versions
+                    .values()
+                    .filter_map(|v| v.list_sequence)
+                    .max(),
                 generated_at: v.vetted_at.clone(),
             })
             .filter(|_| !entry.versions.is_empty())
@@ -407,15 +420,17 @@ fn publish_release(
             versions: BTreeMap::new(),
         });
     entry.project = config.upstream.project.clone();
-    entry.vendor_pubkey = crate::vendor::pubkey_text(&dir, &config.upstream.pubkey)?;
+    entry.vendor_pubkey = crate::vendor::pubkey_text(&dir, pubkey)?;
     entry.versions.insert(
         version.clone(),
         ToolVersion {
             published_at: resolved.chosen.published_at.clone(),
             vetted_at: now.to_string(),
-            level: resolved.verified.level,
+            level: resolved.level,
+            allow_unlogged: config.upstream.allow_unlogged,
+            list_sequence: resolved.list_sequence,
             key_id: resolved.verified.key_id.clone(),
-            vendor_pubkey: crate::vendor::pubkey_text(&dir, &config.upstream.pubkey)?,
+            vendor_pubkey: crate::vendor::pubkey_text(&dir, pubkey)?,
             channels: vec!["edge".into()],
             held: None,
             artifacts,
@@ -423,7 +438,7 @@ fn publish_release(
     );
     Ok(Some(format!(
         "published {tool} {version} to edge (evidence {}, {} artifact(s){})",
-        resolved.verified.level,
+        resolved.level,
         resolved.artifacts.len(),
         if resolved.skipped.is_empty() {
             String::new()

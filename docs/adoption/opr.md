@@ -6,6 +6,7 @@ useful. Every command is documented under [the CLI reference](../cli/pacvamp-rep
 ## 1. Keys
 
 ```bash
+cargo install packslip --version '=1.0.0' --locked
 packslip keygen -o /etc/pacvamp-repo/index.key      # feeds, release manifests, tool index
 packslip keygen -o /etc/pacvamp-repo/build.key      # the build host only
 ```
@@ -57,7 +58,7 @@ pacvamp-repo vendor --pkgdir pkgs/mise-bin --write
 
 which rewrites the PKGBUILD from the vendor's packslip and writes the
 `.vendor.json` sidecar the build ships. Vendors without a packslip keep
-the old path until they publish one (`packslip create` is one CI step).
+the repackager path (`pacvamp-repo repack`) until they publish one.
 
 ## 5. The AUR sync gate
 

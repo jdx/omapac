@@ -50,7 +50,7 @@ jobs:
           TARGET: ${{ matrix.target }}
         run: >-
           "$BUILD_TOOL" build --locked --release --target "$TARGET"
-          -p pacvamp -p pacvamp-repo -p packslip
+          -p pacvamp -p pacvamp-repo
       - name: Package release archive
         env:
           TARGET: ${{ matrix.target }}
@@ -64,7 +64,6 @@ jobs:
           install -d dist/stage
           install -m755 "target/$TARGET/release/pacvamp" dist/stage/pacvamp
           install -m755 "target/$TARGET/release/pacvamp-repo" dist/stage/pacvamp-repo
-          install -m755 "target/$TARGET/release/packslip" dist/stage/packslip
           install -m644 LICENSE dist/stage/LICENSE
           tar -C dist/stage -cJf "dist/$archive" .
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -112,10 +111,10 @@ jobs:
         run: |
           mkdir -p dist
           gh release download "$GITHUB_REF_NAME" --dir dist --pattern 'pacvamp-*.tar.xz'
-      - uses: jdx/packslip@433c0c0f033e64c22f12433471768c255ef2bd93 # v0.3.0
+      - uses: jdx/packslip@0121abf6972fe6ca13633233402439a715f4cc0e # v1.0.0
         with:
           artifacts: dist/pacvamp-*.tar.xz
-          bin: pacvamp pacvamp-repo packslip
+          bin: pacvamp pacvamp-repo
           resources: license=archive:LICENSE
 
   publish-release:
