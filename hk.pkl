@@ -1,9 +1,10 @@
 amends "package://github.com/jdx/hk/releases/download/v1.55.0/hk@1.55.0#/Config.pkl"
 import "package://github.com/jdx/hk/releases/download/v1.55.0/hk@1.55.0#/Builtins.pkl"
 
-local bash_glob = List("*.sh", "e2e/**", "deploy/**/bin/**")
+local bash_glob = List("*.sh", "e2e/**", "deploy/**/bin/**", "mise-tasks/**")
 local bash_exclude = List("**/.*", "**/*.md", "**/*.toml")
 local linters = new Mapping<String, Step> {
+    ["actionlint"] = Builtins.actionlint
     ["cargo-fmt"] {
       glob = List("**/*.rs")
       check = new CommandSpec {

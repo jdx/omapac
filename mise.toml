@@ -2,9 +2,12 @@
 _.path = ["./target/debug"]
 
 [tools]
+actionlint = "latest"
 "bun" = "latest"
 cargo-insta = "latest"
+"cargo:cargo-edit" = "latest"
 communique = "latest"
+git-cliff = "latest"
 hk = "latest"
 shellcheck = "latest"
 shfmt = "latest"

@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+set -euo pipefail
+
+released_versions="$(git tag --list | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$' || true)"
+current_version="$(cargo pkgid pacvamp | cut -d# -f2 | cut -d@ -f2)"
+
+# Bootstrap the current workspace version. The tag triggers release.yml; these
+# crates are distribution internals and are not published to crates.io.
+if ! grep -qx "v$current_version" <<<"$released_versions"; then
+	git tag "v$current_version"
+	git push origin "v$current_version"
+	exit 0
+fi
+
+version="$(git cliff --bumped-version)"
+if [ "$version" = "v$current_version" ]; then
+	echo "No releasable changes since v$current_version"
+	exit 0
+fi
+
+pr_body="$(git cliff --bump --unreleased --strip all | tail -n +3)"
+cargo set-version --workspace "${version#v}"
+cargo update --workspace
+git cliff --bump -o CHANGELOG.md
+mise run render
+mise run lint-fix
+
+git config user.name mise-en-dev
+git config user.email 123107610+mise-en-dev@users.noreply.github.com
+git add Cargo.toml Cargo.lock crates/*/Cargo.toml CHANGELOG.md docs/cli
+git checkout -B release
+git commit -m "chore: release $version"
+git push origin release --force
+
+pr="$(gh pr list --base main --head release --state open --json number --jq '.[0].number // empty')"
+if [ -z "$pr" ]; then
+	gh pr create --base main --head release --title "chore: release $version" --body "$pr_body"
+else
+	gh pr edit "$pr" --title "chore: release $version" --body "$pr_body"
+fi

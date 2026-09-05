@@ -1,0 +1,129 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.*"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref_name }}
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  build-binaries:
+    name: build-${{ matrix.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            build-tool: cargo
+          - target: x86_64-unknown-linux-musl
+            build-tool: cross
+          - target: aarch64-unknown-linux-gnu
+            build-tool: cross
+          - target: aarch64-unknown-linux-musl
+            build-tool: cross
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: taiki-e/install-action@51cd0b8c0499559d9a4d75c0f5c67bec3a894ec8 # v2
+        if: matrix.build-tool == 'cross'
+        with:
+          tool: cross
+      - name: Build release binaries
+        env:
+          BUILD_TOOL: ${{ matrix.build-tool }}
+          TARGET: ${{ matrix.target }}
+        run: >-
+          "$BUILD_TOOL" build --locked --release --target "$TARGET"
+          -p pacvamp -p pacvamp-repo -p packslip
+      - name: Package release archive
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          if [ "$GITHUB_REF_TYPE" != tag ]; then
+            version="0.0.0-dev.${GITHUB_RUN_NUMBER}"
+          fi
+          archive="pacvamp-v${version}-${TARGET}.tar.xz"
+          install -d dist/stage
+          install -m755 "target/$TARGET/release/pacvamp" dist/stage/pacvamp
+          install -m755 "target/$TARGET/release/pacvamp-repo" dist/stage/pacvamp-repo
+          install -m755 "target/$TARGET/release/packslip" dist/stage/packslip
+          install -m644 LICENSE dist/stage/LICENSE
+          tar -C dist/stage -cJf "dist/$archive" .
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: binary-${{ matrix.target }}
+          path: dist/pacvamp-*.tar.xz
+          if-no-files-found: error
+          retention-days: 1
+
+  create-release:
+    needs: [build-binaries]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: binary-*
+          path: dist
+          merge-multiple: true
+      - name: Create draft GitHub release
+        run: |
+          awk '/^## \[/{if(found) exit; found=1} found{print}' \
+            CHANGELOG.md > release-notes.md
+          gh release create "$GITHUB_REF_NAME" --draft \
+            --title "$GITHUB_REF_NAME" --notes-file release-notes.md dist/*
+
+  packslip:
+    needs: [create-release]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download release archives
+        run: |
+          mkdir -p dist
+          gh release download "$GITHUB_REF_NAME" --dir dist --pattern 'pacvamp-*.tar.xz'
+      - uses: jdx/packslip@433c0c0f033e64c22f12433471768c255ef2bd93 # v0.3.0
+        with:
+          artifacts: dist/pacvamp-*.tar.xz
+          bin: pacvamp pacvamp-repo packslip
+          resources: license=archive:LICENSE
+
+  publish-release:
+    needs: [packslip]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - run: gh release edit "$GITHUB_REF_NAME" --draft=false
