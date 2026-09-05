@@ -210,7 +210,12 @@ exec /usr/bin/systemd-nspawn --keep-unit "$@"
 NSPAWN
 chmod 755 /usr/local/bin/systemd-nspawn
 mkdir -p /srv/pacvamp-image
-mkarchroot -C /etc/pacman.conf /srv/pacvamp-image/root base-devel pacman
+/usr/local/bin/pacvamp build-env init /srv/pacvamp-image/root --package pacman
+/usr/local/bin/pacvamp build-env update /srv/pacvamp-image/root --destination /srv/pacvamp-image/prepared --package cmake -y
+test ! -x /srv/pacvamp-image/root/usr/bin/cmake
+test -x /srv/pacvamp-image/prepared/usr/bin/cmake
+printf '%s\n' 'pacvamp-builder ALL=(root) NOPASSWD: ALL' >/etc/sudoers.d/pacvamp-fixture
+chmod 440 /etc/sudoers.d/pacvamp-fixture
 # Resolve a synthetic source hostname through a local DNS server. The image
 # deliberately has the systemd-resolved symlink that broke this path previously.
 cat >/srv/pacvamp-aur/dns.py <<'DNS'
@@ -257,11 +262,13 @@ runuser -u pacvamp-builder -- git -C /srv/pacvamp-aur/work add PKGBUILD
 runuser -u pacvamp-builder -- git -C /srv/pacvamp-aur/work -c user.name=Fixture -c user.email=fixture@example.com commit -qm 'chroot isolation probes'
 runuser -u pacvamp-builder -- git -C /srv/pacvamp-aur/work push -q /srv/pacvamp-aur/pacvamp-jail-probe.git HEAD:master
 runuser -u pacvamp-builder -- env   PACVAMP_AUR_RPC_BASE=http://127.0.0.1:18763   PACVAMP_AUR_GIT_BASE=file:///srv/pacvamp-aur   /usr/local/bin/pacvamp aur approve --force pacvamp-jail-probe
-runuser -u pacvamp-builder -- env   PACVAMP_AUR_RPC_BASE=http://127.0.0.1:18763   PACVAMP_AUR_GIT_BASE=file:///srv/pacvamp-aur   /usr/local/bin/pacvamp aur build pacvamp-jail-probe
+runuser -u pacvamp-builder -- env   PACVAMP_AUR_RPC_BASE=http://127.0.0.1:18763   PACVAMP_AUR_GIT_BASE=file:///srv/pacvamp-aur   /usr/local/bin/pacvamp aur build pacvamp-jail-probe --prepare-image
 test ! -e /srv/pacvamp-image/root/usr/share/pacvamp-image-poison
 python - <<'CHECK'
 import glob,json
 receipts=[json.load(open(p)) for p in glob.glob("/home/pacvamp-builder/.cache/pacvamp/aur/.pacvamp-build/runs/*/receipt.json")]
-assert any(r.get("chroot") == "/srv/pacvamp-image/root" for r in receipts)
+import os
+images=[r.get("chroot") for r in receipts if r.get("chroot")]
+assert images and all("pacvamp-image-" in p and not os.path.exists(p) for p in images)
 CHECK
 PRODUCTION

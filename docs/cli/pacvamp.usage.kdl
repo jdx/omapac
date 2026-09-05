@@ -77,6 +77,10 @@ Sources are fetched with network, then makepkg runs in the jail with writes limi
             arg <COMMIT>
         }
         flag "-y --yes" help="Install missing repository dependencies without asking"
+        flag --prepare-image help="Clone the configured image and install dependencies there for this build"
+        flag --dependency-artifact help="Reviewed local dependency artifacts to install into the disposable image" var=#true {
+            arg <DEPENDENCY_ARTIFACT>
+        }
         flag "-J --json" help="Print the files as JSON"
         flag "-h --help" help="Print help" action=help builtin=#true
         arg <PACKAGE> help="The package name"
@@ -108,6 +112,27 @@ Fetches the package's git history and metadata, evaluates the policy findings ag
         flag --json
         flag "-h --help" help="Print help" action=help builtin=#true
         arg <ARTIFACT>
+    }
+}
+cmd build-env help="Provision Arch build images with devtools" subcommand_required=#true {
+    flag "-h --help" help="Print help" action=help builtin=#true
+    cmd init help="Create a new base-devel image; requires devtools and root privileges" {
+        flag --package help="Additional repository packages" var=#true {
+            arg <PACKAGE>
+        }
+        flag "-h --help" help="Print help" action=help builtin=#true
+        arg <ROOT>
+    }
+    cmd update help="Clone and update an image into a new destination, preserving the original" {
+        flag --destination required=#true {
+            arg <DESTINATION>
+        }
+        flag --package var=#true {
+            arg <PACKAGE>
+        }
+        flag "-y --yes"
+        flag "-h --help" help="Print help" action=help builtin=#true
+        arg <ROOT>
     }
 }
 cmd cache help="Inspect retained build data or prune unused runs" subcommand_required=#true {

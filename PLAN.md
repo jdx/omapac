@@ -1005,3 +1005,8 @@ The mandatory Arch CI job builds a real package through this backend.
 Build retention provides `cache status` and `cache prune`, with preview/JSON,
 age and size policies, active-build leases, recent-run grace, and protection for
 installed and pending ledger evidence. Cache roots belong to one system ledger.
+
+Build environments add explicit devtools initialization and clone-and-update,
+plus opt-in disposable AUR build images. Missing repository dependencies and
+receipt-verified local AUR artifacts are installed only in the clone. The recipe
+is still commit-approved and jailed; the base and host are not package targets.

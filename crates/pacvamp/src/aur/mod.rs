@@ -64,3 +64,5 @@ pub mod receipt;
 pub mod chroot;
 
 pub mod cache;
+
+pub mod environment;
