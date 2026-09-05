@@ -106,6 +106,46 @@ fn network_is_refused_unless_granted() {
 }
 
 #[test]
+fn process_substitution_and_executable_links_need_no_proc_tree_grant() {
+    if !landlock_available() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let (code, out) = jail(&spec(
+        &[dir.path()],
+        false,
+        "set -e; cat <(printf substitution); readlink /proc/self/exe; if cat /proc/$PPID/environ; then exit 91; fi",
+        dir.path(),
+    ));
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("substitution"), "{out}");
+    assert!(out.contains("readlink"), "{out}");
+}
+
+#[test]
+fn openssl_can_load_public_configuration_without_exposing_private_files() {
+    if !landlock_available() {
+        return;
+    }
+    if which::which("openssl").is_err() {
+        assert!(
+            std::env::var_os("PACVAMP_REQUIRE_JAIL").is_none(),
+            "openssl required in CI"
+        );
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let (code, out) = jail(&spec(
+        &[dir.path()],
+        false,
+        "openssl req -new -newkey rsa:2048 -nodes -subj /CN=pacvamp-test -keyout key.pem -out request.pem",
+        dir.path(),
+    ));
+    assert_eq!(code, 0, "{out}");
+    assert!(dir.path().join("request.pem").is_file());
+}
+
+#[test]
 fn credentials_and_shared_scratch_are_inaccessible_even_with_network() {
     if !landlock_available() {
         return;
