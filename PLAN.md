@@ -331,11 +331,11 @@ whole run fails.
 | `vcs-source` | git, hg, or svn source, or a `-git` pkgbase (info; warn unattended) |
 | `install-script` | `.install` added or changed, or present on first install |
 | `suspicious-content` | aube's sniff list over PKGBUILD and `.install` (pipe-to-shell, base64 decode, eval, ssh and cloud credential paths, token env reads, chat webhooks, bare-IP URLs), plus npm, pip, bun, or cargo installs inside build functions |
-| `language-dep` | detected package-manager targets queried against OSV malicious entries, and the Socket purl API when a token is configured |
+| `language-dep` | local detection of language package-manager commands; OSV/Socket lookups are not implemented and `scanner.socket_token` is rejected |
 | `pkgbuild-large-diff` | a large diff after a quiet history |
 | `commit-drift` | target commit differs from the locked commit |
 | `verdict` | a block or flag verdict for this pkgbase and commit on the verdict feed |
-| `upstream-advisory` | the upstream repository appears in OSV's malicious set |
+| `upstream-advisory` | planned: upstream repository appears in OSV's malicious set; no external OSV query is implemented |
 | `out-of-date` | AUR out-of-date flag (info) |
 
 `pacvamp aur review <pkg>` prints findings, any published verdicts, the `.SRCINFO`
@@ -386,11 +386,14 @@ unattended.
 commit hashes. A plan that moves an `opr` package or the index sequence backwards
 without `--allow-downgrade` is denied.
 
-**paranoid and safe modes.** `paranoid` hardens every soft gate: strict commit age,
+**Paranoid mode and static planning.** `paranoid` hardens every soft gate: strict commit age,
 install scripts denied everywhere, jail mandatory, network builds denied, advisories
 and index verification required and failing closed when unreachable, custom repos
-denied. `safe` resolves and plans from `.SRCINFO` only and never executes PKGBUILD or
-hook code; it is for menu guards, `update --check`, and agents.
+denied. The proposed `safe` setting is unsupported and rejected, even when false. Planning
+uses `.SRCINFO` without executing PKGBUILD or hook code. `policy.scanner.socket_token`
+is also rejected until external malicious-package lookups exist; the local sniff
+catalog only detects language package-manager commands. Omit these unsupported
+settings from ordinary and managed policy files.
 
 **audit.** `pacvamp audit` joins the local database against Arch's security tracker so
 users see which installed packages carry open issues.
@@ -694,9 +697,9 @@ which is why the client default stays zero.
 | `trust.no_downgrade` | true | trueWins |
 | `trust.advisories` | on | ranked: off, on, required |
 | `trust.custom_repos` | warn | ranked: allow, warn, deny |
-| `scanner.socket_token` | unset | managedWins |
+| `scanner.socket_token` | unsupported; rejected when present | — |
 | `paranoid` | false | trueWins |
-| `safe` | false | trueWins |
+| `safe` | unsupported; rejected when present | — |
 
 The omarchy package ships a managed file that sets the trust settings to verify, the
 jail on, install scripts to approve, and a network-build deny list. `paranoid = true`

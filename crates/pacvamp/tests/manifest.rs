@@ -226,3 +226,47 @@ fn missing_status_distinguishes_a_matching_manifest() {
     assert!(out.contains("nothing missing"), "{out}");
     assert!(!out.contains("nothing declared"), "{out}");
 }
+
+#[test]
+fn unsupported_policy_is_rejected_in_every_layer_before_execution() {
+    for (setting, key) in [
+        ("safe = true", "policy.safe"),
+        ("safe = false", "policy.safe"),
+        (
+            r#"scanner.socket_token = "test-secret-token""#,
+            "policy.scanner.socket_token",
+        ),
+    ] {
+        for layer in ["user", "system", "conf.d/10-policy", "managed"] {
+            let rig = Rig::new();
+            let text = format!("[policy]\n{setting}\n");
+            if layer == "user" {
+                std::fs::create_dir_all(rig.user_manifest().parent().unwrap()).unwrap();
+                std::fs::write(rig.user_manifest(), &text).unwrap();
+            } else {
+                rig.write_root(
+                    &format!(
+                        "/etc/pacvamp/{}.toml",
+                        if layer == "system" { "pacvamp" } else { layer }
+                    ),
+                    &text,
+                );
+            }
+            for command in [
+                vec!["plan"],
+                vec!["install", "-y", "curl"],
+                vec!["apply", "-y"],
+                vec!["update", "-y", "--no-aur"],
+            ] {
+                let (code, _, err) = rig.run(&command, HELIX_PLAN, 0);
+                assert_ne!(code, 0, "{layer}: {command:?}");
+                assert!(err.contains(key) && err.contains("not supported"), "{err}");
+                assert!(!err.contains("test-secret-token"), "{err}");
+                assert!(
+                    rig.log().is_empty(),
+                    "unsupported policy must fail before pacman"
+                );
+            }
+        }
+    }
+}
