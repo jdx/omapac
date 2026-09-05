@@ -1,7 +1,7 @@
 //! Build process supervision. Limits also apply when filesystem confinement is disabled.
 use eyre::{Context as _, Result, bail};
 use nix::sys::{
-    resource::{Resource, setrlimit},
+    resource::{Resource, getrlimit, setrlimit},
     signal::{Signal, killpg},
 };
 use nix::unistd::Pid;
@@ -85,7 +85,9 @@ impl Limits {
             (Resource::RLIMIT_FSIZE, self.file_mb * 1024 * 1024),
             (Resource::RLIMIT_CORE, 0),
         ] {
-            setrlimit(resource, value, value)?;
+            let (soft, hard) = getrlimit(resource)?;
+            let ceiling = value.min(soft).min(hard);
+            setrlimit(resource, ceiling, ceiling)?;
         }
         Ok(())
     }
@@ -181,6 +183,11 @@ impl ManagedChild {
                 disk_check = Instant::now();
             }
             if let Some(status) = self.child.try_wait()? {
+                // Stop lingering writers before the mandatory final accounting pass.
+                let _ = killpg(self.group, Signal::SIGKILL);
+                if disk_bytes(run)? > limits.disk_mb * 1024 * 1024 {
+                    bail!("build exceeded disk budget");
+                }
                 return Ok(status);
             }
             std::thread::sleep(Duration::from_millis(50));

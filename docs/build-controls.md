@@ -18,14 +18,15 @@ file_mb = 4096
 disk_mb = 20480
 ```
 
-Values must be positive. Managed limits are upper bounds: user policy can lower
+Values must be positive. Lower inherited soft or hard kernel limits are preserved. Managed limits are upper bounds: user policy can lower
 them but cannot raise them above the managed maximum. CPU time, virtual address
 space, and individual file sizes use kernel resource limits per process. The
 process count uses Linux's per-real-user limit; it includes other processes owned
 by the build user and is not enforced for privileged users. These are not cgroup
 limits on aggregate memory or CPU.
 
-The supervisor checks the run directory's total regular-file size each second.
+The supervisor checks the run directory's total regular-file size each second and
+once more when each phase exits.
 This disk budget can overshoot between checks; it is not a filesystem quota.
 Symlinks are not followed. Transient unreadable directories receive a three-second
 grace period for fakeroot permission probes; persistent accounting failures stop

@@ -115,3 +115,67 @@ fn managed_limits_can_only_tighten_user_limits() {
     );
     assert_eq!(limits.wall_seconds, 5);
 }
+
+#[test]
+fn fast_exit_cannot_skip_the_disk_budget() {
+    let dir = tempfile::tempdir().unwrap();
+    let limits = Limits {
+        disk_mb: 1,
+        file_mb: 1,
+        ..Default::default()
+    };
+    let mut child = spawn(
+        dir.path(),
+        "dd if=/dev/zero of=a bs=768K count=1; dd if=/dev/zero of=b bs=768K count=1",
+        limits.clone(),
+    );
+    assert!(
+        child
+            .wait(&limits, dir.path())
+            .unwrap_err()
+            .to_string()
+            .contains("disk budget")
+    );
+}
+
+#[test]
+fn lower_inherited_limits_are_preserved_without_privilege() {
+    let dir = tempfile::tempdir().unwrap();
+    let limits = Limits::default();
+    let mut child = Command::new("prlimit")
+        .args(["--nproc=128:128", "--"])
+        .arg(env!("CARGO_BIN_EXE_pacvamp"))
+        .arg("__build")
+        .stdin(Stdio::piped())
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    let spec = BuildSpec {
+        limits: limits.clone(),
+        jail: false,
+        spec: Spec {
+            readable: vec![],
+            writable: vec![],
+            network: false,
+            program: "/bin/bash".into(),
+            args: vec!["-c".into(), "ulimit -u > inherited-limit".into()],
+            cwd: dir.path().into(),
+        },
+    };
+    serde_json::to_writer(child.stdin.take().unwrap(), &spec).unwrap();
+    assert!(
+        ManagedChild::new(child)
+            .unwrap()
+            .wait(&limits, dir.path())
+            .unwrap()
+            .success()
+    );
+    assert!(
+        std::fs::read_to_string(dir.path().join("inherited-limit"))
+            .unwrap()
+            .trim()
+            .parse::<u64>()
+            .unwrap()
+            <= 128
+    );
+}
