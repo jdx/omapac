@@ -1010,3 +1010,7 @@ Build environments add explicit devtools initialization and clone-and-update,
 plus opt-in disposable AUR build images. Missing repository dependencies and
 receipt-verified local AUR artifacts are installed only in the clone. The recipe
 is still commit-approved and jailed; the base and host are not package targets.
+
+Recovery reports compare expected and installed package state, show bounded
+pacman log context, and give transaction-specific next steps. Logs and matching
+versions never upgrade an uncertain intent to evidence. `--id` scopes restoration.

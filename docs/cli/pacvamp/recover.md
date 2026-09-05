@@ -7,6 +7,7 @@ Inspect interrupted transactions and recover recorded successful operations
 
 ## Flags
 - **`--write`** — Restore completed transactions whose installed versions still match
+- **`--id <ID>`** — Inspect or restore only this transaction
 - **`--json`** — Print pending transaction details as JSON
 - **`--discard <DISCARD>`** — Discard one inspected journal entry without changing installed packages
 - **`-h --help`** — Print help
