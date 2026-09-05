@@ -730,3 +730,34 @@ fn concurrent_aur_operation_fails_before_touching_shared_checkout() {
     let (code, _, err) = run(&s, &["aur", "approve", "--force", "yay"], "");
     assert_eq!(code, 0, "{err}");
 }
+
+#[test]
+fn exports_raw_reviewed_blobs_without_archive_attributes_or_untracked_files() {
+    let s = setup();
+    s.aur.commit(
+        "yay",
+        &[
+            (
+                ".gitattributes",
+                "PKGBUILD export-ignore\nversion export-subst\n",
+            ),
+            ("version", "$Format:%H$\n"),
+        ],
+        "archive attributes",
+        "2026-01-02T00:00:00Z",
+    );
+    let checkout = pacvamp::aur::git::Checkout {
+        pkgbase: "yay".into(),
+        dir: s.aur.dir.join("yay.git"),
+    };
+    let destination = s.rig.dir.path().join("export");
+    checkout.export(&s.aur.head("yay"), &destination).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(destination.join("PKGBUILD")).unwrap(),
+        YAY_PKGBUILD
+    );
+    assert_eq!(
+        std::fs::read_to_string(destination.join("version")).unwrap(),
+        "$Format:%H$\n"
+    );
+}
