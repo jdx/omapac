@@ -23,12 +23,19 @@ run = "cargo build --workspace --all-features"
 
 [tasks.test]
 alias = "t"
-description = "Run unit tests"
-depends = ["test:unit"]
+description = "Run unit, integration, and mandatory Arch E2E tests"
+depends = ["test:unit", "test:e2e"]
 
 [tasks."test:unit"]
-description = "Run unit tests"
+description = "Run the Rust unit and integration tests"
 run = "cargo test --workspace --all-features"
+
+[tasks."test:e2e"]
+description = "Run E2E tests (requires Docker; missing prerequisites fail)"
+depends = ["build"]
+run = "bash e2e/run_all_tests"
+[tasks."test:e2e".env]
+PACVAMP_E2E_CONTAINER = "1"
 
 [tasks.clippy]
 description = "Run clippy with warnings denied"
