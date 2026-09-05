@@ -426,3 +426,42 @@ fn verify_checks_the_provenance_sidecar_and_the_log_entry() {
         "{out}"
     );
 }
+
+#[test]
+fn doctor_reports_missing_review_source_on_arch_only_hosts() {
+    let s = setup();
+    s.rig.write_root(
+        "/etc/pacman.conf",
+        "[options]\nArchitecture = x86_64\n[core]\nServer = https://m/$repo/os/$arch\n",
+    );
+    for (policy, status, detail) in [
+        ("required", "fail", "no OPR repository"),
+        ("on", "warn", "no OPR repository"),
+        ("off", "warn", "disabled"),
+    ] {
+        s.rig.write_root(
+            "/etc/pacvamp/pacvamp.toml",
+            &format!("[policy]\ntrust.advisories = \"{policy}\"\n"),
+        );
+        let output = Command::new(env!("CARGO_BIN_EXE_pacvamp"))
+            .env("HOME", &s.rig.home)
+            .env_remove("XDG_CONFIG_HOME")
+            .env("XDG_CACHE_HOME", s.rig.dir.path().join("cache"))
+            .current_dir(&s.rig.home)
+            .arg("--sysroot")
+            .arg(&s.rig.root)
+            .args(["doctor", "--json"])
+            .output()
+            .unwrap();
+        let findings: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(
+            findings.iter().any(|f| f["check"] == "feed-review"
+                && f["status"] == status
+                && f["detail"].as_str().unwrap().contains(detail)),
+            "{findings:?}"
+        );
+        if policy == "required" {
+            assert!(!output.status.success());
+        }
+    }
+}

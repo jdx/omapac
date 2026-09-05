@@ -60,6 +60,25 @@ pub(super) fn diagnose_protections(
             "one or more repository verification protections are disabled".into(),
         );
     }
+    if !host
+        .sources
+        .iter()
+        .any(|source| matches!(source.tier, Tier::Opr))
+    {
+        add(
+            if settings.trust_advisories == Advisories::Required {
+                Status::Fail
+            } else {
+                Status::Warn
+            },
+            "feed-review",
+            if settings.trust_advisories == Advisories::Off {
+                "AUR advisory and verdict feeds are disabled".into()
+            } else {
+                "AUR advisory and verdict feeds unavailable: no OPR repository configured; configure an OPR source and trusted keys".into()
+            },
+        );
+    }
     let keyring = match trust::Keyring::load(app.paths.sysroot.as_deref()) {
         Ok(keyring) => keyring,
         Err(_) => return, // The trust-root diagnostic already reports the exact error.
@@ -205,7 +224,15 @@ pub(super) fn diagnose_protections(
                 Ok(())
             })();
             if let Err(err) = result {
-                add(Status::Warn, "feed-review", format!("{err:#}"));
+                add(
+                    if settings.trust_advisories == Advisories::Required {
+                        Status::Fail
+                    } else {
+                        Status::Warn
+                    },
+                    "feed-review",
+                    format!("{err:#}"),
+                );
             }
         }
     }
