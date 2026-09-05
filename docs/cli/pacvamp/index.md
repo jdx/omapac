@@ -33,6 +33,7 @@
 - [`pacvamp doctor [-J --json]`](/cli/pacvamp/doctor.md)
 - [`pacvamp drop [-y --yes] [-n --dry-run] <PACKAGES>…`](/cli/pacvamp/drop.md)
 - [`pacvamp info [FLAGS] <PACKAGES>…`](/cli/pacvamp/info.md)
+- [`pacvamp import [FLAGS]`](/cli/pacvamp/import.md)
 - [`pacvamp install [FLAGS] <PACKAGES>…`](/cli/pacvamp/install.md)
 - [`pacvamp list [FLAGS]`](/cli/pacvamp/list.md)
 - [`pacvamp missing <PACKAGES>…`](/cli/pacvamp/missing.md)

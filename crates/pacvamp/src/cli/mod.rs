@@ -13,6 +13,7 @@ mod channel;
 mod converge;
 mod declare;
 mod doctor;
+mod import;
 mod info;
 mod install;
 mod jail_cmd;
@@ -83,6 +84,7 @@ enum Commands {
     Doctor(doctor::Doctor),
     Drop(declare::Drop),
     Info(info::Info),
+    Import(import::Import),
     Install(install::Install),
     #[usage(name = "__jail", hide)]
     JailExec(jail_cmd::JailExec),
