@@ -30,7 +30,7 @@
 - [`pacvamp channel [--offline] [-J --json] <SUBCOMMAND>`](/cli/pacvamp/channel.md)
 - [`pacvamp channel pin [--force] <ID>`](/cli/pacvamp/channel/pin.md)
 - [`pacvamp channel unpin`](/cli/pacvamp/channel/unpin.md)
-- [`pacvamp doctor [-J --json]`](/cli/pacvamp/doctor.md)
+- [`pacvamp doctor [--refresh] [-J --json]`](/cli/pacvamp/doctor.md)
 - [`pacvamp drop [-y --yes] [-n --dry-run] <PACKAGES>…`](/cli/pacvamp/drop.md)
 - [`pacvamp info [FLAGS] <PACKAGES>…`](/cli/pacvamp/info.md)
 - [`pacvamp import [FLAGS]`](/cli/pacvamp/import.md)

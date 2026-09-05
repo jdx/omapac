@@ -85,6 +85,40 @@ impl Spec {
     }
 }
 
+/// Exercise the actual helper and both restrictions in a disposable process.
+/// The caller remains unrestricted; this does not execute a package recipe.
+pub fn probe() -> Result<()> {
+    let spec = Spec {
+        readable: vec![],
+        writable: vec![],
+        network: false,
+        program: PathBuf::from("/usr/bin/true"),
+        args: vec![],
+        cwd: PathBuf::from("/"),
+    };
+    let mut child = spec
+        .command()?
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .wrap_err("starting sandbox probe")?;
+    serde_json::to_writer(
+        child
+            .stdin
+            .take()
+            .ok_or_else(|| eyre::eyre!("probe stdin unavailable"))?,
+        &spec,
+    )?;
+    let output = child.wait_with_output()?;
+    if !output.status.success() {
+        bail!(
+            "sandbox probe failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(())
+}
+
 fn restrict_filesystem(readable: &[PathBuf], writable: &[PathBuf], network: bool) -> Result<()> {
     use landlock::{
         ABI, Access, AccessFs, AccessNet, Compatible, RulesetAttr, RulesetCreatedAttr,

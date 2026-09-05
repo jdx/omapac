@@ -80,6 +80,89 @@ fn yay_filename(s: &Setup) -> String {
 }
 
 #[test]
+fn doctor_distinguishes_cached_claims_from_active_verification_without_mutating_state() {
+    let s = setup();
+    let now = jiff::Timestamp::now().to_string();
+    let body = index(5, "db", "package").replace("2026-09-03T00:00:00Z", &now);
+    let base = serve(&s, &body);
+    // Merely having keys and an available server is not evidence of a
+    // working feed: the default command must remain offline.
+    let (_, out, _) = run(&s, &base, &["doctor", "--json"]);
+    let findings: Vec<serde_json::Value> = serde_json::from_str(&out).unwrap();
+    assert!(findings.iter().any(
+        |f| f["check"] == "feed-index" && f["detail"].as_str().unwrap().contains("not cached")
+    ));
+    assert!(findings.iter().any(|f| f["check"] == "sandbox-kernel"));
+    assert!(
+        findings
+            .iter()
+            .any(|f| f["check"] == "snapshot-store" && f["status"] == "warn")
+    );
+    let (_, out, err) = run(&s, &base, &["doctor", "--refresh", "--json"]);
+    let findings: Vec<serde_json::Value> = serde_json::from_str(&out).unwrap();
+    assert!(
+        findings.iter().any(|f| f["check"] == "publisher"
+            && f["detail"]
+                .as_str()
+                .unwrap()
+                .contains("publisher claims, not package verification results")),
+        "{out}\n{err}"
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|f| f["check"] == "feed-freshness" && f["status"] == "ok")
+    );
+    assert!(findings.iter().any(
+        |f| f["check"] == "installed-evidence" && f["detail"].as_str().unwrap().contains("0/3")
+    ));
+    assert!(!s.rig.root.join("var/lib/pacvamp/state.json").exists());
+    assert!(!s.rig.user_manifest().with_extension("lock").exists());
+    let (_, out, _) = run(&s, "http://127.0.0.1:1", &["doctor", "--json"]);
+    assert!(
+        out.contains("cached; current publisher availability not verified"),
+        "{out}"
+    );
+
+    let stale = serve(
+        &s,
+        &index(6, "db", "package").replace("2026-09-03T00:00:00Z", "2020-01-01T00:00:00Z"),
+    );
+    let (_, out, _) = run(&s, &stale, &["doctor", "--refresh", "--json"]);
+    let findings: Vec<serde_json::Value> = serde_json::from_str(&out).unwrap();
+    assert!(findings.iter().any(|f| f["check"] == "feed-freshness"
+        && f["status"] == "warn"
+        && f["detail"].as_str().unwrap().contains("stale")));
+    assert!(!s.rig.root.join("var/lib/pacvamp/state.json").exists());
+}
+
+#[test]
+fn doctor_reports_disabled_sandbox_and_rejects_unsigned_publisher_claims() {
+    let s = setup();
+    s.rig
+        .write_root("/etc/pacvamp/pacvamp.toml", "[policy]\naur.jail = false\n");
+    let body = index(5, "db", "package");
+    let base = common::http::serve(vec![
+        ("/stable/x86_64/pacvamp-index.json", body),
+        (
+            "/stable/x86_64/pacvamp-index.json.minisig",
+            "invalid signature".into(),
+        ),
+    ]);
+    let (_, out, _) = run(&s, &base, &["doctor", "--refresh", "--json"]);
+    let findings: Vec<serde_json::Value> = serde_json::from_str(&out).unwrap();
+    assert!(findings.iter().any(|f| f["check"] == "sandbox-policy"
+        && f["status"] == "warn"
+        && f["detail"].as_str().unwrap().contains("DISABLED")));
+    assert!(
+        findings
+            .iter()
+            .any(|f| f["check"] == "feed-index" && f["status"] != "ok")
+    );
+    assert!(!out.contains("signed index sequence 5 advertises"));
+}
+
+#[test]
 fn verify_checks_the_cached_file_and_the_database_against_the_index() {
     let s = setup();
     let filename = yay_filename(&s);
@@ -342,4 +425,43 @@ fn verify_checks_the_provenance_sidecar_and_the_log_entry() {
         out.contains("transparency: FAILED: the provenance envelope did not verify"),
         "{out}"
     );
+}
+
+#[test]
+fn doctor_reports_missing_review_source_on_arch_only_hosts() {
+    let s = setup();
+    s.rig.write_root(
+        "/etc/pacman.conf",
+        "[options]\nArchitecture = x86_64\n[core]\nServer = https://m/$repo/os/$arch\n",
+    );
+    for (policy, status, detail) in [
+        ("required", "fail", "no OPR repository"),
+        ("on", "warn", "no OPR repository"),
+        ("off", "warn", "disabled"),
+    ] {
+        s.rig.write_root(
+            "/etc/pacvamp/pacvamp.toml",
+            &format!("[policy]\ntrust.advisories = \"{policy}\"\n"),
+        );
+        let output = Command::new(env!("CARGO_BIN_EXE_pacvamp"))
+            .env("HOME", &s.rig.home)
+            .env_remove("XDG_CONFIG_HOME")
+            .env("XDG_CACHE_HOME", s.rig.dir.path().join("cache"))
+            .current_dir(&s.rig.home)
+            .arg("--sysroot")
+            .arg(&s.rig.root)
+            .args(["doctor", "--json"])
+            .output()
+            .unwrap();
+        let findings: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(
+            findings.iter().any(|f| f["check"] == "feed-review"
+                && f["status"] == status
+                && f["detail"].as_str().unwrap().contains(detail)),
+            "{findings:?}"
+        );
+        if policy == "required" {
+            assert!(!output.status.success());
+        }
+    }
 }

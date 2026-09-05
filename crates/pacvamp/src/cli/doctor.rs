@@ -9,13 +9,22 @@ use usage_rs::RunWith;
 use super::{App, check_rank, print_json, trust_rank};
 use crate::host::Host;
 
+mod protections;
+use protections::diagnose_protections;
+
 /// Check that this machine is set up for pacvamp
 ///
 /// Reports the pacman binary, the configuration and its repositories with
 /// their signature levels against the floor pacvamp expects, sync database
 /// freshness, the local database, and how pacvamp would obtain root.
+/// Also probes the running kernel's sandbox and reports configured policy,
+/// authenticated feed freshness, publisher evidence, and snapshot availability.
+/// Uses cached feeds unless --refresh is passed; never changes package or approval state.
 #[derive(Debug, usage_rs::Args)]
 pub struct Doctor {
+    /// Fetch signed feeds to check current publisher availability
+    #[usage(long)]
+    refresh: bool,
     /// Print as JSON
     #[usage(short = 'J', long)]
     json: bool,
@@ -40,7 +49,7 @@ impl RunWith<&App> for Doctor {
     type Output = Result<()>;
 
     fn run_with(self, app: &App) -> Self::Output {
-        let findings = diagnose(app);
+        let findings = diagnose(app, self.refresh);
         if self.json {
             print_json(&findings)?;
         } else {
@@ -56,7 +65,7 @@ impl RunWith<&App> for Doctor {
 /// How old a sync database may be before it is worth mentioning.
 const STALE_AFTER: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
-pub fn diagnose(app: &App) -> Vec<Finding> {
+pub fn diagnose(app: &App, refresh: bool) -> Vec<Finding> {
     let mut findings = Vec::new();
     let mut add = |status: Status, check: &str, detail: String| {
         findings.push(Finding {
@@ -79,6 +88,7 @@ pub fn diagnose(app: &App) -> Vec<Finding> {
         }
     };
     diagnose_host(&host, &mut add);
+    diagnose_protections(app, &host, refresh, &mut add);
 
     let ctx = crate::engine::sudo::Context::detect(crate::engine::sudo::Elevation::Auto);
     if ctx.is_root {

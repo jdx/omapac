@@ -26,6 +26,8 @@ pacvamp search helix              # repositories, with trust tiers
 pacvamp search --aur helix        # the AUR, with votes, maintainer, and age
 pacvamp install helix             # a plan, then pacman with the Omarchy guard
 pacvamp install --aur google-chrome   # review, approve, build in a jail, install
+pacvamp import                    # preview declarations from installed packages
+pacvamp doctor --refresh          # check policy, sandbox, and signed publisher feeds
 pacvamp add helix                 # declare it in the manifest
 pacvamp apply                     # converge the machine to the manifest
 pacvamp update                    # the whole update pipeline, holds and AUR included
