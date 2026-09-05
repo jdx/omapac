@@ -19,6 +19,11 @@ use crate::resolve::Tier;
 pub struct Hold {
     pub name: String,
     pub reason: String,
+    /// The version kept installed, if this package is installed.
+    pub installed: Option<String>,
+    /// Earliest retry time (UTC Unix seconds), only when waiting resolves all blockers.
+    pub eligible_at: Option<i64>,
+    pub next_step: String,
 }
 
 /// Publish times from repository indexes: repository name, then package
@@ -76,6 +81,9 @@ pub fn age_holds(
         if let Some(reason) = published.unsafe_repos.get(&source.name) {
             holds.push(Hold {
                 name: package.name.clone(),
+                installed: Some(package.version.clone()),
+                eligible_at: None,
+                next_step: "Restore a fresh authenticated repository index, then run `pacvamp update`.".into(),
                 reason: format!(
                     "{} {} release age cannot be verified because its signed index was rejected: {reason}",
                     source.name, candidate.version
@@ -98,6 +106,9 @@ pub fn age_holds(
         if age < min.0.as_secs() as i64 {
             holds.push(Hold {
                 name: package.name.clone(),
+                installed: Some(package.version.clone()),
+                eligible_at: Some(since.saturating_add(min.0.as_secs() as i64)),
+                next_step: "Wait until eligible, then run `pacvamp update`.".into(),
                 reason: format!(
                     "{} {} was {what} {} ago, less than the {} floor for {}",
                     source.name,
@@ -110,6 +121,97 @@ pub fn age_holds(
         }
     }
     Ok(holds)
+}
+
+impl Hold {
+    pub fn render(&self) -> String {
+        let retained = self.installed.as_deref().unwrap_or("not installed");
+        let waiting = match self.eligible_at {
+            Some(at) => format!(
+                "eligible at {} if the candidate and policy stay unchanged",
+                crate::cli::format_time(at)
+            ),
+            None => "waiting alone will not resolve this".into(),
+        };
+        format!(
+            "{}; remains: {retained}; {waiting}. {}",
+            self.reason, self.next_step
+        )
+    }
+}
+
+/// Explain unattended AUR policy without approving or changing package state.
+pub fn aur_blocker(
+    reviewed: &crate::aur::review::Reviewed,
+    settings: &Settings,
+    installed: Option<String>,
+    approved: bool,
+) -> Option<Hold> {
+    use pacvamp_policy::FindingId;
+    let script_denied = !reviewed.evidence.recipe.install_files.is_empty()
+        && settings.aur_install_scripts == crate::manifest::settings::InstallScripts::Deny;
+    let findings: Vec<_> = reviewed
+        .report
+        .findings
+        .iter()
+        .filter(|f| f.decision != pacvamp_policy::Decision::Allow)
+        .collect();
+    if !script_denied && (approved || findings.is_empty()) {
+        return None;
+    }
+    let mut eligible = Some(reviewed.evidence.now);
+    let mut reasons = Vec::new();
+    for f in &findings {
+        reasons.push(format!("{}: {}", f.finding.id, f.finding.message));
+        let until = match f.finding.id {
+            FindingId::RecentCommit => Some(
+                reviewed
+                    .evidence
+                    .target
+                    .time
+                    .max(
+                        reviewed
+                            .evidence
+                            .rpc
+                            .as_ref()
+                            .map_or(0, |rpc| rpc.last_modified),
+                    )
+                    .saturating_add(settings.aur_min_commit_age.0.as_secs() as i64),
+            ),
+            FindingId::NewPackage => reviewed.evidence.rpc.as_ref().map(|rpc| {
+                rpc.first_submitted
+                    .saturating_add(settings.aur_min_package_age.0.as_secs() as i64)
+            }),
+            _ => None,
+        };
+        eligible = eligible.zip(until).map(|(a, b)| a.max(b));
+    }
+    if script_denied {
+        reasons.insert(
+            0,
+            format!(
+                "install scriptlet(s) {} denied by policy",
+                reviewed.evidence.recipe.install_files.join(", ")
+            ),
+        );
+        eligible = None;
+    }
+    Some(Hold {
+        name: reviewed.pkgname.clone(),
+        installed,
+        eligible_at: eligible,
+        reason: reasons.join("; "),
+        next_step: format!(
+            "Review with `pacvamp aur review --commit {} -- {}`.{}",
+            reviewed.target,
+            crate::engine::sudo::quote(&reviewed.pkgname),
+            if script_denied {
+                " Approval cannot override the install-script policy."
+            } else {
+                ""
+            }
+        ),
+    })
 }
 
 /// An installed foreign package the AUR has a newer version of.
