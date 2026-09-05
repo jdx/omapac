@@ -3,6 +3,7 @@
 //! writes limited to the build directory and, unless granted, no network.
 //! See `PLAN.md`, "Jailed builds".
 
+use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::{fs, os::unix::fs::PermissionsExt as _};
@@ -20,6 +21,7 @@ use crate::manifest::Settings;
 pub struct BuildOpts {
     /// Apply the Landlock and seccomp jail to the build phase.
     pub jail: bool,
+    pub limits: crate::build_process::Limits,
     /// Allow network during the build phase.
     pub network: bool,
     /// Where built packages go.
@@ -38,6 +40,7 @@ impl BuildOpts {
         pkgbase: &str,
         cache_dir: &Path,
     ) -> Result<BuildOpts> {
+        settings.aur_limits.validate()?;
         let makepkg = which::which("makepkg")
             .map_err(|_| eyre::eyre!("makepkg is not on PATH; install base-devel"))?;
         let artifacts = cache_dir.join(".pacvamp-build");
@@ -49,6 +52,7 @@ impl BuildOpts {
             .keep();
         Ok(BuildOpts {
             jail: settings.aur_jail,
+            limits: settings.aur_limits.clone(),
             network: settings
                 .aur_allow_network_build
                 .iter()
@@ -228,9 +232,9 @@ fn run_makepkg(
     source_writable: bool,
     builddir: &Path,
 ) -> Result<std::process::ExitStatus> {
-    spawn_makepkg(opts, args, network, source_writable, builddir, false)?
-        .wait()
-        .wrap_err("waiting for makepkg")
+    let child = spawn_makepkg(opts, args, network, source_writable, builddir, false)?;
+    crate::build_process::ManagedChild::new(child)?
+        .wait(&opts.limits, opts.builddir.parent().unwrap_or(builddir))
 }
 
 fn run_makepkg_output(
@@ -240,9 +244,54 @@ fn run_makepkg_output(
     source_writable: bool,
     builddir: &Path,
 ) -> Result<std::process::Output> {
-    spawn_makepkg(opts, args, network, source_writable, builddir, true)?
-        .wait_with_output()
-        .wrap_err("waiting for makepkg")
+    let child = spawn_makepkg(opts, args, network, source_writable, builddir, true)?;
+    let mut child = crate::build_process::ManagedChild::new(child)?;
+    let stdout = child
+        .child
+        .stdout
+        .take()
+        .ok_or_else(|| eyre::eyre!("missing build stdout"))?;
+    let stderr = child
+        .child
+        .stderr
+        .take()
+        .ok_or_else(|| eyre::eyre!("missing build stderr"))?;
+    let out = std::thread::spawn(move || bounded_output(stdout));
+    let err = std::thread::spawn(move || bounded_output(stderr));
+    let status = child.wait(&opts.limits, opts.builddir.parent().unwrap_or(builddir));
+    drop(child); // close pipes held by lingering descendants before joining readers
+    let stdout = out
+        .join()
+        .map_err(|_| eyre::eyre!("stdout reader panicked"))??;
+    let stderr = err
+        .join()
+        .map_err(|_| eyre::eyre!("stderr reader panicked"))??;
+    Ok(std::process::Output {
+        status: status?,
+        stdout,
+        stderr,
+    })
+}
+
+fn bounded_output(mut reader: impl std::io::Read) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    let mut chunk = [0u8; 8192];
+    let mut overflow = false;
+    loop {
+        let n = reader.read(&mut chunk)?;
+        if n == 0 {
+            break;
+        }
+        if bytes.len() + n <= 1024 * 1024 {
+            bytes.extend_from_slice(&chunk[..n]);
+        } else {
+            overflow = true;
+        }
+    }
+    if overflow {
+        bail!("makepkg metadata output exceeded 1 MiB");
+    }
+    Ok(bytes)
 }
 
 fn spawn_makepkg(
@@ -280,17 +329,13 @@ fn spawn_makepkg(
         args: args.iter().map(|arg| (*arg).to_string()).collect(),
         cwd: builddir.join("worktree"),
     };
-    let (mut command, jail_spec) = if opts.jail {
-        (spec.command()?, Some(spec))
-    } else {
-        let mut command = Command::new(&opts.makepkg);
-        command
-            .args(args)
-            .current_dir(builddir.join("worktree"))
-            .env_clear()
-            .envs(crate::jail::scrubbed_env());
-        (command, None)
-    };
+    let mut command = Command::new(std::env::current_exe()?);
+    command
+        .arg("__build")
+        .env_clear()
+        .envs(crate::jail::scrubbed_env())
+        .stdin(Stdio::piped())
+        .process_group(0);
     command
         .env("PKGDEST", &pkgdest)
         .env("SRCDEST", &opts.srcdest)
@@ -304,13 +349,17 @@ fn spawn_makepkg(
         command.stdout(Stdio::piped()).stderr(Stdio::piped());
     }
     let mut child = command.spawn().wrap_err("starting makepkg")?;
-    if let Some(spec) = jail_spec {
+    {
         serde_json::to_writer(
             child
                 .stdin
                 .take()
                 .ok_or_else(|| eyre::eyre!("jail helper stdin is not piped"))?,
-            &spec,
+            &crate::build_process::BuildSpec {
+                spec,
+                jail: opts.jail,
+                limits: opts.limits.clone(),
+            },
         )
         .wrap_err("sending the jail spec")?;
     }

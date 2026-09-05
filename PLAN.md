@@ -973,3 +973,12 @@ records; `--write` restores only completed records whose installed versions and
 removals still match. Prepared records have uncertain outcomes and are never
 promoted to verified state. `--discard ID` explicitly forgets an inspected intent.
 This recovers bookkeeping, not package contents or failed pacman hooks.
+
+### Build resource controls
+
+All makepkg phases have configurable wall-clock, CPU, virtual-memory, process,
+file-size and run-directory disk budgets. Managed values are upper bounds.
+The helper sets kernel limits and prevents process-group escape; the parent
+supervises cancellation and cleans up descendants. Per-process/account limits
+and the sampled disk budget are explicitly distinguished from cgroup quotas.
+See docs/build-controls.md for defaults and cancellation limits.

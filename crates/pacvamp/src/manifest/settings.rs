@@ -179,6 +179,7 @@ pub struct AurToml {
     pub min_votes: Option<u32>,
     pub jail: Option<bool>,
     pub chroot: Option<bool>,
+    pub limits: crate::build_process::LimitsToml,
     pub allow_network_build: Vec<String>,
     /// Managed only: packages that may never build with network.
     pub deny_network_build: Vec<String>,
@@ -251,6 +252,7 @@ pub struct Settings {
     pub aur_min_votes: u32,
     pub aur_jail: bool,
     pub aur_chroot: bool,
+    pub aur_limits: crate::build_process::Limits,
     pub aur_allow_network_build: Vec<String>,
     pub aur_install_scripts: InstallScripts,
     pub repo_min_release_age_arch: Age,
@@ -284,6 +286,7 @@ impl Default for Settings {
             aur_min_votes: 10,
             aur_jail: true,
             aur_chroot: false,
+            aur_limits: Default::default(),
             aur_allow_network_build: Vec::new(),
             aur_install_scripts: InstallScripts::Approve,
             repo_min_release_age_arch: Age::ZERO,
@@ -349,6 +352,7 @@ impl Settings {
         set!(aur_min_votes, policy.aur.min_votes);
         set!(aur_jail, policy.aur.jail);
         set!(aur_chroot, policy.aur.chroot);
+        self.aur_limits.merge(&policy.aur.limits, false);
         append_unique(
             &mut self.aur_allow_network_build,
             &policy.aur.allow_network_build,
@@ -414,6 +418,7 @@ impl Settings {
         max!(aur_min_votes, managed.aur.min_votes);
         true_wins!(aur_jail, managed.aur.jail);
         true_wins!(aur_chroot, managed.aur.chroot);
+        self.aur_limits.merge(&managed.aur.limits, true);
         self.aur_allow_network_build
             .retain(|pkg| !managed.aur.deny_network_build.contains(pkg));
         max!(aur_install_scripts, managed.aur.install_scripts);

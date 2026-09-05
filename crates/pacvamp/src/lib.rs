@@ -21,3 +21,5 @@ pub mod trust;
 pub mod tui;
 pub mod ui;
 pub mod update;
+
+pub mod build_process;

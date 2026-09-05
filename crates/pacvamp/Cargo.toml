@@ -34,7 +34,7 @@ indexmap.workspace = true
 jiff.workspace = true
 landlock.workspace = true
 libc.workspace = true
-nix = { workspace = true, features = ["fs"] }
+nix = { workspace = true, features = ["dir", "fs", "resource", "signal"] }
 pacvamp-cli-support.workspace = true
 pacvamp-policy.workspace = true
 packslip.workspace = true
@@ -43,6 +43,7 @@ seccompiler.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+signal-hook = "0.3"
 thiserror.workspace = true
 tempfile.workspace = true
 toml.workspace = true
