@@ -1,0 +1,10 @@
+name: Configure mbx cache
+description: Restore and save builds with the GitHub Actions cache
+
+runs:
+  using: composite
+  steps:
+    # mbx is installed from the project lockfile by mise before this action runs.
+    - uses: jdx/mr-boxington-action@7234d3dd1a6ca8f6c381eea8e4dfb03f18fcf777 # v1.3.0
+      with:
+        backend: github
