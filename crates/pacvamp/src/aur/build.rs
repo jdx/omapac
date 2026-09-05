@@ -22,6 +22,7 @@ pub struct BuildOpts {
     /// Apply the Landlock and seccomp jail to the build phase.
     pub jail: bool,
     pub limits: crate::build_process::Limits,
+    pub dependencies: std::collections::BTreeMap<String, String>,
     /// Allow network during the build phase.
     pub network: bool,
     /// Where built packages go.
@@ -39,6 +40,7 @@ impl BuildOpts {
         settings: &Settings,
         pkgbase: &str,
         cache_dir: &Path,
+        host: &Host,
     ) -> Result<BuildOpts> {
         settings.aur_limits.validate()?;
         let makepkg = which::which("makepkg")
@@ -53,6 +55,11 @@ impl BuildOpts {
         Ok(BuildOpts {
             jail: settings.aur_jail,
             limits: settings.aur_limits.clone(),
+            dependencies: host
+                .installed()?
+                .iter()
+                .map(|p| (p.name.clone(), p.version.clone()))
+                .collect(),
             network: settings
                 .aur_allow_network_build
                 .iter()
@@ -170,6 +177,8 @@ fn build_with_options(
     std::fs::remove_dir_all(&verifydir)
         .wrap_err_with(|| format!("removing {}", verifydir.display()))?;
 
+    let sources = super::receipt::inputs(&opts.srcdest)?;
+    let refs = super::receipt::vcs_refs(&opts.srcdest)?;
     // Phase 2 extracts, prepares, builds, and packages inside the jail.
     // --holdver prevents makepkg from updating VCS sources a second time;
     // phase 1 already fetched and verified the exact source state.
@@ -222,6 +231,10 @@ fn build_with_options(
             opts.pkgdest.display()
         );
     }
+    if super::receipt::inputs(&opts.srcdest)? != sources {
+        bail!("source inputs changed during the build; refusing a misleading receipt");
+    }
+    super::receipt::write(reviewed, opts, sources, refs, &files)?;
     Ok(files)
 }
 

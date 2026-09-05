@@ -58,3 +58,5 @@ mod tests {
 }
 
 mod locking;
+
+pub mod receipt;

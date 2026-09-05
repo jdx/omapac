@@ -104,6 +104,11 @@ Fetches the package's git history and metadata, evaluates the policy findings ag
         flag "-h --help" help="Print help" action=help builtin=#true
         arg <PACKAGE> help="The package name"
     }
+    cmd receipt help="Inspect a local build receipt and verify the artifact still matches it" {
+        flag --json
+        flag "-h --help" help="Print help" action=help builtin=#true
+        arg <ARTIFACT>
+    }
 }
 cmd channel help="Show the channel and snapshot this machine follows, or pin one" {
     long_help #"""

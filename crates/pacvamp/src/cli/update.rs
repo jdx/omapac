@@ -600,6 +600,15 @@ fn update_aur_package(app: &App, name: &str, yes: bool) -> Result<AurOutcome> {
     }
     let prepared = app.prepare_aur(name, Some(&reviewed.target), true, yes)?;
     let files = app.build_aur(&prepared, yes)?;
+    for file in &files {
+        crate::aur::receipt::for_artifact(file)?;
+    }
+    let receipt_ref = crate::aur::receipt::for_artifact(
+        files
+            .first()
+            .ok_or_else(|| eyre::eyre!("no build artifacts"))?,
+    )?
+    .1;
     let built = crate::aur::build::built_packages(&files)?;
     if !built.iter().any(|package| package.name == name) {
         bail!("{name}: makepkg did not produce the requested package");
@@ -657,6 +666,7 @@ fn update_aur_package(app: &App, name: &str, yes: bool) -> Result<AurOutcome> {
                 tier: crate::resolve::Tier::Aur,
                 repo: None,
                 aur_commit: Some(prepared.reviewed.target.clone()),
+                build_receipt: Some(receipt_ref.clone()),
                 verification: None,
                 explicit,
                 by: "update".to_string(),

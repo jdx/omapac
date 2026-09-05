@@ -23,6 +23,7 @@ enum AurCommands {
     Build(Build),
     Diff(Diff),
     Review(Review),
+    Receipt(Receipt),
 }
 
 /// Build an approved AUR package without installing it
@@ -273,6 +274,7 @@ impl App {
             &prepared.settings,
             &prepared.reviewed.pkgbase,
             &crate::aur::cache_dir(),
+            &self.host()?,
         )?;
         crate::aur::build::build(&prepared.reviewed, &opts)
     }
@@ -350,6 +352,7 @@ impl App {
                         &prepared.settings,
                         &prepared.reviewed.pkgbase,
                         &crate::aur::cache_dir(),
+                        &self.host()?,
                     )?;
                     let files = crate::aur::build::build_without_dependency_checks(
                         &prepared.reviewed,
@@ -489,6 +492,9 @@ impl App {
         as_deps: bool,
         by: &str,
     ) -> Result<()> {
+        for file in files {
+            crate::aur::receipt::for_artifact(file)?;
+        }
         let packages = crate::aur::build::built_packages(files)?;
         let version = prepared.reviewed.srcinfo.version();
         let mut selected_names = vec![prepared.reviewed.pkgname.clone()];
@@ -540,6 +546,15 @@ impl App {
         explicit_name: Option<&str>,
         by: &str,
     ) -> Result<()> {
+        for file in files {
+            crate::aur::receipt::for_artifact(file)?;
+        }
+        let receipt_ref = crate::aur::receipt::for_artifact(
+            files
+                .first()
+                .ok_or_else(|| eyre::eyre!("no build artifacts"))?,
+        )?
+        .1;
         let packages = crate::aur::build::built_packages(files)?;
         let host = self.host()?;
         let mut dependency_files = Vec::new();
@@ -575,6 +590,7 @@ impl App {
                     tier: crate::resolve::Tier::Aur,
                     repo: None,
                     aur_commit: Some(prepared.reviewed.target.clone()),
+                    build_receipt: Some(receipt_ref.clone()),
                     verification: None,
                     explicit,
                     by: by.to_string(),
@@ -908,6 +924,33 @@ impl RunWith<&App> for Diff {
     fn run_with(self, app: &App) -> Self::Output {
         let (reviewed, _) = app.review_aur(&self.package, self.commit.as_deref(), true)?;
         print!("{}", reviewed.review_text()?);
+        Ok(())
+    }
+}
+
+/// Inspect a local build receipt and verify the artifact still matches it
+#[derive(Debug, usage_rs::Args)]
+pub struct Receipt {
+    artifact: std::path::PathBuf,
+    #[usage(long)]
+    json: bool,
+}
+impl RunWith<&App> for Receipt {
+    type Output = Result<()>;
+    fn run_with(self, _app: &App) -> Result<()> {
+        let (receipt, reference) = crate::aur::receipt::for_artifact(&self.artifact)?;
+        if self.json {
+            return print_json(&receipt);
+        }
+        println!(
+            "{} at {}\n{}\nreceipt: {}\n{} source inputs; {} installed build dependencies; artifact hash matches",
+            receipt.pkgbase,
+            receipt.commit,
+            receipt.claim,
+            reference.path.display(),
+            receipt.sources.len(),
+            receipt.dependencies.len()
+        );
         Ok(())
     }
 }

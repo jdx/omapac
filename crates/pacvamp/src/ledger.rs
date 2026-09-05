@@ -31,6 +31,9 @@ pub struct Entry {
     /// The AUR commit that was built, for AUR packages.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aur_commit: Option<String>,
+    /// Local build receipt location and digest, not publisher verification.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_receipt: Option<crate::aur::receipt::Reference>,
     /// Repository evidence accepted before this package was installed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification: Option<Verification>,
@@ -348,6 +351,7 @@ mod tests {
             tier: Tier::Arch,
             repo: Some("core".into()),
             aur_commit: None,
+            build_receipt: None,
             verification: None,
             explicit: true,
             by: "install".into(),
