@@ -39,6 +39,11 @@ pub struct Source {
 }
 
 impl Source {
+    /// The authoritative sync database path, including the configured sysroot.
+    pub(crate) fn database_path(&self) -> &Path {
+        &self.db_path
+    }
+
     /// The sync database, parsed on first use. `None` when pacman has not
     /// downloaded it yet.
     pub fn db(&self) -> Result<Option<&SyncDb>> {

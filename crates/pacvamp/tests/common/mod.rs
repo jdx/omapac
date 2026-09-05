@@ -88,6 +88,7 @@ impl Rig {
             .env("PATH", format!("{}:/usr/bin:/bin", self.bin.display()))
             .env("PACVAMP_TEST_PACMAN", self.bin.join("pacman"))
             .env("HOME", &self.home)
+            .env("XDG_CACHE_HOME", self.home.join(".cache"))
             .env_remove("XDG_CONFIG_HOME")
             .env_remove("PACVAMP_MANAGED_CONFIG_PATH")
             .env("FAKE_PACMAN_LOG", &self.log)

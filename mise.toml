@@ -92,3 +92,7 @@ test -z "$(git ls-files --others --exclude-standard -- docs/cli)"
 [tasks.ci]
 description = "What CI runs"
 depends = ["lint", "build", "test", "render:check", "docs:build"]
+
+[tasks."bench:search"]
+description = "Benchmark repository search startup on a reproducible Arch-sized corpus"
+run = "cargo build --locked --release -p pacvamp && python3 benchmarks/search.py"

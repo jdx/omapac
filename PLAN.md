@@ -876,7 +876,11 @@ tool-channel support in mise, which is a mise change.
   `pacvamp-repo index`, a local AUR git fixture, and a fake snapshot store: add, drop,
   update, commit-drift denial under `-y`, lockfile round-trip on a second container,
   rollback to a snapshot.
-- Benchmarks: `present` and `search` under 50 ms cold so menu guards stay snappy.
+- Benchmarks: `present` and indexed `search` target under 50 ms per fresh process
+  on a typical host. The first search after sync rebuilds changed indexes and is
+  measured separately; it is not subject to the menu target. The reproducible
+  Arch-sized corpus and CI allowances are in `benchmarks/README.md` (150 ms median
+  indexed search, 100 ms present, 3 s rebuild on shared runners).
 
 ## Decisions
 
