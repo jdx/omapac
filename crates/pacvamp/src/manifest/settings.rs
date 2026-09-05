@@ -180,6 +180,7 @@ pub struct AurToml {
     pub jail: Option<bool>,
     pub chroot: Option<bool>,
     pub chroot_root: Option<std::path::PathBuf>,
+    pub cgroup_root: Option<std::path::PathBuf>,
     pub limits: crate::build_process::LimitsToml,
     pub allow_network_build: Vec<String>,
     /// Managed only: packages that may never build with network.
@@ -254,6 +255,7 @@ pub struct Settings {
     pub aur_jail: bool,
     pub aur_chroot: bool,
     pub aur_chroot_root: std::path::PathBuf,
+    pub aur_cgroup_root: Option<std::path::PathBuf>,
     pub aur_limits: crate::build_process::Limits,
     pub aur_allow_network_build: Vec<String>,
     pub aur_install_scripts: InstallScripts,
@@ -288,6 +290,7 @@ impl Default for Settings {
             aur_min_votes: 10,
             aur_jail: true,
             aur_chroot: false,
+            aur_cgroup_root: None,
             aur_chroot_root: "/var/lib/pacvamp/chroot/root".into(),
             aur_limits: Default::default(),
             aur_allow_network_build: Vec::new(),
@@ -358,6 +361,9 @@ impl Settings {
         if let Some(root) = &policy.aur.chroot_root {
             self.aur_chroot_root = root.clone();
         }
+        if let Some(root) = &policy.aur.cgroup_root {
+            self.aur_cgroup_root = Some(root.clone());
+        }
         self.aur_limits.merge(&policy.aur.limits, false);
         append_unique(
             &mut self.aur_allow_network_build,
@@ -426,6 +432,9 @@ impl Settings {
         true_wins!(aur_chroot, managed.aur.chroot);
         if let Some(root) = &managed.aur.chroot_root {
             self.aur_chroot_root = root.clone();
+        }
+        if let Some(root) = &managed.aur.cgroup_root {
+            self.aur_cgroup_root = Some(root.clone());
         }
         self.aur_limits.merge(&managed.aur.limits, true);
         self.aur_allow_network_build

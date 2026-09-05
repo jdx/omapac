@@ -16,6 +16,8 @@ use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Limits {
+    #[serde(default = "default_cpu_percent")]
+    pub cpu_percent: u64,
     pub wall_seconds: u64,
     pub cpu_seconds: u64,
     pub memory_mb: u64,
@@ -26,6 +28,7 @@ pub struct Limits {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct LimitsToml {
+    pub cpu_percent: Option<u64>,
     pub wall_seconds: Option<u64>,
     pub cpu_seconds: Option<u64>,
     pub memory_mb: Option<u64>,
@@ -33,9 +36,13 @@ pub struct LimitsToml {
     pub file_mb: Option<u64>,
     pub disk_mb: Option<u64>,
 }
+fn default_cpu_percent() -> u64 {
+    100
+}
 impl Default for Limits {
     fn default() -> Self {
         Self {
+            cpu_percent: default_cpu_percent(),
             wall_seconds: 7200,
             cpu_seconds: 7200,
             memory_mb: 32768,
@@ -54,6 +61,7 @@ impl Limits {
                 }
             };
         }
+        field!(cpu_percent);
         field!(wall_seconds);
         field!(cpu_seconds);
         field!(memory_mb);
@@ -63,6 +71,7 @@ impl Limits {
     }
     pub fn validate(&self) -> Result<()> {
         for n in [
+            self.cpu_percent,
             self.wall_seconds,
             self.cpu_seconds,
             self.memory_mb,
@@ -111,6 +120,8 @@ pub struct KernelLimits {
 }
 #[derive(Serialize, Deserialize)]
 pub struct BuildSpec {
+    #[serde(default)]
+    pub cgroup_path: Option<std::path::PathBuf>,
     pub spec: crate::jail::Spec,
     pub jail: bool,
     pub limits: Limits,
@@ -172,6 +183,7 @@ fn build_signals() -> Result<&'static BuildSignals> {
 }
 
 pub struct ManagedChild {
+    pub cgroup: Option<crate::cgroup::Group>,
     pub child: Child,
     group: Pid,
     cancelled: Arc<AtomicBool>,
@@ -180,6 +192,7 @@ pub struct ManagedChild {
 impl ManagedChild {
     pub fn new(child: Child) -> Result<Self> {
         let mut managed = Self {
+            cgroup: None,
             group: Pid::from_raw(child.id() as i32),
             child,
             cancelled: Arc::new(AtomicBool::new(false)),

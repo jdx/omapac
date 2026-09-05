@@ -95,6 +95,8 @@ enum Commands {
     JailExec(jail_cmd::JailExec),
     #[usage(name = "__build", hide)]
     BuildExec(jail_cmd::BuildExec),
+    #[usage(name = "__cgroup-watch", hide)]
+    CgroupWatch(jail_cmd::CgroupWatch),
     #[usage(name = "__ledger", hide)]
     LedgerMerge(ledger_cmd::LedgerMerge),
     #[usage(name = "__write", hide)]

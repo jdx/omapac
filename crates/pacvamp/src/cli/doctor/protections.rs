@@ -50,6 +50,22 @@ pub(super) fn diagnose_protections(
         ),
         Err(err) => add(Status::Fail, "build-limits", format!("{err:#}")),
     }
+    if let Some(root) = &settings.aur_cgroup_root {
+        match crate::cgroup::validate(root) {
+            Ok(()) => add(
+                Status::Ok,
+                "build-cgroup",
+                format!(
+                    "{}; aggregate CPU {}%, memory {} MiB, tasks {}; controller writes checked at build startup",
+                    root.display(),
+                    settings.aur_limits.cpu_percent,
+                    settings.aur_limits.memory_mb,
+                    settings.aur_limits.processes
+                ),
+            ),
+            Err(err) => add(Status::Fail, "build-cgroup", format!("{err:#}")),
+        }
+    }
     if settings.aur_chroot {
         match crate::aur::chroot::host(&settings.aur_chroot_root)
             .and_then(|_| which::which("bwrap").map_err(Into::into))

@@ -1014,3 +1014,8 @@ is still commit-approved and jailed; the base and host are not package targets.
 Recovery reports compare expected and installed package state, show bounded
 pacman log context, and give transaction-specific next steps. Logs and matching
 versions never upgrade an uncertain intent to evidence. `--id` scopes restoration.
+
+Optional delegated cgroup v2 supervision adds aggregate memory, task and CPU
+bandwidth limits. An independent pipe watcher kills the group on supervisor death.
+Delegation is an explicit administrator operation; unavailable controllers fail
+closed and normal per-process rlimits remain in force.
