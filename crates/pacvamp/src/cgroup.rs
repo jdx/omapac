@@ -4,6 +4,7 @@ use eyre::{Context as _, Result, bail};
 use std::{
     fs,
     io::{BufRead as _, Write as _},
+    os::unix::process::CommandExt as _,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
 };
@@ -52,6 +53,7 @@ impl Group {
         // the supervisor; CLOEXEC prevents a recipe inheriting that lease.
         group.watcher = Some(
             Command::new(helper)
+                .process_group(0)
                 .arg("__cgroup-watch")
                 .arg(&group.path)
                 .stdin(Stdio::piped())
@@ -72,7 +74,9 @@ impl Drop for Group {
         if let Some(mut watcher) = self.watcher.take() {
             drop(watcher.stdin.take());
             let _ = watcher.wait();
-        } else {
+        }
+        // The watcher may have died independently; retain parent-side cleanup.
+        if self.path.exists() {
             let _ = cleanup(&self.path);
         }
     }

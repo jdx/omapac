@@ -4,6 +4,7 @@ use pacvamp::{
     jail::Spec,
 };
 use std::{
+    os::unix::process::CommandExt as _,
     path::PathBuf,
     process::{Command, Stdio},
 };
@@ -65,12 +66,20 @@ fn delegated_group_enforces_memory_and_cleans_descendants() {
 
 #[test]
 fn watcher_cleans_after_supervisor_sigkill() {
+    death_cleanup(false);
+}
+#[test]
+fn watcher_cleans_after_terminal_interrupt() {
+    death_cleanup(true);
+}
+fn death_cleanup(terminal: bool) {
     let Some(root) = std::env::var_os("PACVAMP_TEST_CGROUP_ROOT") else {
         return;
     };
     let temp = tempfile::tempdir().unwrap();
     let marker = temp.path().join("group");
     let mut supervisor = Command::new(std::env::current_exe().unwrap())
+        .process_group(0)
         .args(["--exact", "supervisor_probe", "--ignored"])
         .env("PACVAMP_TEST_CGROUP_ROOT", root)
         .env("PACVAMP_GROUP_MARKER", &marker)
@@ -86,7 +95,15 @@ fn watcher_cleans_after_supervisor_sigkill() {
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
     let path = PathBuf::from(std::fs::read_to_string(marker).unwrap());
-    supervisor.kill().unwrap();
+    if terminal {
+        nix::sys::signal::killpg(
+            nix::unistd::Pid::from_raw(supervisor.id() as i32),
+            nix::sys::signal::Signal::SIGTERM,
+        )
+        .unwrap();
+    } else {
+        supervisor.kill().unwrap();
+    }
     supervisor.wait().unwrap();
     while path.exists() {
         assert!(
