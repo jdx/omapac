@@ -41,6 +41,12 @@ pub struct Build {
     /// Install missing repository dependencies without asking
     #[usage(short = 'y', long)]
     yes: bool,
+    /// Clone the configured image and install dependencies there for this build
+    #[usage(long)]
+    prepare_image: bool,
+    /// Reviewed local dependency artifacts to install into the disposable image
+    #[usage(long)]
+    dependency_artifact: Vec<std::path::PathBuf>,
     /// Print the files as JSON
     #[usage(short = 'J', long)]
     json: bool,
@@ -50,7 +56,37 @@ impl RunWith<&App> for Build {
     type Output = Result<()>;
 
     fn run_with(self, app: &App) -> Self::Output {
-        let prepared = app.prepare_aur(&self.package, self.commit.as_deref(), true, self.yes)?;
+        let mut prepared =
+            app.prepare_aur(&self.package, self.commit.as_deref(), true, self.yes)?;
+        if !self.prepare_image && !self.dependency_artifact.is_empty() {
+            bail!("--dependency-artifact requires --prepare-image");
+        }
+        let _image = if self.prepare_image {
+            let root = crate::aur::chroot::root(&prepared.settings)
+                .ok_or_else(|| eyre::eyre!("--prepare-image requires policy.aur.chroot = true"))?;
+            let host = crate::aur::chroot::host(&root)?;
+            let missing =
+                crate::aur::build::missing_deps(&host, &prepared.reviewed, &prepared.arch)?;
+            let packages = missing
+                .repo
+                .iter()
+                .map(|p| {
+                    p.repo
+                        .as_ref()
+                        .map_or_else(|| p.name.clone(), |r| format!("{r}/{}", p.name))
+                })
+                .collect::<Vec<_>>();
+            let image = crate::aur::environment::Disposable::prepare(
+                &root,
+                &packages,
+                &self.dependency_artifact,
+                self.yes,
+            )?;
+            prepared.settings.aur_chroot_root = image.root.clone();
+            Some(image)
+        } else {
+            None
+        };
         let files = app.build_aur(&prepared, self.yes)?;
         if self.json {
             return print_json(&files);

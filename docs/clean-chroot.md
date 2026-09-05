@@ -40,3 +40,25 @@ identify the image and inventory its installed package versions.
 
 The CI container uses privileged mode only to exercise nested namespaces. The
 package recipe still runs as the non-root builder inside the read-only image.
+
+## Managed environments
+
+`sudo pacvamp build-env init /var/lib/pacvamp/chroot/root` provisions base-devel.
+`pacvamp build-env update ROOT --destination NEW_ROOT` clones and upgrades a new
+image; the previous image remains available. A failed provisioning command leaves
+its destination for inspection, and never overwrites an existing image.
+
+`pacvamp aur build PACKAGE --prepare-image` makes a disposable clone of the
+configured image, installs missing repository dependencies there, builds, and
+removes the clone. Pacman asks before installing unless `-y` is supplied.
+Use repeated `--dependency-artifact FILE` for locally reviewed AUR dependency
+artifacts with matching receipts. They are copied and hash-checked before image
+installation. Remaining unsatisfied dependencies stop the build; this command
+never approves or recursively builds an unreviewed AUR dependency.
+
+This requires devtools, sudo/root permission for image provisioning, and enough
+space for a copy when filesystem reflinks are unavailable. Dependency installation
+can upgrade the disposable image to keep its repository packages coherent. The
+resulting package inventory is recorded in the receipt. The shared base image and
+host package database are unchanged. A forced kill may leave a temporary image
+under the system temporary directory; its path is printed during provisioning.

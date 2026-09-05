@@ -13,5 +13,7 @@ Sources are fetched with network, then makepkg runs in the jail with writes limi
 ## Flags
 - **`--commit <COMMIT>`** — Build this commit instead of the approved one
 - **`-y --yes`** — Install missing repository dependencies without asking
+- **`--prepare-image`** — Clone the configured image and install dependencies there for this build
+- **`--dependency-artifact <DEPENDENCY_ARTIFACT>`** — Reviewed local dependency artifacts to install into the disposable image
 - **`-J --json`** — Print the files as JSON
 - **`-h --help`** — Print help
