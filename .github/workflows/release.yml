@@ -111,7 +111,7 @@ jobs:
         run: |
           mkdir -p dist
           gh release download "$GITHUB_REF_NAME" --dir dist --pattern 'pacvamp-*.tar.xz'
-      - uses: jdx/packslip@0121abf6972fe6ca13633233402439a715f4cc0e # v1.0.0
+      - uses: jdx/packslip@5c1cced7cfa661140dbc972a0de55b2b6bd81522 # v1.0.2
         with:
           artifacts: dist/pacvamp-*.tar.xz
           bin: pacvamp pacvamp-repo
