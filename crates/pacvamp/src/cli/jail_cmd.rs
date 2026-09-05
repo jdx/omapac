@@ -39,6 +39,9 @@ impl RunWith<&App> for BuildExec {
     type Output = Result<()>;
     fn run_with(self, _app: &App) -> Result<()> {
         let request: crate::build_process::BuildSpec = serde_json::from_reader(std::io::stdin())?;
+        if let Some(path) = &request.cgroup_path {
+            crate::cgroup::join(path)?;
+        }
         request.limits.apply()?;
         if request.jail {
             request.spec.apply()?;
@@ -51,5 +54,17 @@ impl RunWith<&App> for BuildExec {
             .stdin(std::process::Stdio::null())
             .exec();
         Err(err).wrap_err("executing build command")
+    }
+}
+
+/// Kill a delegated build cgroup when the supervisor's pipe closes
+#[derive(Debug, usage_rs::Args)]
+pub struct CgroupWatch {
+    path: std::path::PathBuf,
+}
+impl RunWith<&App> for CgroupWatch {
+    type Output = Result<()>;
+    fn run_with(self, _: &App) -> Result<()> {
+        crate::cgroup::watch(&self.path)
     }
 }

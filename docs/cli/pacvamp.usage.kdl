@@ -236,6 +236,10 @@ cmd __jail help="Restrict this process per a JSON spec on stdin, then exec the c
 cmd __build help="Apply build limits and optional filesystem confinement, then execute" hide=#true {
     flag "-h --help" help="Print help" action=help builtin=#true
 }
+cmd __cgroup-watch help="Kill a delegated build cgroup when the supervisor's pipe closes" hide=#true {
+    flag "-h --help" help="Print help" action=help builtin=#true
+    arg <PATH>
+}
 cmd __ledger help="Merge a ledger patch from stdin; pacvamp runs this elevated" hide=#true {
     flag "-h --help" help="Print help" action=help builtin=#true
 }

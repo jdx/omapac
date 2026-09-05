@@ -5,7 +5,7 @@
 
 use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::{fs, os::unix::fs::PermissionsExt as _};
 
 use alpm_db::Dependency;
@@ -19,6 +19,7 @@ use crate::manifest::Settings;
 /// How to build.
 #[derive(Debug, Clone)]
 pub struct BuildOpts {
+    pub cgroup_root: Option<PathBuf>,
     pub cache_lease: std::sync::Arc<nix::fcntl::Flock<std::fs::File>>,
     /// Apply the Landlock and seccomp jail to the build phase.
     pub jail: bool,
@@ -62,7 +63,11 @@ impl BuildOpts {
             .prefix(&format!("{pkgbase}-"))
             .tempdir_in(runs)?
             .keep();
+        if settings.aur_cgroup_root.is_some() && !settings.aur_jail {
+            bail!("cgroup builds require the filesystem jail");
+        }
         Ok(BuildOpts {
+            cgroup_root: settings.aur_cgroup_root.clone(),
             cache_lease,
             jail: settings.aur_jail,
             chroot,
@@ -270,9 +275,8 @@ fn run_makepkg(
     source_writable: bool,
     builddir: &Path,
 ) -> Result<std::process::ExitStatus> {
-    let child = spawn_makepkg(opts, args, network, source_writable, builddir, false)?;
-    crate::build_process::ManagedChild::new(child)?
-        .wait(&opts.limits, opts.builddir.parent().unwrap_or(builddir))
+    let mut child = spawn_makepkg(opts, args, network, source_writable, builddir, false)?;
+    child.wait(&opts.limits, opts.builddir.parent().unwrap_or(builddir))
 }
 
 fn run_makepkg_output(
@@ -282,8 +286,7 @@ fn run_makepkg_output(
     source_writable: bool,
     builddir: &Path,
 ) -> Result<std::process::Output> {
-    let child = spawn_makepkg(opts, args, network, source_writable, builddir, true)?;
-    let mut child = crate::build_process::ManagedChild::new(child)?;
+    let mut child = spawn_makepkg(opts, args, network, source_writable, builddir, true)?;
     let stdout = child
         .child
         .stdout
@@ -339,7 +342,7 @@ fn spawn_makepkg(
     source_writable: bool,
     builddir: &Path,
     capture_output: bool,
-) -> Result<Child> {
+) -> Result<crate::build_process::ManagedChild> {
     let scratch = builddir.join("tmp");
     std::fs::create_dir_all(&scratch).wrap_err("creating private build scratch directory")?;
     // makepkg checks PKGDEST before source verification too. Give that phase
@@ -387,6 +390,11 @@ fn spawn_makepkg(
             .collect();
     }
     let helper = std::env::current_exe()?;
+    let cgroup = opts
+        .cgroup_root
+        .as_ref()
+        .map(|root| crate::cgroup::Group::create(root, &opts.limits, &helper))
+        .transpose()?;
     let mut command = if let Some(root) = &opts.chroot {
         super::chroot::command(
             root,
@@ -395,6 +403,7 @@ fn spawn_makepkg(
                 .ok_or_else(|| eyre::eyre!("missing run directory"))?,
             &helper,
             network,
+            cgroup.as_ref().map(|group| group.path.as_path()),
         )?
     } else {
         let mut cmd = Command::new(&helper);
@@ -440,14 +449,24 @@ fn spawn_makepkg(
     if capture_output {
         command.stdout(Stdio::piped()).stderr(Stdio::piped());
     }
-    let mut child = command.spawn().wrap_err("starting makepkg")?;
+    let mut child =
+        crate::build_process::ManagedChild::new(command.spawn().wrap_err("starting makepkg")?)?;
+    child.cgroup = cgroup;
     {
         serde_json::to_writer(
             child
+                .child
                 .stdin
                 .take()
                 .ok_or_else(|| eyre::eyre!("jail helper stdin is not piped"))?,
             &crate::build_process::BuildSpec {
+                cgroup_path: child.cgroup.as_ref().map(|group| {
+                    if opts.chroot.is_some() {
+                        PathBuf::from("/pacvamp-cgroup")
+                    } else {
+                        group.path.clone()
+                    }
+                }),
                 spec,
                 jail: opts.jail,
                 limits: opts.limits.clone(),

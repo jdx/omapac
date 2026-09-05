@@ -35,7 +35,13 @@ pub fn host(root: &Path) -> Result<Host> {
     })
 }
 
-pub fn command(root: &Path, run: &Path, helper: &Path, network: bool) -> Result<Command> {
+pub fn command(
+    root: &Path,
+    run: &Path,
+    helper: &Path,
+    network: bool,
+    cgroup: Option<&Path>,
+) -> Result<Command> {
     host(root)?;
     let bubblewrap = which::which("bwrap")
         .wrap_err("aur.chroot requires bubblewrap; install it before building")?;
@@ -64,6 +70,7 @@ pub fn command(root: &Path, run: &Path, helper: &Path, network: bool) -> Result<
             "tmp",
             "build",
             "pacvamp-helper",
+            "pacvamp-cgroup",
         ]
         .iter()
         .any(|reserved| name == *reserved)
@@ -86,6 +93,9 @@ pub fn command(root: &Path, run: &Path, helper: &Path, network: bool) -> Result<
         cmd.arg("--ro-bind")
             .arg("/etc/resolv.conf")
             .arg(resolver_destination(root)?);
+    }
+    if let Some(group) = cgroup {
+        cmd.arg("--bind").arg(group).arg("/pacvamp-cgroup");
     }
     cmd.arg("--bind").arg(run).arg("/build");
     cmd.arg("--ro-bind").arg(helper).arg("/pacvamp-helper");

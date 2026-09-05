@@ -18,6 +18,7 @@ fn spawn(dir: &Path, script: &str, limits: Limits) -> ManagedChild {
         .spawn()
         .unwrap();
     let spec = BuildSpec {
+        cgroup_path: None,
         limits,
         jail: false,
         spec: Spec {
@@ -151,6 +152,7 @@ fn lower_inherited_limits_are_preserved_without_privilege() {
         .spawn()
         .unwrap();
     let spec = BuildSpec {
+        cgroup_path: None,
         limits: limits.clone(),
         jail: false,
         spec: Spec {
