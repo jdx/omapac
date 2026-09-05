@@ -7,7 +7,15 @@ pub fn privileged(program: &str, args: Vec<String>) -> Result<()> {
     let invocation = Invocation::new(which::which(program)?, args)
         .elevated(&Context::detect(Default::default()))?;
     eprintln!("{}", invocation.display());
-    if !invocation.command().status()?.success() {
+    use std::os::fd::AsFd as _;
+    if !invocation
+        .command()
+        .stdout(std::process::Stdio::from(
+            std::io::stderr().as_fd().try_clone_to_owned()?,
+        ))
+        .status()?
+        .success()
+    {
         bail!("{program} failed");
     }
     Ok(())
@@ -108,6 +116,8 @@ impl Disposable {
         let directory = tempfile::Builder::new()
             .prefix("pacvamp-image-")
             .tempdir()?;
+        let artifacts_dir = directory.path().join("artifacts");
+        std::fs::create_dir(&artifacts_dir)?;
         let mut copies = Vec::new();
         for (i, artifact) in artifacts.iter().enumerate() {
             let (receipt, _) = super::receipt::for_artifact(artifact)?;
@@ -115,7 +125,7 @@ impl Disposable {
                 .file_name()
                 .and_then(|s| s.to_str())
                 .ok_or_else(|| eyre::eyre!("invalid artifact name"))?;
-            let copy = directory.path().join(format!("dependency-{i}.pkg.tar.zst"));
+            let copy = artifacts_dir.join(format!("dependency-{i}.pkg.tar.zst"));
             std::fs::copy(artifact, &copy)?;
             if receipt.outputs.get(name) != Some(&packslip::digest_file(&copy)?.0) {
                 bail!("dependency artifact changed while copying");
@@ -136,7 +146,7 @@ impl Disposable {
                 arg(&image.root)?,
                 format!(
                     "--bind-ro={}:{}",
-                    arg(image._directory.path())?,
+                    arg(&artifacts_dir)?,
                     "/pacvamp-dependencies"
                 ),
                 "pacman".into(),
