@@ -194,7 +194,8 @@ bsdtar -xOf "$artifact" .BUILDINFO | grep '^installed = pacman-' >/dev/null
 
 # Provision a separate build image, then prove host-only tools stay unavailable.
 pacman -S --noconfirm --needed bubblewrap devtools >/dev/null
-mkarchroot /srv/pacvamp-image/root base-devel >/dev/null
+mkdir -p /srv/pacvamp-image
+mkarchroot /srv/pacvamp-image/root base-devel pacman
 mkdir -p /home/pacvamp-builder/.config/pacvamp
 cat >/home/pacvamp-builder/.config/pacvamp/pacvamp.toml <<'CONFIG'
 [policy.aur]
@@ -208,9 +209,9 @@ cat >>/srv/pacvamp-aur/work/PKGBUILD <<'RECIPE'
 if test -e /usr/share/pacvamp-host-only; then exit 94; fi
 if touch /usr/share/pacvamp-image-poison; then exit 95; fi
 RECIPE
-git -C /srv/pacvamp-aur/work -c safe.directory=/srv/pacvamp-aur/work add PKGBUILD
-git -C /srv/pacvamp-aur/work -c safe.directory=/srv/pacvamp-aur/work -c user.name=Fixture -c user.email=fixture@example.com commit -qm 'chroot isolation probes'
-git -C /srv/pacvamp-aur/work -c safe.directory=/srv/pacvamp-aur/work push -q /srv/pacvamp-aur/pacvamp-jail-probe.git HEAD:master
+runuser -u pacvamp-builder -- git -C /srv/pacvamp-aur/work add PKGBUILD
+runuser -u pacvamp-builder -- git -C /srv/pacvamp-aur/work -c user.name=Fixture -c user.email=fixture@example.com commit -qm 'chroot isolation probes'
+runuser -u pacvamp-builder -- git -C /srv/pacvamp-aur/work push -q /srv/pacvamp-aur/pacvamp-jail-probe.git HEAD:master
 runuser -u pacvamp-builder -- env   PACVAMP_AUR_RPC_BASE=http://127.0.0.1:18763   PACVAMP_AUR_GIT_BASE=file:///srv/pacvamp-aur   /usr/local/bin/pacvamp aur approve --force pacvamp-jail-probe
 runuser -u pacvamp-builder -- env   PACVAMP_AUR_RPC_BASE=http://127.0.0.1:18763   PACVAMP_AUR_GIT_BASE=file:///srv/pacvamp-aur   /usr/local/bin/pacvamp aur build pacvamp-jail-probe
 test ! -e /srv/pacvamp-image/root/usr/share/pacvamp-image-poison
